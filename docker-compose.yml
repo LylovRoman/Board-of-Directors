@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: board-of-directors-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: board-of-directors
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d board-of-directors"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: board-of-directors-app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      PORT: "8000"
+      POSTGRES_DSN: "postgres://agent:pass@db:5432/board-of-directors?sslmode=disable"
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
+
+

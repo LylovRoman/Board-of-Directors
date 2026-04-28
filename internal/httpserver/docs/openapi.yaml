@@ -1,0 +1,552 @@
+openapi: 3.0.3
+info:
+  title: BoardOfDirectors API
+  version: "1.0.0"
+  description: |
+    API для управления пользователями и играми с event-sourced логикой партии.
+
+servers:
+  - url: http://localhost:8000
+
+paths:
+
+  /users:
+    post:
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                required: [user]
+
+    get:
+      summary: List users
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+                required: [users]
+
+  /users/{id}:
+    get:
+      summary: Get user by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                required: [user]
+
+    put:
+      summary: Update user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+
+    delete:
+      summary: Delete user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+
+  /games:
+    post:
+      summary: Create game
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGameRequest"
+      responses:
+        "201":
+          description: Created game
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    $ref: "#/components/schemas/Game"
+                  state:
+                    $ref: "#/components/schemas/PublicGameState"
+
+    get:
+      summary: List games
+      responses:
+        "200":
+          description: Games list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  games:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Game"
+
+  /games/{id}:
+    get:
+      summary: Get game by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Game
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    $ref: "#/components/schemas/Game"
+
+    put:
+      summary: Update game
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+              required: [title]
+      responses:
+        "200":
+          description: Updated game
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  game:
+                    $ref: "#/components/schemas/Game"
+
+    delete:
+      summary: Delete game
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Deleted
+
+  /games/{id}/state:
+    get:
+      summary: Get personalized game state
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - in: query
+          name: viewer_user_id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Personalized game state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state:
+                    $ref: "#/components/schemas/PublicGameState"
+
+  /games/{id}/actions:
+    post:
+      summary: Send player action
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GameActionRequest"
+      responses:
+        "200":
+          description: Accepted action and updated state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Event"
+                  state:
+                    $ref: "#/components/schemas/PublicGameState"
+
+components:
+  schemas:
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        created_at:
+          type: string
+      required: [id, name, created_at]
+
+    Game:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        created_at:
+          type: string
+      required: [id, title, created_at]
+
+    CreateGameRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        host_user_id:
+          type: integer
+          format: int64
+      required: [title, host_user_id]
+
+    Event:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        game_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        actor_name:
+          type: string
+          nullable: true
+        event_type:
+          type: string
+        event_value:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+      required: [id, game_id, event_type, created_at]
+
+    GameActionRequest:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+      required: [user_id, type]
+
+    PublicPlayerState:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        share_bps:
+          type: integer
+        is_host:
+          type: boolean
+        is_ceo:
+          type: boolean
+        role:
+          type: string
+
+    PublicVoteState:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        has_voted:
+          type: boolean
+      required: [user_id, has_voted]
+
+    PublicOwnVoteState:
+      type: object
+      properties:
+        decision:
+          type: string
+        proposal_id:
+          type: integer
+        abstain:
+          type: boolean
+      required: [abstain]
+
+    PublicGovernanceProposal:
+      type: object
+      properties:
+        id:
+          type: integer
+        round:
+          type: integer
+        proposer_user_id:
+          type: integer
+          format: int64
+        proposal_type:
+          type: string
+          enum: [share_transfer, treasury_grant, treasury_buyback, appoint_ceo]
+        from_user_id:
+          type: integer
+          format: int64
+        to_user_id:
+          type: integer
+          format: int64
+        target_user_id:
+          type: integer
+          format: int64
+        share_bps:
+          type: integer
+      required: [id, round, proposer_user_id, proposal_type]
+
+    PublicGovernanceSubmission:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [submitted, skipped, ""]
+        proposal_id:
+          type: integer
+      required: [user_id]
+
+    PublicGovernanceReport:
+      type: object
+      properties:
+        round:
+          type: integer
+        outcome:
+          type: string
+          enum: [accepted, rejected]
+        proposal:
+          $ref: "#/components/schemas/PublicGovernanceProposal"
+        reason:
+          type: string
+      required: [round, outcome]
+
+    PublicDecisionVoteReport:
+      type: object
+      properties:
+        decision:
+          type: string
+        abstain:
+          type: boolean
+        share_bps:
+          type: integer
+        voter_count:
+          type: integer
+      required: [decision, abstain, share_bps, voter_count]
+
+    PublicRoundReport:
+      type: object
+      properties:
+        round:
+          type: integer
+        outcome:
+          type: string
+          enum: [accepted, rejected]
+        decision:
+          type: string
+        reason:
+          type: string
+        votes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicDecisionVoteReport"
+      required: [round, outcome, votes]
+
+    PublicGameState:
+      type: object
+      properties:
+        game_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        status:
+          type: string
+        phase:
+          type: string
+          enum: [major_voting, governance_proposal, governance_voting]
+        is_finished:
+          type: boolean
+        winner:
+          type: string
+        current_round:
+          type: integer
+        governance_round:
+          type: integer
+        treasury_share_bps:
+          type: integer
+        available_decisions:
+          type: array
+          items:
+            type: string
+        accepted_decisions:
+          type: array
+          items:
+            type: string
+        rejected_decisions:
+          type: array
+          items:
+            type: string
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicPlayerState"
+        me:
+          $ref: "#/components/schemas/PublicPlayerState"
+        current_votes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicVoteState"
+        my_current_vote:
+          $ref: "#/components/schemas/PublicOwnVoteState"
+        governance_proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicGovernanceProposal"
+        governance_submissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicGovernanceSubmission"
+        governance_reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicGovernanceReport"
+        round_reports:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicRoundReport"
+        mole_targets:
+          type: array
+          items:
+            type: string
+        available_actions:
+          type: array
+          items:
+            type: string
