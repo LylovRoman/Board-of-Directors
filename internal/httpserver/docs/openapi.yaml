@@ -479,6 +479,23 @@ components:
             $ref: "#/components/schemas/PublicDecisionVoteReport"
       required: [round, outcome, votes]
 
+    PublicChatMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        user_name:
+          type: string
+        message:
+          type: string
+        created_at:
+          type: string
+      required: [id, user_id, user_name, message, created_at]
+
     PublicGameState:
       type: object
       properties:
@@ -542,6 +559,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicRoundReport"
+        chat_messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicChatMessage"
         mole_targets:
           type: array
           items:

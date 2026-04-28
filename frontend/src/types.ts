@@ -1,6 +1,8 @@
 export type ActionType =
   | "join_game"
+  | "leave_game"
   | "kick_player"
+  | "send_chat_message"
   | "start_game"
   | "vote"
   | "submit_governance_proposal"
@@ -49,6 +51,14 @@ export interface PublicOwnVoteState {
   decision?: string;
   proposal_id?: number;
   abstain: boolean;
+}
+
+export interface PublicChatMessage {
+  id: number;
+  user_id: number;
+  user_name: string;
+  message: string;
+  created_at: string;
 }
 
 export interface PublicGovernanceProposal {
@@ -111,6 +121,7 @@ export interface PublicGameState {
   governance_submissions?: PublicGovernanceSubmission[] | null;
   governance_reports?: PublicGovernanceReport[] | null;
   round_reports?: PublicRoundReport[] | null;
+  chat_messages?: PublicChatMessage[] | null;
   mole_targets?: string[];
   available_actions: ActionType[];
 }
@@ -165,6 +176,10 @@ export function normalizeVotes(value?: PublicVoteState[] | null): PublicVoteStat
 }
 
 export function normalizeRoundReports(value?: PublicRoundReport[] | null): PublicRoundReport[] {
+  return Array.isArray(value) ? value : [];
+}
+
+export function normalizeChatMessages(value?: PublicChatMessage[] | null): PublicChatMessage[] {
   return Array.isArray(value) ? value : [];
 }
 

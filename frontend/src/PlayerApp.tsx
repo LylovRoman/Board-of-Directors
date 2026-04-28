@@ -6,6 +6,7 @@ import {
   listGames,
   listUsers,
   sendGameAction,
+  API_BASE_URL,
 } from "./api";
 import type {
   ActionType,
@@ -18,11 +19,13 @@ import type {
   PublicGovernanceReport,
   PublicGovernanceSubmission,
   PublicOwnVoteState,
+  PublicChatMessage,
   PublicPlayerState,
   PublicRoundReport,
   User,
 } from "./types";
 import {
+  normalizeChatMessages,
   normalizeGovernanceProposals,
   normalizeGovernanceReports,
   normalizeGovernanceSubmissions,
@@ -36,10 +39,10 @@ const SELECTED_GAME_STORAGE_KEY = "board-of-directors-selected-game-id";
 const DECISION_TITLES: Record<string, string> = {
   A: "Враждебное поглощение",
   B: "Экспансия на новый рынок",
-  C: "Оптимизация расходов",
+  C: "Выплата дивидендов по акциям",
   D: "Запуск экспериментального продукта",
   E: "Сделка слияния",
-  F: "Реструктуризация R&D",
+  F: "Оптимизация неэффективного персонала",
   G: "Агрессивная налоговая стратегия",
   H: "Обратный выкуп акций",
 };
@@ -115,6 +118,17 @@ function percentToBps(value: string): number {
   const normalized = value.replace(",", ".").trim();
   const percent = Number.parseFloat(normalized);
   return Number.isFinite(percent) ? Math.round(percent * 100) : 0;
+}
+
+function formatChatTime(value: string): string {
+  if (!value || value.startsWith("0001-")) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatVotesCount(count: number): string {
@@ -194,6 +208,7 @@ export default function PlayerApp() {
   const acceptedDecisions = normalizeStringArray(gameState?.accepted_decisions);
   const availableDecisions = normalizeStringArray(gameState?.available_decisions);
   const roundReports = normalizeRoundReports(gameState?.round_reports);
+  const chatMessages = normalizeChatMessages(gameState?.chat_messages);
   const governanceProposals = normalizeGovernanceProposals(gameState?.governance_proposals);
   const governanceSubmissions = normalizeGovernanceSubmissions(gameState?.governance_submissions);
   const governanceReports = normalizeGovernanceReports(gameState?.governance_reports);
@@ -207,6 +222,7 @@ export default function PlayerApp() {
   const canJoin = availableActions.includes("join_game");
   const canStart = availableActions.includes("start_game");
   const canKick = availableActions.includes("kick_player");
+  const canSendChatMessage = availableActions.includes("send_chat_message");
   const filteredGameCards = useMemo(() => {
     const normalizedFilter = lobbyFilter.trim().toLowerCase();
     return gameCards.filter(({ game, state }) => {
@@ -337,6 +353,36 @@ export default function PlayerApp() {
 
     return () => window.clearInterval(intervalId);
   }, [currentUserId, loadGameCards, loadGameState, loadGames, selectedGameId]);
+
+  useEffect(() => {
+    const isJoinedLobby =
+      Boolean(selectedGameId && currentUserId) &&
+      gameState?.status === "lobby" &&
+      gameState.players.some((player) => player.user_id === currentUserId);
+    if (!isJoinedLobby || !selectedGameId || !currentUserId) {
+      return undefined;
+    }
+
+    const leaveLobby = () => {
+      const body = JSON.stringify({
+        user_id: currentUserId,
+        type: "leave_game",
+      });
+      const url = `${API_BASE_URL}/games/${selectedGameId}/actions`;
+      if (navigator.sendBeacon?.(url, body)) {
+        return;
+      }
+      void fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+      });
+    };
+
+    window.addEventListener("pagehide", leaveLobby);
+    return () => window.removeEventListener("pagehide", leaveLobby);
+  }, [currentUserId, gameState?.players, gameState?.status, selectedGameId]);
 
   async function handleWelcomeSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -586,6 +632,11 @@ export default function PlayerApp() {
           acceptedDecisions={acceptedDecisions}
           roundReports={roundReports}
           governanceReports={governanceReports}
+          chatMessages={chatMessages}
+          canSendChatMessage={canSendChatMessage}
+          currentUserId={currentUserId}
+          isSubmitting={isSubmitting}
+          onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
           onRefresh={handleManualRefresh}
           onBack={() => setSelectedGameId(null)}
           isLoading={isLoading}
@@ -601,6 +652,7 @@ export default function PlayerApp() {
           governanceProposals={governanceProposals}
           governanceSubmissions={governanceSubmissions}
           governanceReports={governanceReports}
+          chatMessages={chatMessages}
           availableDecisions={availableDecisions}
           moleTargets={moleTargets}
           currentVotes={currentVotes}
@@ -609,12 +661,14 @@ export default function PlayerApp() {
           canVote={canVote}
           canSubmitGovernanceProposal={canSubmitGovernanceProposal}
           canSkipGovernanceProposal={canSkipGovernanceProposal}
+          canSendChatMessage={canSendChatMessage}
           isSubmitting={isSubmitting}
           onVote={(decision) => void handleAction("vote", { decision, abstain: false })}
           onVoteProposal={(proposalId) => void handleAction("vote", { proposal_id: proposalId, abstain: false })}
           onAbstain={() => void handleAction("vote", { abstain: true })}
           onSubmitGovernanceProposal={(payload) => void handleAction("submit_governance_proposal", payload)}
           onSkipGovernanceProposal={() => void handleAction("skip_governance_proposal")}
+          onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
           onRefresh={handleManualRefresh}
           isLoading={isLoading}
           currentUserId={currentUserId}
@@ -627,11 +681,14 @@ export default function PlayerApp() {
           canStart={canStart}
           canKick={canKick}
           hasMe={hasMe}
+          chatMessages={chatMessages}
+          canSendChatMessage={canSendChatMessage}
           isLoading={isLoading}
           isSubmitting={isSubmitting}
           onJoin={() => void handleAction("join_game")}
           onStart={() => void handleAction("start_game")}
           onKick={(userId) => void handleAction("kick_player", { user_id: userId })}
+          onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
           onRefresh={handleManualRefresh}
         />
       )}
@@ -646,11 +703,14 @@ function GameLobbyScreen(props: {
   canStart: boolean;
   canKick: boolean;
   hasMe: boolean;
+  chatMessages: PublicChatMessage[];
+  canSendChatMessage: boolean;
   isLoading: boolean;
   isSubmitting: boolean;
   onJoin: () => void;
   onStart: () => void;
   onKick: (userId: number) => void;
+  onSendChatMessage: (message: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
   const state = props.state;
@@ -697,6 +757,14 @@ function GameLobbyScreen(props: {
           </div>
         ) : null}
       </div>
+
+      <ChatPanel
+        messages={props.chatMessages}
+        currentUserId={props.currentUserId}
+        canSend={props.canSendChatMessage}
+        isSubmitting={props.isSubmitting}
+        onSend={props.onSendChatMessage}
+      />
     </section>
   );
 }
@@ -711,6 +779,7 @@ function StartedGameScreen(props: {
   governanceProposals: PublicGovernanceProposal[];
   governanceSubmissions: PublicGovernanceSubmission[];
   governanceReports: PublicGovernanceReport[];
+  chatMessages: PublicChatMessage[];
   availableDecisions: string[];
   moleTargets: string[];
   currentVotes: { user_id: number; has_voted: boolean }[];
@@ -719,12 +788,14 @@ function StartedGameScreen(props: {
   canVote: boolean;
   canSubmitGovernanceProposal: boolean;
   canSkipGovernanceProposal: boolean;
+  canSendChatMessage: boolean;
   isSubmitting: boolean;
   onVote: (decision: string) => void;
   onVoteProposal: (proposalId: number) => void;
   onAbstain: () => void;
   onSubmitGovernanceProposal: (payload: Record<string, unknown>) => void;
   onSkipGovernanceProposal: () => void;
+  onSendChatMessage: (message: string) => Promise<void>;
   onRefresh: () => Promise<void>;
   isLoading: boolean;
   currentUserId: number;
@@ -797,9 +868,18 @@ function StartedGameScreen(props: {
               ))}
             </div>
           </section>
+
         </aside>
 
         <div className="main-stack">
+          <ChatPanel
+            messages={props.chatMessages}
+            currentUserId={props.currentUserId}
+            canSend={props.canSendChatMessage}
+            isSubmitting={props.isSubmitting}
+            onSend={props.onSendChatMessage}
+          />
+
           {props.phase === "governance_proposal" ? (
             <GovernanceProposalPhase
               players={props.players}
@@ -899,6 +979,11 @@ function FinishScreen(props: {
   acceptedDecisions: string[];
   roundReports: PublicRoundReport[];
   governanceReports: PublicGovernanceReport[];
+  chatMessages: PublicChatMessage[];
+  canSendChatMessage: boolean;
+  currentUserId: number;
+  isSubmitting: boolean;
+  onSendChatMessage: (message: string) => Promise<void>;
   onRefresh: () => Promise<void>;
   onBack: () => void;
   isLoading: boolean;
@@ -925,6 +1010,13 @@ function FinishScreen(props: {
         <GovernanceReportList reports={props.governanceReports} players={props.state.players} />
         <RoundReportDetails report={selectedReport} onClose={() => setSelectedReport(null)} />
       </section>
+      <ChatPanel
+        messages={props.chatMessages}
+        currentUserId={props.currentUserId}
+        canSend={props.canSendChatMessage}
+        isSubmitting={props.isSubmitting}
+        onSend={props.onSendChatMessage}
+      />
       <div className="toolbar-actions centered-actions">
         <button className="secondary-action" onClick={() => void props.onRefresh()} disabled={props.isLoading}>
           Обновить
@@ -1183,6 +1275,67 @@ function GovernanceReportList(props: { reports: PublicGovernanceReport[]; player
         </div>
       ))}
     </div>
+  );
+}
+
+function ChatPanel(props: {
+  messages: PublicChatMessage[];
+  currentUserId: number;
+  canSend: boolean;
+  isSubmitting: boolean;
+  onSend: (message: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const message = draft.trim();
+    if (!message || !props.canSend || props.isSubmitting) {
+      return;
+    }
+    await props.onSend(message);
+    setDraft("");
+  }
+
+  return (
+    <section className="chat-panel">
+      <div className="chat-heading">
+        <div>
+          <p className="eyebrow">чат</p>
+          <h2>Переговорная</h2>
+        </div>
+        <span>{props.messages.length}</span>
+      </div>
+
+      <div className="chat-messages">
+        {props.messages.map((message) => {
+          const isMine = message.user_id === props.currentUserId;
+          return (
+            <article className={isMine ? "chat-message is-mine" : "chat-message"} key={`${message.id}-${message.created_at}`}>
+              <div>
+                <strong>{isMine ? "Ты" : message.user_name}</strong>
+                <small>{formatChatTime(message.created_at)}</small>
+              </div>
+              <p>{message.message}</p>
+            </article>
+          );
+        })}
+        {!props.messages.length ? <p className="quiet-text">В переговорной пока тихо.</p> : null}
+      </div>
+
+      <form className="chat-form" onSubmit={submit}>
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={props.canSend ? "Сообщение совету" : "Чат доступен участникам комнаты"}
+          maxLength={500}
+          disabled={!props.canSend || props.isSubmitting}
+        />
+        <button className="primary-action" type="submit" disabled={!draft.trim() || !props.canSend || props.isSubmitting}>
+          Отправить
+        </button>
+      </form>
+    </section>
   );
 }
 

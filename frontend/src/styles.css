@@ -897,6 +897,105 @@ code {
   color: #a7e7bd;
 }
 
+.chat-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(35, 35, 32, 0.88);
+}
+
+.chat-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.chat-heading h2 {
+  margin: 4px 0 0;
+  font-size: 1.05rem;
+}
+
+.chat-heading span {
+  min-width: 30px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(246, 241, 232, 0.08);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.chat-messages {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.chat-message {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(246, 241, 232, 0.08);
+  border-radius: 8px;
+  background: rgba(246, 241, 232, 0.055);
+}
+
+.chat-message.is-mine {
+  border-color: rgba(77, 159, 114, 0.45);
+  background: rgba(77, 159, 114, 0.12);
+}
+
+.chat-message div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.chat-message strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-message small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-message p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.chat-form button {
+  min-width: 112px;
+}
+
+.finish-screen > .chat-panel {
+  width: min(720px, 100%);
+  text-align: left;
+}
+
 .wait-pill {
   background: rgba(77, 159, 114, 0.18);
   color: #a7e7bd;
@@ -1115,7 +1214,8 @@ code {
 
   .welcome-form,
   .create-game-strip,
-  .play-topbar {
+  .play-topbar,
+  .chat-form {
     grid-template-columns: 1fr;
   }
 

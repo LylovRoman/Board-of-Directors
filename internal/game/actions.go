@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"agentbackend/internal/models"
 )
@@ -13,14 +14,16 @@ func (e *Engine) handleJoinGame(state *GameState, actor *models.User) ([]models.
 	if state.Status != GameStatusLobby {
 		return nil, errors.New("game already started")
 	}
-	if len(activePlayers(state)) >= MaxPlayers {
-		return nil, fmt.Errorf("game is full: max %d players", MaxPlayers)
-	}
 	if player := state.Players[actor.ID]; player != nil {
 		if player.IsKicked {
 			return nil, errors.New("kicked player cannot rejoin")
 		}
-		return nil, errors.New("player already joined")
+		if !player.IsLeft {
+			return nil, errors.New("player already joined")
+		}
+	}
+	if len(activePlayers(state)) >= MaxPlayers {
+		return nil, fmt.Errorf("game is full: max %d players", MaxPlayers)
 	}
 
 	return []models.Event{{
@@ -29,6 +32,23 @@ func (e *Engine) handleJoinGame(state *GameState, actor *models.User) ([]models.
 		ActorName:  actor.Name,
 		EventType:  models.EventPlayerJoined,
 		EventValue: mustJSON(PlayerJoinedPayload{UserID: actor.ID, Name: actor.Name}),
+	}}, nil
+}
+
+func (e *Engine) handleLeaveGame(state *GameState, actor *models.User) ([]models.Event, error) {
+	if state.Status != GameStatusLobby {
+		return nil, errors.New("cannot leave after game started")
+	}
+	if activePlayerByID(state, actor.ID) == nil {
+		return nil, errors.New("player is not in lobby")
+	}
+
+	return []models.Event{{
+		GameID:     state.GameID,
+		UserID:     &actor.ID,
+		ActorName:  actor.Name,
+		EventType:  models.EventPlayerLeft,
+		EventValue: mustJSON(PlayerLeftPayload{UserID: actor.ID}),
 	}}, nil
 }
 
@@ -51,8 +71,7 @@ func (e *Engine) handleKickPlayer(state *GameState, actor *models.User, raw json
 		return nil, errors.New("host cannot kick themselves")
 	}
 
-	player := state.Players[payload.UserID]
-	if player == nil || player.IsKicked {
+	if activePlayerByID(state, payload.UserID) == nil {
 		return nil, errors.New("target player is not in lobby")
 	}
 
@@ -62,6 +81,35 @@ func (e *Engine) handleKickPlayer(state *GameState, actor *models.User, raw json
 		ActorName:  actor.Name,
 		EventType:  models.EventPlayerKicked,
 		EventValue: mustJSON(PlayerKickedPayload{UserID: payload.UserID}),
+	}}, nil
+}
+
+func (e *Engine) handleSendChatMessage(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
+	if activePlayerByID(state, actor.ID) == nil {
+		return nil, errors.New("only active players can send chat messages")
+	}
+
+	var payload SendChatMessageActionPayload
+	if err := decodeActionPayload(raw, &payload); err != nil {
+		return nil, err
+	}
+	message := strings.TrimSpace(payload.Message)
+	if message == "" {
+		return nil, errors.New("message is required")
+	}
+	if len([]rune(message)) > MaxChatMessageLength {
+		return nil, fmt.Errorf("message cannot exceed %d characters", MaxChatMessageLength)
+	}
+
+	return []models.Event{{
+		GameID:    state.GameID,
+		UserID:    &actor.ID,
+		ActorName: actor.Name,
+		EventType: models.EventChatMessageSent,
+		EventValue: mustJSON(ChatMessageSentPayload{
+			UserID:  actor.ID,
+			Message: message,
+		}),
 	}}, nil
 }
 
@@ -150,8 +198,8 @@ func (e *Engine) handleVote(state *GameState, actor *models.User, raw json.RawMe
 		return nil, errors.New("voting is not active")
 	}
 
-	player := state.Players[actor.ID]
-	if player == nil || player.IsKicked {
+	player := activePlayerByID(state, actor.ID)
+	if player == nil {
 		return nil, errors.New("only active players can vote")
 	}
 	if hasPlayerVoted(state, actor.ID) {
@@ -204,8 +252,8 @@ func (e *Engine) handleSubmitGovernanceProposal(state *GameState, actor *models.
 	if state.Phase != GamePhaseGovernanceProposal {
 		return nil, errors.New("governance proposal phase is not active")
 	}
-	player := state.Players[actor.ID]
-	if player == nil || player.IsKicked {
+	player := activePlayerByID(state, actor.ID)
+	if player == nil {
 		return nil, errors.New("only active players can submit proposals")
 	}
 	if _, ok := state.GovernanceSubmissions[actor.ID]; ok {
@@ -254,8 +302,8 @@ func (e *Engine) handleSkipGovernanceProposal(state *GameState, actor *models.Us
 	if state.Phase != GamePhaseGovernanceProposal {
 		return nil, errors.New("governance proposal phase is not active")
 	}
-	player := state.Players[actor.ID]
-	if player == nil || player.IsKicked {
+	player := activePlayerByID(state, actor.ID)
+	if player == nil {
 		return nil, errors.New("only active players can skip proposals")
 	}
 	if _, ok := state.GovernanceSubmissions[actor.ID]; ok {
@@ -280,8 +328,8 @@ func (e *Engine) handleSkipGovernanceProposal(state *GameState, actor *models.Us
 }
 
 func (e *Engine) handleGovernanceVote(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
-	player := state.Players[actor.ID]
-	if player == nil || player.IsKicked {
+	player := activePlayerByID(state, actor.ID)
+	if player == nil {
 		return nil, errors.New("only active players can vote")
 	}
 	if _, ok := state.GovernanceVotes[actor.ID]; ok {
@@ -507,8 +555,8 @@ func resolveDecision(state *GameState) (string, []string, bool) {
 		if vote.Abstain || vote.Decision == nil {
 			continue
 		}
-		player := state.Players[vote.UserID]
-		if player == nil || player.IsKicked {
+		player := activePlayerByID(state, vote.UserID)
+		if player == nil {
 			continue
 		}
 		scores[*vote.Decision] += player.ShareBPS
@@ -551,8 +599,8 @@ func resolveGovernanceProposal(state *GameState) (int, bool) {
 		if vote.Abstain || vote.ProposalID == nil {
 			continue
 		}
-		player := state.Players[vote.UserID]
-		if player == nil || player.IsKicked || state.GovernanceProposals[*vote.ProposalID] == nil {
+		player := activePlayerByID(state, vote.UserID)
+		if player == nil || state.GovernanceProposals[*vote.ProposalID] == nil {
 			continue
 		}
 		scores[*vote.ProposalID] += player.ShareBPS
@@ -720,7 +768,7 @@ func validateShareChange(shareBPS int) error {
 
 func activePlayerByID(state *GameState, userID int64) *PlayerState {
 	player := state.Players[userID]
-	if player == nil || player.IsKicked {
+	if player == nil || player.IsKicked || player.IsLeft {
 		return nil
 	}
 	return player
@@ -773,7 +821,7 @@ func activePlayers(state *GameState) []*PlayerState {
 	out := make([]*PlayerState, 0, len(state.Players))
 	for _, userID := range state.PlayerOrder {
 		player := state.Players[userID]
-		if player != nil && !player.IsKicked {
+		if player != nil && !player.IsKicked && !player.IsLeft {
 			out = append(out, player)
 		}
 	}

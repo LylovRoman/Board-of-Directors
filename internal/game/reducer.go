@@ -56,6 +56,24 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		player.Name = payload.Name
 		player.IsKicked = false
+		player.IsLeft = false
+		if activePlayerByID(state, state.HostUserID) == nil {
+			state.HostUserID = payload.UserID
+		}
+	case models.EventPlayerLeft:
+		var payload PlayerLeftPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if player := state.Players[payload.UserID]; player != nil {
+			player.IsLeft = true
+		}
+		if state.HostUserID == payload.UserID {
+			for _, candidate := range activePlayers(state) {
+				state.HostUserID = candidate.UserID
+				break
+			}
+		}
 	case models.EventPlayerKicked:
 		var payload PlayerKickedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -64,6 +82,22 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if player := state.Players[payload.UserID]; player != nil {
 			player.IsKicked = true
 		}
+	case models.EventChatMessageSent:
+		var payload ChatMessageSentPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		userName := event.ActorName
+		if player := state.Players[payload.UserID]; player != nil && player.Name != "" {
+			userName = player.Name
+		}
+		state.ChatMessages = append(state.ChatMessages, ChatMessageState{
+			ID:        event.ID,
+			UserID:    payload.UserID,
+			UserName:  userName,
+			Message:   payload.Message,
+			CreatedAt: event.CreatedAt,
+		})
 	case models.EventGameStarted:
 		state.Status = GameStatusStarted
 		state.TreasuryShareBPS = InitialTreasurySharesBPS
@@ -278,7 +312,7 @@ func buildRoundReport(state *GameState, round int, outcome string, decision stri
 	buckets := map[string]*bucket{}
 	for _, vote := range state.CurrentVotes {
 		player := state.Players[vote.UserID]
-		if player == nil || player.IsKicked {
+		if player == nil || player.IsKicked || player.IsLeft {
 			continue
 		}
 

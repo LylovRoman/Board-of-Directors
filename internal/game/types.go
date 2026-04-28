@@ -1,12 +1,17 @@
 package game
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ActionType string
 
 const (
 	ActionJoinGame                 ActionType = "join_game"
+	ActionLeaveGame                ActionType = "leave_game"
 	ActionKickPlayer               ActionType = "kick_player"
+	ActionSendChatMessage          ActionType = "send_chat_message"
 	ActionStartGame                ActionType = "start_game"
 	ActionVote                     ActionType = "vote"
 	ActionSubmitGovernanceProposal ActionType = "submit_governance_proposal"
@@ -47,6 +52,8 @@ const (
 	MajorDecisionRewardBPS   = 100
 	MaxShareChangeBPS        = 500
 	MinPlayerShareBPS        = 500
+	MaxChatMessageLength     = 500
+	MaxPublicChatMessages    = 80
 )
 
 var allDecisions = []string{"A", "B", "C", "D", "E", "F", "G", "H"}
@@ -93,6 +100,7 @@ type GameState struct {
 	RoundReports            []RoundReport
 	GovernanceReports       []GovernanceReport
 	Available               map[string]bool
+	ChatMessages            []ChatMessageState
 }
 
 type PlayerState struct {
@@ -101,6 +109,7 @@ type PlayerState struct {
 	ShareBPS int    `json:"share_bps"`
 	IsHost   bool   `json:"is_host"`
 	IsCEO    bool   `json:"is_ceo"`
+	IsLeft   bool   `json:"is_left"`
 	IsKicked bool   `json:"is_kicked"`
 	Role     string `json:"role,omitempty"`
 }
@@ -134,6 +143,14 @@ type GovernanceVoteState struct {
 	Abstain    bool  `json:"abstain"`
 }
 
+type ChatMessageState struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	UserName  string    `json:"user_name"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type PublicGameState struct {
 	GameID                int64                        `json:"game_id"`
 	Title                 string                       `json:"title"`
@@ -155,6 +172,7 @@ type PublicGameState struct {
 	GovernanceSubmissions []PublicGovernanceSubmission `json:"governance_submissions"`
 	GovernanceReports     []PublicGovernanceReport     `json:"governance_reports"`
 	RoundReports          []PublicRoundReport          `json:"round_reports"`
+	ChatMessages          []PublicChatMessage          `json:"chat_messages"`
 	MoleTargets           []string                     `json:"mole_targets,omitempty"`
 	AvailableActions      []ActionType                 `json:"available_actions"`
 }
@@ -177,6 +195,14 @@ type PublicOwnVoteState struct {
 	Decision   string `json:"decision,omitempty"`
 	ProposalID int    `json:"proposal_id,omitempty"`
 	Abstain    bool   `json:"abstain"`
+}
+
+type PublicChatMessage struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	UserName  string    `json:"user_name"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type PublicGovernanceProposal struct {
@@ -252,6 +278,15 @@ type PlayerJoinedPayload struct {
 
 type PlayerKickedPayload struct {
 	UserID int64 `json:"user_id"`
+}
+
+type PlayerLeftPayload struct {
+	UserID int64 `json:"user_id"`
+}
+
+type ChatMessageSentPayload struct {
+	UserID  int64  `json:"user_id"`
+	Message string `json:"message"`
 }
 
 type MoleSelectedPayload struct {
@@ -365,6 +400,10 @@ type GameFinishedPayload struct {
 
 type KickPlayerActionPayload struct {
 	UserID int64 `json:"user_id"`
+}
+
+type SendChatMessageActionPayload struct {
+	Message string `json:"message"`
 }
 
 type VoteActionPayload struct {

@@ -1,0 +1,39 @@
+# Dependencies
+frontend/node_modules/
+
+# Frontend build output
+frontend/dist/
+frontend/.vite/
+
+# Go build/test artifacts
+bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

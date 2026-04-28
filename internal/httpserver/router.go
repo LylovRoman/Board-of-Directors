@@ -385,6 +385,7 @@ func statusFromError(err error) int {
 		containsText(err.Error(), "only "),
 		containsText(err.Error(), "cannot "),
 		containsText(err.Error(), "already "),
+		containsText(err.Error(), "not in lobby"),
 		containsText(err.Error(), "viewer is not an active player"),
 		containsText(err.Error(), "game requires"),
 		containsText(err.Error(), "game is full"):

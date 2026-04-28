@@ -19,6 +19,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		GovernanceSubmissions: publicGovernanceSubmissions(state),
 		GovernanceReports:     publicGovernanceReports(state.GovernanceReports),
 		RoundReports:          publicRoundReports(state.RoundReports),
+		ChatMessages:          publicChatMessages(state.ChatMessages),
 		AvailableActions:      availableActionsForViewer(state, viewerUserID),
 	}
 	if state.Status != GameStatusLobby {
@@ -27,7 +28,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 
 	for _, userID := range state.PlayerOrder {
 		player := state.Players[userID]
-		if player == nil || player.IsKicked {
+		if player == nil || player.IsKicked || player.IsLeft {
 			continue
 		}
 
@@ -104,7 +105,7 @@ func publicGovernanceSubmissions(state *GameState) []PublicGovernanceSubmission 
 	out := make([]PublicGovernanceSubmission, 0, len(state.PlayerOrder))
 	for _, userID := range state.PlayerOrder {
 		player := state.Players[userID]
-		if player == nil || player.IsKicked {
+		if player == nil || player.IsKicked || player.IsLeft {
 			continue
 		}
 		submission := state.GovernanceSubmissions[userID]
@@ -157,23 +158,46 @@ func publicRoundReports(reports []RoundReport) []PublicRoundReport {
 	return out
 }
 
+func publicChatMessages(messages []ChatMessageState) []PublicChatMessage {
+	start := 0
+	if len(messages) > MaxPublicChatMessages {
+		start = len(messages) - MaxPublicChatMessages
+	}
+	out := make([]PublicChatMessage, 0, len(messages)-start)
+	for _, message := range messages[start:] {
+		out = append(out, PublicChatMessage{
+			ID:        message.ID,
+			UserID:    message.UserID,
+			UserName:  message.UserName,
+			Message:   message.Message,
+			CreatedAt: message.CreatedAt,
+		})
+	}
+	return out
+}
+
 func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionType {
 	player := state.Players[viewerUserID]
+	actions := []ActionType{}
+	if player != nil && !player.IsKicked && !player.IsLeft {
+		actions = append(actions, ActionSendChatMessage)
+	}
 	if state.IsFinished {
-		return []ActionType{}
+		return actions
 	}
 
-	actions := []ActionType{}
 	switch state.Status {
 	case GameStatusLobby:
-		if player == nil {
+		if player == nil || player.IsLeft {
 			actions = append(actions, ActionJoinGame)
+		} else if !player.IsKicked {
+			actions = append(actions, ActionLeaveGame)
 		}
-		if player != nil && player.IsHost && !player.IsKicked {
+		if player != nil && player.IsHost && !player.IsKicked && !player.IsLeft {
 			actions = append(actions, ActionKickPlayer, ActionStartGame)
 		}
 	case GameStatusStarted:
-		if player == nil || player.IsKicked {
+		if player == nil || player.IsKicked || player.IsLeft {
 			return actions
 		}
 		switch state.Phase {

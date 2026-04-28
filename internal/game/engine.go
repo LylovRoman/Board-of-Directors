@@ -149,8 +149,12 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 	switch action.Type {
 	case ActionJoinGame:
 		return e.handleJoinGame(state, actor)
+	case ActionLeaveGame:
+		return e.handleLeaveGame(state, actor)
 	case ActionKickPlayer:
 		return e.handleKickPlayer(state, actor, action.Payload)
+	case ActionSendChatMessage:
+		return e.handleSendChatMessage(state, actor, action.Payload)
 	case ActionStartGame:
 		return e.handleStartGame(state, actor)
 	case ActionVote:

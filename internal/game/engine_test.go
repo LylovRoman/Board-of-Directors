@@ -245,6 +245,117 @@ func TestProjectStateJoinedNonHostDoesNotSeeJoinGame(t *testing.T) {
 	}
 }
 
+func TestLeaveLobbyAllowsRejoinAndTransfersHost(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			},
+		},
+	}
+	engine := NewEngine(store)
+
+	_, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionLeaveGame})
+	if err != nil {
+		t.Fatalf("leave lobby: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventPlayerLeft {
+		t.Fatalf("expected player_left event, got %+v", events)
+	}
+	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListEventsByGameID: %v", err)
+	}
+	state, err := BuildState(1, "Mafia", allEvents)
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	bobState, err := ProjectStateForViewer(state, 2)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer for Bob: %v", err)
+	}
+	if len(bobState.Players) != 1 || bobState.Players[0].UserID != 2 || !bobState.Players[0].IsHost {
+		t.Fatalf("expected Bob to become host, got %+v", bobState.Players)
+	}
+
+	leftState, err := ProjectStateForViewer(state, 1)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer for left player: %v", err)
+	}
+	if len(leftState.AvailableActions) != 1 || leftState.AvailableActions[0] != ActionJoinGame {
+		t.Fatalf("expected left player to be able to rejoin, got %v", leftState.AvailableActions)
+	}
+
+	rejoinedState, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionJoinGame})
+	if err != nil {
+		t.Fatalf("rejoin lobby: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventPlayerJoined {
+		t.Fatalf("expected player_joined event, got %+v", events)
+	}
+	if len(rejoinedState.Players) != 2 {
+		t.Fatalf("expected two active players after rejoin, got %+v", rejoinedState.Players)
+	}
+}
+
+func TestSendChatMessageAddsPublicMessage(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			},
+		},
+	}
+	engine := NewEngine(store)
+
+	state, events, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  2,
+		Type:    ActionSendChatMessage,
+		Payload: []byte(`{"message":"  Ready for the board meeting  "}`),
+	})
+	if err != nil {
+		t.Fatalf("send chat message: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventChatMessageSent {
+		t.Fatalf("expected chat event, got %+v", events)
+	}
+	if len(state.ChatMessages) != 1 {
+		t.Fatalf("expected one public chat message, got %d", len(state.ChatMessages))
+	}
+	message := state.ChatMessages[0]
+	if message.UserID != 2 || message.UserName != "Bob" || message.Message != "Ready for the board meeting" {
+		t.Fatalf("unexpected chat message: %+v", message)
+	}
+	hasChatAction := false
+	for _, action := range state.AvailableActions {
+		if action == ActionSendChatMessage {
+			hasChatAction = true
+		}
+	}
+	if !hasChatAction {
+		t.Fatalf("expected chat action, got %v", state.AvailableActions)
+	}
+}
+
 func TestKickedPlayerCannotRejoin(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{

@@ -25,9 +25,11 @@ type Event struct {
 }
 
 const (
-	EventGameCreated  = "game_created"
-	EventPlayerJoined = "player_joined"
-	EventPlayerKicked = "player_kicked"
+	EventGameCreated     = "game_created"
+	EventPlayerJoined    = "player_joined"
+	EventPlayerLeft      = "player_left"
+	EventPlayerKicked    = "player_kicked"
+	EventChatMessageSent = "chat_message_sent"
 
 	EventGameStarted          = "game_started"
 	EventMoleSelected         = "mole_selected"
