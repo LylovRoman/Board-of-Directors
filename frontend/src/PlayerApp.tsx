@@ -358,7 +358,7 @@ export default function PlayerApp() {
     const isJoinedLobby =
       Boolean(selectedGameId && currentUserId) &&
       gameState?.status === "lobby" &&
-      gameState.players.some((player) => player.user_id === currentUserId);
+      gameState.players?.some((player) => player.user_id === currentUserId) === true;
     if (!isJoinedLobby || !selectedGameId || !currentUserId) {
       return undefined;
     }
@@ -382,7 +382,7 @@ export default function PlayerApp() {
 
     window.addEventListener("pagehide", leaveLobby);
     return () => window.removeEventListener("pagehide", leaveLobby);
-  }, [currentUserId, gameState?.players, gameState?.status, selectedGameId]);
+  }, [currentUserId, gameState, selectedGameId]);
 
   async function handleWelcomeSubmit(event: React.FormEvent) {
     event.preventDefault();

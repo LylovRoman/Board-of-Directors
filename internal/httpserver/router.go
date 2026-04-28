@@ -328,7 +328,16 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "state": state})
+	deleted := false
+	if in.Type == game.ActionLeaveGame && state != nil && len(state.Players) == 0 {
+		if err := s.store.DeleteGame(r.Context(), gameID); err != nil {
+			writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
+			return
+		}
+		deleted = true
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "state": state, "game_deleted": deleted})
 }
 
 func (s *Server) handleGetGameState(w http.ResponseWriter, r *http.Request) {

@@ -352,6 +352,68 @@ func TestGameActionJoinGame(t *testing.T) {
 	}
 }
 
+func TestLeaveGameDeletesEmptyLobby(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Mafia"},
+		},
+		events: []models.Event{
+			{
+				ID:         1,
+				GameID:     1,
+				UserID:     int64Ptr(1),
+				ActorName:  "Alice",
+				EventType:  models.EventGameCreated,
+				EventValue: `{"host_user_id":1,"title":"Mafia"}`,
+			},
+			{
+				ID:         2,
+				GameID:     1,
+				UserID:     int64Ptr(1),
+				ActorName:  "Alice",
+				EventType:  models.EventPlayerJoined,
+				EventValue: `{"user_id":1,"name":"Alice"}`,
+			},
+		},
+	}
+	router := NewRouter(store)
+
+	body := []byte(`{
+		"user_id": 1,
+		"type": "leave_game"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Events      []models.Event       `json:"events"`
+		State       game.PublicGameState `json:"state"`
+		GameDeleted bool                 `json:"game_deleted"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Events) != 1 || resp.Events[0].EventType != models.EventPlayerLeft {
+		t.Fatalf("expected player_left event, got %+v", resp.Events)
+	}
+	if !resp.GameDeleted {
+		t.Fatalf("expected game_deleted=true")
+	}
+	if len(store.games) != 0 {
+		t.Fatalf("expected game to be deleted, got %+v", store.games)
+	}
+}
+
 func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 	store := &mockStorage{
 		games: []models.Game{{ID: 1, Title: "Mafia"}},
