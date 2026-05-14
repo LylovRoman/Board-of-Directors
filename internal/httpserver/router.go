@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -409,9 +410,19 @@ func containsText(s, sub string) bool {
 }
 
 func devCORSMiddleware(next http.Handler) http.Handler {
+	allowedOrigins := map[string]bool{}
+
+	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowedOrigins[origin] = true
+		}
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "http://localhost:5173" || origin == "http://127.0.0.1:5173" {
+
+		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
