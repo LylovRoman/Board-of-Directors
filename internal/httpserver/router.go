@@ -338,7 +338,34 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		deleted = true
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"events": events, "state": state, "game_deleted": deleted})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events":       publicActionEvents(events),
+		"state":        state,
+		"game_deleted": deleted,
+	})
+}
+
+func publicActionEvents(events []models.Event) []models.Event {
+	publicEvents := make([]models.Event, 0, len(events))
+	for _, event := range events {
+		if isPrivateActionEvent(event.EventType) {
+			continue
+		}
+		publicEvents = append(publicEvents, event)
+	}
+	return publicEvents
+}
+
+func isPrivateActionEvent(eventType string) bool {
+	switch eventType {
+	case models.EventMoleSelected,
+		models.EventMoleTargetsGenerated,
+		models.EventVoteSubmitted,
+		models.EventGovernanceVoteSubmitted:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleGetGameState(w http.ResponseWriter, r *http.Request) {

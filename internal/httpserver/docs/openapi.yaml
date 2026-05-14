@@ -276,6 +276,7 @@ paths:
                 type: object
                 properties:
                   events:
+                    description: Public emitted events only. Private events such as mole selection, mole targets, and submitted votes are omitted.
                     type: array
                     items:
                       $ref: "#/components/schemas/Event"

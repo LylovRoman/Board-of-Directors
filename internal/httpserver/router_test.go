@@ -352,6 +352,153 @@ func TestGameActionJoinGame(t *testing.T) {
 	}
 }
 
+func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+			{ID: 2, Name: "Bob"},
+			{ID: 3, Name: "Carol"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Mafia"},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, GameID: 1, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{ID: 4, GameID: 1, UserID: int64Ptr(3), ActorName: "Carol", EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+		},
+	}
+	router := NewRouter(store)
+
+	body := []byte(`{
+		"user_id": 1,
+		"type": "start_game"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Events []models.Event       `json:"events"`
+		State  game.PublicGameState `json:"state"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if !hasEventType(store.events, models.EventMoleSelected) {
+		t.Fatalf("expected stored event %s", models.EventMoleSelected)
+	}
+	if !hasEventType(store.events, models.EventMoleTargetsGenerated) {
+		t.Fatalf("expected stored event %s", models.EventMoleTargetsGenerated)
+	}
+	if hasEventType(resp.Events, models.EventMoleSelected) {
+		t.Fatalf("response must not expose %s: %+v", models.EventMoleSelected, resp.Events)
+	}
+	if hasEventType(resp.Events, models.EventMoleTargetsGenerated) {
+		t.Fatalf("response must not expose %s: %+v", models.EventMoleTargetsGenerated, resp.Events)
+	}
+	if !hasEventType(resp.Events, models.EventGameStarted) {
+		t.Fatalf("expected public response event %s", models.EventGameStarted)
+	}
+	if !hasEventType(resp.Events, models.EventVotingRoundStarted) {
+		t.Fatalf("expected public response event %s", models.EventVotingRoundStarted)
+	}
+	if resp.State.Me.Role == "mole" {
+		if len(resp.State.MoleTargets) != 3 {
+			t.Fatalf("expected mole host to see 3 mole targets, got %v", resp.State.MoleTargets)
+		}
+	} else {
+		if resp.State.Me.Role != "player" {
+			t.Fatalf("expected non-mole host role player, got %q", resp.State.Me.Role)
+		}
+		if len(resp.State.MoleTargets) != 0 {
+			t.Fatalf("expected non-mole host to not see mole targets, got %v", resp.State.MoleTargets)
+		}
+	}
+}
+
+func TestGameActionVoteHidesSubmittedVoteEvent(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+			{ID: 2, Name: "Bob"},
+			{ID: 3, Name: "Carol"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Mafia"},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, GameID: 1, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{ID: 4, GameID: 1, UserID: int64Ptr(3), ActorName: "Carol", EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+			{ID: 5, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameStarted, EventValue: `{}`},
+			{ID: 6, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+			{ID: 7, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventMoleTargetsGenerated, EventValue: `{"targets":["A","D","F"]}`},
+			{ID: 8, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+			{ID: 9, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+			{ID: 10, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+			{ID: 11, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+			{ID: 12, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventVotingRoundStarted, EventValue: `{"round":1}`},
+		},
+	}
+	router := NewRouter(store)
+
+	body := []byte(`{
+		"user_id": 2,
+		"type": "vote",
+		"payload": {
+			"decision": "B"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Events []models.Event       `json:"events"`
+		State  game.PublicGameState `json:"state"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if !hasEventType(store.events, models.EventVoteSubmitted) {
+		t.Fatalf("expected stored event %s", models.EventVoteSubmitted)
+	}
+	if len(resp.Events) != 0 {
+		t.Fatalf("expected no public response events for a single current vote, got %+v", resp.Events)
+	}
+
+	var bobVote *game.PublicVoteState
+	for i := range resp.State.CurrentVotes {
+		if resp.State.CurrentVotes[i].UserID == 2 {
+			bobVote = &resp.State.CurrentVotes[i]
+			break
+		}
+	}
+	if bobVote == nil || !bobVote.HasVoted {
+		t.Fatalf("expected Bob has_voted=true, got %+v", resp.State.CurrentVotes)
+	}
+	if resp.State.MyCurrentVote == nil || resp.State.MyCurrentVote.Decision != "B" {
+		t.Fatalf("expected own vote decision B, got %+v", resp.State.MyCurrentVote)
+	}
+}
+
 func TestLeaveGameDeletesEmptyLobby(t *testing.T) {
 	store := &mockStorage{
 		users: []models.User{
@@ -457,9 +604,31 @@ func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 	if len(resp.State.MoleTargets) != 0 {
 		t.Fatalf("expected regular player not to see mole targets, got %v", resp.State.MoleTargets)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/games/1/state?viewer_user_id=2", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	resp = struct {
+		State game.PublicGameState `json:"state"`
+	}{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode mole response: %v", err)
+	}
+	if len(resp.State.MoleTargets) != 3 {
+		t.Fatalf("expected mole player to see 3 mole targets, got %v", resp.State.MoleTargets)
+	}
+	if resp.State.Me.Role != "mole" {
+		t.Fatalf("expected viewer 2 role mole, got %q", resp.State.Me.Role)
+	}
 }
 
 func TestDevCORSPreflight(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
+
 	store := &mockStorage{}
 	router := NewRouter(store)
 
@@ -480,4 +649,13 @@ func TestDevCORSPreflight(t *testing.T) {
 
 func int64Ptr(v int64) *int64 {
 	return &v
+}
+
+func hasEventType(events []models.Event, eventType string) bool {
+	for _, event := range events {
+		if event.EventType == eventType {
+			return true
+		}
+	}
+	return false
 }
