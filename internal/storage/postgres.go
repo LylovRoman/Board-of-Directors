@@ -46,6 +46,8 @@ type Postgres struct {
 	db *sql.DB
 }
 
+const userColumns = `id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at`
+
 func NewPostgres(dsn string) (*Postgres, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -76,29 +78,29 @@ func (p *Postgres) CreateUser(ctx context.Context, user *models.User) error {
 	}
 
 	if user.Login == "" {
-		query := `
+		query := fmt.Sprintf(`
 			INSERT INTO users (name)
 			VALUES ($1)
-			RETURNING id, login, password_hash, avatar_url, last_seen_at, created_at, updated_at
-		`
+			RETURNING %s
+		`, userColumns)
 		return scanUserRow(p.db.QueryRowContext(ctx, query, user.Name), user)
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		INSERT INTO users (login, name, password_hash, avatar_url, last_seen_at)
 		VALUES ($1, $2, $3, NULLIF($4, ''), $5)
-		RETURNING id, login, password_hash, avatar_url, last_seen_at, created_at, updated_at
-	`
+		RETURNING %s
+	`, userColumns)
 
 	return scanUserRow(p.db.QueryRowContext(ctx, query, user.Login, user.Name, user.PasswordHash, user.AvatarURL, user.LastSeenAt), user)
 }
 
 func (p *Postgres) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := p.db.QueryContext(ctx, `
-		SELECT id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
+	rows, err := p.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT %s
 		FROM users
 		ORDER BY id
-	`)
+	`, userColumns))
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +125,11 @@ func (p *Postgres) ListUsers(ctx context.Context) ([]models.User, error) {
 func (p *Postgres) GetUserByID(ctx context.Context, id int64) (*models.User, error) {
 	var user models.User
 
-	query := `
-		SELECT id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM users
 		WHERE id = $1
-	`
+	`, userColumns)
 
 	err := scanUserRow(p.db.QueryRowContext(ctx, query, id), &user)
 	if err != nil {
@@ -143,11 +145,11 @@ func (p *Postgres) GetUserByID(ctx context.Context, id int64) (*models.User, err
 func (p *Postgres) GetUserByLogin(ctx context.Context, login string) (*models.User, error) {
 	var user models.User
 
-	query := `
-		SELECT id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM users
 		WHERE LOWER(login) = LOWER($1)
-	`
+	`, userColumns)
 
 	err := scanUserRow(p.db.QueryRowContext(ctx, query, login), &user)
 	if err != nil {
@@ -168,13 +170,13 @@ func (p *Postgres) UpdateUser(ctx context.Context, user *models.User) error {
 		return errors.New("name is required")
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		UPDATE users
 		SET name = $1,
 			updated_at = NOW()
 		WHERE id = $2
-		RETURNING id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
-	`
+		RETURNING %s
+	`, userColumns)
 
 	err := scanUserRow(p.db.QueryRowContext(ctx, query, user.Name, user.ID), user)
 	if err != nil {
@@ -195,14 +197,14 @@ func (p *Postgres) UpdateUserProfile(ctx context.Context, user *models.User) err
 		return errors.New("name is required")
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		UPDATE users
 		SET name = $1,
 			avatar_url = NULLIF($2, ''),
 			updated_at = NOW()
 		WHERE id = $3
-		RETURNING id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
-	`
+		RETURNING %s
+	`, userColumns)
 
 	err := scanUserRow(p.db.QueryRowContext(ctx, query, user.Name, user.AvatarURL, user.ID), user)
 	if err != nil {
