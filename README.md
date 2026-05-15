@@ -335,7 +335,7 @@ go run ./cmd/server
 
 ## Запуск frontend
 
-Frontend запускается отдельным Vite dev server и использует временную dev-идентификацию через `user_id` / `viewer_user_id`.
+Frontend запускается отдельным Vite dev server.
 
 ```bash
 cd frontend
@@ -382,21 +382,6 @@ curl -X POST http://localhost:8000/games/1/actions \
   -H "Content-Type: application/json" \
   -d '{"user_id":2,"type":"join_game"}'
 ```
-
-## Dev frontend
-
-Frontend предназначен для ручного тестирования партии:
-
-- выбор текущего пользователя через список users
-- создание игры через `POST /games/`
-- загрузка состояния через `GET /games/{id}/state?viewer_user_id=...`
-- отправка действий через `POST /games/{id}/actions`
-
-Текущая схема временная и используется только для dev-режима.
-
-TODO:
-
-- позже заменить `user_id` / `viewer_user_id` на session middleware
 
 ## Примечания для разработки
 
