@@ -420,6 +420,60 @@ func TestCreateGame(t *testing.T) {
 	}
 }
 
+func TestListGamesReturnsSummariesWithoutState(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+			{ID: 2, Name: "Bob"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Mafia"},
+			{ID: 2, Title: "Second Room"},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, GameID: 1, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{ID: 4, GameID: 2, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventGameCreated, EventValue: `{"host_user_id":2,"title":"Second Room"}`},
+			{ID: 5, GameID: 2, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		},
+	}
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/games/", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var raw map[string][]map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&raw); err != nil {
+		t.Fatalf("decode raw response: %v", err)
+	}
+	if _, ok := raw["games"][0]["state"]; ok {
+		t.Fatalf("list games response must not include full state: %s", rec.Body.String())
+	}
+
+	var resp struct {
+		Games []gameListItem `json:"games"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Games) != 2 {
+		t.Fatalf("expected 2 games, got %d", len(resp.Games))
+	}
+	if resp.Games[0].Status != game.GameStatusLobby || resp.Games[0].PlayerCount != 2 {
+		t.Fatalf("expected lobby summary with 2 players, got %+v", resp.Games[0])
+	}
+	if len(resp.Games[0].PlayerUserIDs) != 2 || resp.Games[0].PlayerUserIDs[0] != 1 || resp.Games[0].PlayerUserIDs[1] != 2 {
+		t.Fatalf("expected player user ids [1 2], got %+v", resp.Games[0].PlayerUserIDs)
+	}
+}
+
 func TestGameActionJoinGame(t *testing.T) {
 	store := &mockStorage{
 		users: []models.User{

@@ -295,7 +295,49 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"games": games})
+	items := make([]gameListItem, 0, len(games))
+	for _, gameModel := range games {
+		item := gameListItem{
+			ID:        gameModel.ID,
+			Title:     gameModel.Title,
+			CreatedAt: gameModel.CreatedAt,
+		}
+
+		events, err := s.store.ListEventsByGameID(r.Context(), gameModel.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+
+		state, err := game.BuildState(gameModel.ID, gameModel.Title, events)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+
+		item.Title = state.Title
+		item.Status = state.Status
+		item.CurrentRound = state.CurrentRound
+		for _, userID := range state.PlayerOrder {
+			if player := state.Players[userID]; player != nil && !player.IsLeft && !player.IsKicked {
+				item.PlayerUserIDs = append(item.PlayerUserIDs, userID)
+			}
+		}
+		item.PlayerCount = len(item.PlayerUserIDs)
+		items = append(items, item)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"games": items})
+}
+
+type gameListItem struct {
+	ID            int64           `json:"id"`
+	Title         string          `json:"title"`
+	CreatedAt     time.Time       `json:"created_at"`
+	Status        game.GameStatus `json:"status"`
+	CurrentRound  int             `json:"current_round"`
+	PlayerCount   int             `json:"player_count"`
+	PlayerUserIDs []int64         `json:"player_user_ids"`
 }
 
 func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {

@@ -35,6 +35,10 @@ export interface Game {
   id: number;
   title: string;
   created_at: string;
+  status?: GameStatus;
+  current_round?: number;
+  player_count?: number;
+  player_user_ids?: number[];
 }
 
 export interface Event {

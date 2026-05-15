@@ -57,7 +57,6 @@ const DECISION_TITLES: Record<string, string> = {
 
 interface GameCard {
   game: Game;
-  state?: PublicGameState;
 }
 
 type AuthMode = "login" | "register";
@@ -234,13 +233,13 @@ export default function PlayerApp() {
   const canSendChatMessage = availableActions.includes("send_chat_message");
   const filteredGameCards = useMemo(() => {
     const normalizedFilter = lobbyFilter.trim().toLowerCase();
-    return gameCards.filter(({ game, state }) => {
-      const title = (state?.title ?? game.title).toLowerCase();
+    return gameCards.filter(({ game }) => {
+      const title = game.title.toLowerCase();
       const matchesText = !normalizedFilter || title.includes(normalizedFilter);
-      const matchesStatus = lobbyStatusFilter === "all" || state?.status === lobbyStatusFilter;
+      const matchesStatus = lobbyStatusFilter === "all" || game.status === lobbyStatusFilter;
       const matchesOwner =
         !onlyMyGames ||
-        Boolean(currentUserId && state?.players?.some((player) => player.user_id === currentUserId));
+        Boolean(currentUserId && game.player_user_ids?.includes(currentUserId));
       return matchesText && matchesStatus && matchesOwner;
     });
   }, [currentUserId, gameCards, lobbyFilter, lobbyStatusFilter, onlyMyGames]);
@@ -253,6 +252,7 @@ export default function PlayerApp() {
     try {
       const nextGames = await listGames();
       setGames(nextGames);
+      setGameCards(nextGames.map((game) => ({ game })));
       return nextGames;
     } catch (error) {
       showError(error);
@@ -274,45 +274,39 @@ export default function PlayerApp() {
     [showError],
   );
 
-  const loadGameCards = useCallback(
-    async (sourceGames: Game[]) => {
-      if (!getAuthToken()) {
-        setGameCards(sourceGames.map((game) => ({ game })));
-        return;
-      }
-
-      const settled = await Promise.allSettled(
-        sourceGames.map(async (game) => ({
-          game,
-          state: await getGameState(game.id),
-        })),
-      );
-
-      setGameCards(
-        settled.map((result, index) =>
-          result.status === "fulfilled" ? result.value : { game: sourceGames[index] },
-        ),
-      );
-    },
-    [],
-  );
-
-  const refreshEverything = useCallback(async () => {
+  const refreshGameList = useCallback(async () => {
     if (!currentUserId) {
       return;
     }
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const nextGames = await loadGames();
-      await loadGameCards(nextGames);
-      if (selectedGameId) {
-        await loadGameState(selectedGameId);
-      }
+      await loadGames();
     } finally {
       setIsLoading(false);
     }
-  }, [currentUserId, loadGameCards, loadGameState, loadGames, selectedGameId]);
+  }, [currentUserId, loadGames]);
+
+  const refreshSelectedGame = useCallback(async () => {
+    if (!currentUserId || !selectedGameId) {
+      return;
+    }
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      await loadGameState(selectedGameId);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentUserId, loadGameState, selectedGameId]);
+
+  const refreshCurrentView = useCallback(async () => {
+    if (selectedGameId) {
+      await refreshSelectedGame();
+      return;
+    }
+    await refreshGameList();
+  }, [refreshGameList, refreshSelectedGame, selectedGameId]);
 
   useEffect(() => {
     let canceled = false;
@@ -366,7 +360,7 @@ export default function PlayerApp() {
 
   useEffect(() => {
     if (!isAuthChecking && currentUserId) {
-      void refreshEverything();
+      void refreshCurrentView();
     }
   }, [currentUserId, isAuthChecking]);
 
@@ -460,8 +454,7 @@ export default function PlayerApp() {
       if (authMode === "register") {
         setAuthName("");
       }
-      const nextGames = await loadGames();
-      await loadGameCards(nextGames);
+      await loadGames();
     } catch (error) {
       showError(error);
     } finally {
@@ -485,8 +478,7 @@ export default function PlayerApp() {
       setIsCreatingGame(false);
       setSelectedGameId(response.game.id);
       setGameState(response.state);
-      const nextGames = await loadGames();
-      await loadGameCards(nextGames);
+      await loadGames();
     } catch (error) {
       showError(error);
     } finally {
@@ -524,8 +516,6 @@ export default function PlayerApp() {
       } else {
         await loadGameState(selectedGameId);
       }
-      const nextGames = await loadGames();
-      await loadGameCards(nextGames);
     } catch (error) {
       showError(error);
     } finally {
@@ -534,7 +524,13 @@ export default function PlayerApp() {
   }
 
   async function handleManualRefresh() {
-    await refreshEverything();
+    await refreshCurrentView();
+  }
+
+  function handleBackToGames() {
+    setSelectedGameId(null);
+    setGameState(null);
+    void refreshGameList();
   }
 
   function handleLogout() {
@@ -624,7 +620,7 @@ export default function PlayerApp() {
     <main className="play-shell">
       <div className="aurora" />
       <header className="play-topbar">
-        <button className="ghost-button" onClick={() => setSelectedGameId(null)}>
+        <button className="ghost-button" onClick={handleBackToGames}>
           Игры
         </button>
         <div className="brand-lockup">
@@ -698,17 +694,17 @@ export default function PlayerApp() {
           </div>
 
           <div className="game-card-grid">
-            {filteredGameCards.map(({ game, state }) => (
+            {filteredGameCards.map(({ game }) => (
               <article className="room-card" key={game.id}>
                 <div>
-                  <span className={`status-pill status-${state?.status ?? "unknown"}`}>
-                    {statusLabel(state?.status)}
+                  <span className={`status-pill status-${game.status ?? "unknown"}`}>
+                    {statusLabel(game.status)}
                   </span>
-                  <h2>{state?.title ?? game.title}</h2>
+                  <h2>{game.title}</h2>
                 </div>
                 <div className="room-meta">
-                  <span>{state?.players?.length ?? "?"} игроков</span>
-                  <span>{state?.current_round ? `Раунд ${state.current_round}` : "Перед стартом"}</span>
+                  <span>{game.player_count ?? "?"} игроков</span>
+                  <span>{game.current_round ? `Раунд ${game.current_round}` : "Перед стартом"}</span>
                 </div>
                 <button className="primary-action" onClick={() => void openGame(game.id)}>
                   Войти
@@ -741,7 +737,7 @@ export default function PlayerApp() {
           isSubmitting={isSubmitting}
           onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
           onRefresh={handleManualRefresh}
-          onBack={() => setSelectedGameId(null)}
+          onBack={handleBackToGames}
           isLoading={isLoading}
         />
       ) : gameState?.status === "started" ? (
