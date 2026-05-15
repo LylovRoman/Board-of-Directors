@@ -13,8 +13,22 @@ export type GovernanceProposalType = "share_transfer" | "treasury_grant" | "trea
 
 export interface User {
   id: number;
+  login?: string;
   name: string;
+  avatar_url?: string;
+  last_seen_at?: string | null;
   created_at: string;
+  updated_at?: string | null;
+}
+
+export interface AuthUser {
+  id: number;
+  login: string;
+  name: string;
+  avatar_url?: string;
+  last_seen_at?: string | null;
+  created_at: string;
+  updated_at?: string | null;
 }
 
 export interface Game {
@@ -127,18 +141,37 @@ export interface PublicGameState {
 }
 
 export interface GameActionRequest {
-  user_id: number;
   type: ActionType;
   payload?: Record<string, unknown>;
 }
 
 export interface CreateGameRequest {
   title: string;
-  host_user_id: number;
 }
 
 export interface ApiErrorResponse {
   error?: string;
+}
+
+export interface LoginRequest {
+  login: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  login: string;
+  password: string;
+  name: string;
+  avatar_url?: string;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+  token: string;
+}
+
+export interface MeResponse {
+  user: AuthUser;
 }
 
 export interface UsersResponse {

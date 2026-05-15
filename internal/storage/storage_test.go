@@ -32,9 +32,18 @@ func newTestPostgres(t *testing.T) *Postgres {
 
 		CREATE TABLE users (
 			id BIGSERIAL PRIMARY KEY,
+			login VARCHAR(255),
 			name VARCHAR(255) NOT NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+			password_hash TEXT,
+			avatar_url TEXT,
+			last_seen_at TIMESTAMP,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		);
+
+		CREATE UNIQUE INDEX idx_users_login_lower
+			ON users (LOWER(login))
+			WHERE login IS NOT NULL;
 
 		CREATE TABLE games (
 			id BIGSERIAL PRIMARY KEY,
@@ -113,6 +122,51 @@ func TestUpdateUser(t *testing.T) {
 
 	if got.Name != "Alice Updated" {
 		t.Fatalf("expected Alice Updated, got %s", got.Name)
+	}
+}
+
+func TestUserAuthProfileFields(t *testing.T) {
+	store := newTestPostgres(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	user := &models.User{
+		Login:        "alice",
+		Name:         "Alice",
+		PasswordHash: "hash",
+		AvatarURL:    "https://example.com/a.png",
+		LastSeenAt:   &now,
+	}
+	if err := store.CreateUser(ctx, user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	got, err := store.GetUserByLogin(ctx, "ALICE")
+	if err != nil {
+		t.Fatalf("GetUserByLogin: %v", err)
+	}
+	if got.PasswordHash != "hash" || got.AvatarURL != "https://example.com/a.png" || got.LastSeenAt == nil {
+		t.Fatalf("expected auth/profile fields, got %+v", got)
+	}
+
+	got.Name = "Alice Updated"
+	got.AvatarURL = "https://example.com/new.png"
+	if err := store.UpdateUserProfile(ctx, got); err != nil {
+		t.Fatalf("UpdateUserProfile: %v", err)
+	}
+	if err := store.UpdateUserPassword(ctx, got.ID, "new-hash"); err != nil {
+		t.Fatalf("UpdateUserPassword: %v", err)
+	}
+	if err := store.TouchUserLastSeen(ctx, got.ID, 0); err != nil {
+		t.Fatalf("TouchUserLastSeen: %v", err)
+	}
+
+	got, err = store.GetUserByID(ctx, got.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if got.Name != "Alice Updated" || got.AvatarURL != "https://example.com/new.png" || got.PasswordHash != "new-hash" {
+		t.Fatalf("expected updated fields, got %+v", got)
 	}
 }
 

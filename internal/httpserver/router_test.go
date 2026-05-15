@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	authpkg "agentbackend/internal/auth"
 	"agentbackend/internal/game"
 	"agentbackend/internal/models"
 )
@@ -20,6 +24,13 @@ type mockStorage struct {
 }
 
 func (m *mockStorage) CreateUser(ctx context.Context, user *models.User) error {
+	if user.Login != "" {
+		for _, existing := range m.users {
+			if strings.EqualFold(existing.Login, user.Login) {
+				return errors.New("duplicate login")
+			}
+		}
+	}
 	user.ID = int64(len(m.users) + 1)
 	user.CreatedAt = time.Now()
 	m.users = append(m.users, *user)
@@ -43,11 +54,58 @@ func (m *mockStorage) GetUserByID(ctx context.Context, id int64) (*models.User, 
 	return nil, errNotFound("user")
 }
 
+func (m *mockStorage) GetUserByLogin(ctx context.Context, login string) (*models.User, error) {
+	for _, u := range m.users {
+		if strings.EqualFold(u.Login, login) {
+			user := u
+			return &user, nil
+		}
+	}
+	return nil, errNotFound("user")
+}
+
 func (m *mockStorage) UpdateUser(ctx context.Context, user *models.User) error {
 	for i := range m.users {
 		if m.users[i].ID == user.ID {
 			user.CreatedAt = m.users[i].CreatedAt
 			m.users[i] = *user
+			return nil
+		}
+	}
+	return errNotFound("user")
+}
+
+func (m *mockStorage) UpdateUserProfile(ctx context.Context, user *models.User) error {
+	for i := range m.users {
+		if m.users[i].ID == user.ID {
+			m.users[i].Name = user.Name
+			m.users[i].AvatarURL = user.AvatarURL
+			m.users[i].UpdatedAt = timePtr(time.Now())
+			*user = m.users[i]
+			return nil
+		}
+	}
+	return errNotFound("user")
+}
+
+func (m *mockStorage) UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error {
+	for i := range m.users {
+		if m.users[i].ID == id {
+			m.users[i].PasswordHash = passwordHash
+			m.users[i].UpdatedAt = timePtr(time.Now())
+			return nil
+		}
+	}
+	return errNotFound("user")
+}
+
+func (m *mockStorage) TouchUserLastSeen(ctx context.Context, id int64, minInterval time.Duration) error {
+	now := time.Now()
+	for i := range m.users {
+		if m.users[i].ID == id {
+			if minInterval <= 0 || m.users[i].LastSeenAt == nil || m.users[i].LastSeenAt.Before(now.Add(-minInterval)) {
+				m.users[i].LastSeenAt = &now
+			}
 			return nil
 		}
 	}
@@ -185,13 +243,84 @@ func errNotFound(entity string) error {
 	return notFoundError{entity: entity}
 }
 
-func TestCreateUser(t *testing.T) {
+func TestAuthRegisterLoginAndDuplicateLogin(t *testing.T) {
 	store := &mockStorage{}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
+
+	registerBody := []byte(`{
+		"login": "Alice",
+		"name": "Alice",
+		"password": "password123",
+		"avatar_url": "https://example.com/a.png"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	if len(store.users) != 1 || store.users[0].PasswordHash == "" || store.users[0].PasswordHash == "password123" {
+		t.Fatalf("expected registered user with password hash, got %+v", store.users)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected duplicate registration to fail with %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	loginBody := []byte(`{"login":"alice","password":"password123"}`)
+	req = httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp authResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Token == "" || resp.User.Login != "alice" {
+		t.Fatalf("expected token and normalized login, got %+v", resp)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader([]byte(`{"login":"alice","password":"wrongpass"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected invalid password status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestProtectedRouteRequiresAuth(t *testing.T) {
+	store := &mockStorage{}
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/games/", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestCreateUser(t *testing.T) {
+	admin := models.User{ID: 1, Login: "admin", Name: "Admin"}
+	store := &mockStorage{users: []models.User{admin}}
+	router := NewRouter(store, "test-secret")
 
 	body := []byte(`{"name":"Alice"}`)
 	req := httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, admin)
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -207,8 +336,8 @@ func TestCreateUser(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if resp.User.ID != 1 {
-		t.Fatalf("expected user id 1, got %d", resp.User.ID)
+	if resp.User.ID != 2 {
+		t.Fatalf("expected user id 2, got %d", resp.User.ID)
 	}
 	if resp.User.Name != "Alice" {
 		t.Fatalf("expected name Alice, got %s", resp.User.Name)
@@ -222,9 +351,10 @@ func TestListUsers(t *testing.T) {
 			{ID: 2, Name: "Bob"},
 		},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/users/", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -249,11 +379,12 @@ func TestCreateGame(t *testing.T) {
 	store := &mockStorage{
 		users: []models.User{{ID: 1, Name: "Alice"}},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
-	body := []byte(`{"title":"Mafia","host_user_id":1}`)
+	body := []byte(`{"title":"Mafia","host_user_id":2}`)
 	req := httptest.NewRequest(http.MethodPost, "/games/", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -280,6 +411,9 @@ func TestCreateGame(t *testing.T) {
 	}
 	if store.events[0].EventType != models.EventGameCreated {
 		t.Fatalf("expected first event %s, got %s", models.EventGameCreated, store.events[0].EventType)
+	}
+	if !strings.Contains(store.events[0].EventValue, `"host_user_id":1`) {
+		t.Fatalf("expected authenticated user to be host, got event payload %s", store.events[0].EventValue)
 	}
 	if store.events[1].EventType != models.EventPlayerJoined {
 		t.Fatalf("expected second event %s, got %s", models.EventPlayerJoined, store.events[1].EventType)
@@ -314,14 +448,15 @@ func TestGameActionJoinGame(t *testing.T) {
 			},
 		},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	body := []byte(`{
-		"user_id": 2,
+		"user_id": 1,
 		"type": "join_game"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 2, Login: "bob"})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -343,6 +478,9 @@ func TestGameActionJoinGame(t *testing.T) {
 	}
 	if resp.Events[0].EventType != models.EventPlayerJoined {
 		t.Fatalf("expected event_type %s, got %s", models.EventPlayerJoined, resp.Events[0].EventType)
+	}
+	if !strings.Contains(resp.Events[0].EventValue, `"user_id":2`) {
+		t.Fatalf("expected authenticated user to join, got event payload %s", resp.Events[0].EventValue)
 	}
 	if len(resp.State.Players) != 2 {
 		t.Fatalf("expected 2 players in state, got %d", len(resp.State.Players))
@@ -369,7 +507,7 @@ func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 			{ID: 4, GameID: 1, UserID: int64Ptr(3), ActorName: "Carol", EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
 		},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	body := []byte(`{
 		"user_id": 1,
@@ -377,6 +515,7 @@ func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -450,7 +589,7 @@ func TestGameActionVoteHidesSubmittedVoteEvent(t *testing.T) {
 			{ID: 12, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventVotingRoundStarted, EventValue: `{"round":1}`},
 		},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	body := []byte(`{
 		"user_id": 2,
@@ -461,6 +600,7 @@ func TestGameActionVoteHidesSubmittedVoteEvent(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 2, Login: "bob"})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -526,7 +666,7 @@ func TestLeaveGameDeletesEmptyLobby(t *testing.T) {
 			},
 		},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	body := []byte(`{
 		"user_id": 1,
@@ -534,6 +674,7 @@ func TestLeaveGameDeletesEmptyLobby(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -584,9 +725,10 @@ func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 			{ID: 12, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventVotingRoundStarted, EventValue: `{"round":1}`},
 		},
 	}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	req := httptest.NewRequest(http.MethodGet, "/games/1/state?viewer_user_id=1", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -605,7 +747,8 @@ func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 		t.Fatalf("expected regular player not to see mole targets, got %v", resp.State.MoleTargets)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/games/1/state?viewer_user_id=2", nil)
+	req = httptest.NewRequest(http.MethodGet, "/games/1/state?viewer_user_id=1", nil)
+	setAuth(req, t, models.User{ID: 2, Login: "bob"})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -626,11 +769,79 @@ func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 	}
 }
 
+func TestProfileStatsAndLeaderboardFromFinishedGames(t *testing.T) {
+	now := time.Now().UTC()
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Login: "alice", Name: "Alice"},
+			{ID: 2, Login: "bob", Name: "Bob"},
+			{ID: 3, Login: "carol", Name: "Carol"},
+			{ID: 4, Login: "dave", Name: "Dave"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Game 1"},
+			{ID: 2, Title: "Game 2"},
+			{ID: 3, Title: "Game 3"},
+			{ID: 4, Title: "Game 4"},
+			{ID: 5, Title: "Game 5"},
+		},
+	}
+	store.events = append(store.events, finishedGameEvents(1, 1, "mole", now.Add(-24*time.Hour))...)
+	store.events = append(store.events, finishedGameEvents(2, 2, "players", now.Add(-23*time.Hour))...)
+	store.events = append(store.events, finishedGameEvents(3, 2, "mole", now.Add(-22*time.Hour))...)
+	store.events = append(store.events, finishedGameEvents(4, 4, "mole", now.Add(-21*time.Hour))...)
+	store.events = append(store.events, finishedGameEvents(5, 4, "mole", now.Add(-20*time.Hour))...)
+
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/users/me/profile", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var profileResp struct {
+		Profile profileResponse `json:"profile"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&profileResp); err != nil {
+		t.Fatalf("decode profile: %v", err)
+	}
+	if profileResp.Profile.Stats.Total.Games != 3 || profileResp.Profile.Stats.Total.Wins != 2 || profileResp.Profile.Stats.Total.Losses != 1 {
+		t.Fatalf("unexpected total stats: %+v", profileResp.Profile.Stats.Total)
+	}
+	if profileResp.Profile.Stats.Mole.Games != 1 || profileResp.Profile.Stats.Mole.Wins != 1 {
+		t.Fatalf("unexpected mole stats: %+v", profileResp.Profile.Stats.Mole)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/leaderboard?period=week", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var leaderboard leaderboardResponse
+	if err := json.NewDecoder(rec.Body).Decode(&leaderboard); err != nil {
+		t.Fatalf("decode leaderboard: %v", err)
+	}
+	for _, entry := range leaderboard.Entries {
+		if entry.User.ID == 4 {
+			t.Fatalf("expected Dave to be excluded by 3 game minimum, got %+v", leaderboard.Entries)
+		}
+	}
+	if len(leaderboard.Entries) == 0 || leaderboard.Entries[0].Games < 3 {
+		t.Fatalf("expected leaderboard entries with at least 3 games, got %+v", leaderboard.Entries)
+	}
+}
+
 func TestDevCORSPreflight(t *testing.T) {
 	t.Setenv("ALLOWED_ORIGINS", "http://localhost:5173")
 
 	store := &mockStorage{}
-	router := NewRouter(store)
+	router := NewRouter(store, "test-secret")
 
 	req := httptest.NewRequest(http.MethodOptions, "/users/", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
@@ -651,6 +862,24 @@ func int64Ptr(v int64) *int64 {
 	return &v
 }
 
+func timePtr(v time.Time) *time.Time {
+	return &v
+}
+
+func authHeader(t *testing.T, userID int64, login string) string {
+	t.Helper()
+	token, err := authpkg.IssueToken("test-secret", userID, login, time.Hour)
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+	return "Bearer " + token
+}
+
+func setAuth(req *http.Request, t *testing.T, user models.User) {
+	t.Helper()
+	req.Header.Set("Authorization", authHeader(t, user.ID, user.Login))
+}
+
 func hasEventType(events []models.Event, eventType string) bool {
 	for _, event := range events {
 		if event.EventType == eventType {
@@ -658,4 +887,49 @@ func hasEventType(events []models.Event, eventType string) bool {
 		}
 	}
 	return false
+}
+
+func finishedGameEvents(gameID int64, moleUserID int64, winner string, finishedAt time.Time) []models.Event {
+	players := []int64{1, 2, 3}
+	names := map[int64]string{1: "Alice", 2: "Bob", 3: "Carol", 4: "Dave"}
+	if moleUserID == 4 {
+		players = []int64{4, 2, 3}
+	}
+
+	events := []models.Event{
+		{ID: 1, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventGameCreated, EventValue: `{"host_user_id":` + strconv.FormatInt(players[0], 10) + `,"title":"Game"}`, CreatedAt: finishedAt.Add(-time.Minute)},
+	}
+	for i, userID := range players {
+		events = append(events, models.Event{
+			ID:         int64(2 + i),
+			GameID:     gameID,
+			UserID:     int64Ptr(userID),
+			ActorName:  names[userID],
+			EventType:  models.EventPlayerJoined,
+			EventValue: `{"user_id":` + strconv.FormatInt(userID, 10) + `,"name":"` + names[userID] + `"}`,
+			CreatedAt:  finishedAt.Add(-time.Minute),
+		})
+	}
+	events = append(events,
+		models.Event{ID: 10, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventGameStarted, EventValue: `{}`, CreatedAt: finishedAt.Add(-time.Minute)},
+		models.Event{ID: 11, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventMoleSelected, EventValue: `{"user_id":` + strconv.FormatInt(moleUserID, 10) + `}`, CreatedAt: finishedAt.Add(-time.Minute)},
+		models.Event{ID: 12, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventMoleTargetsGenerated, EventValue: `{"targets":["A","B","C"]}`, CreatedAt: finishedAt.Add(-time.Minute)},
+	)
+	for i, userID := range players {
+		events = append(events, models.Event{
+			ID:         int64(13 + i),
+			GameID:     gameID,
+			UserID:     int64Ptr(players[0]),
+			ActorName:  names[players[0]],
+			EventType:  models.EventPlayerReceivedShare,
+			EventValue: `{"user_id":` + strconv.FormatInt(userID, 10) + `,"share_bps":` + []string{"3500", "2500", "2000"}[i] + `}`,
+			CreatedAt:  finishedAt.Add(-time.Minute),
+		})
+	}
+	events = append(events,
+		models.Event{ID: 20, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventCEOSelected, EventValue: `{"user_id":` + strconv.FormatInt(players[0], 10) + `}`, CreatedAt: finishedAt.Add(-time.Minute)},
+		models.Event{ID: 21, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventVotingRoundStarted, EventValue: `{"round":1}`, CreatedAt: finishedAt.Add(-time.Minute)},
+		models.Event{ID: 22, GameID: gameID, UserID: int64Ptr(players[0]), ActorName: names[players[0]], EventType: models.EventGameFinished, EventValue: `{"winner":"` + winner + `","reason":"test"}`, CreatedAt: finishedAt},
+	)
+	return events
 }

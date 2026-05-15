@@ -27,7 +27,7 @@ func main() {
 		log.Fatalf("failed to run migrations: %v", err)
 	}
 
-	router := httpserver.NewRouter(db)
+	router := httpserver.NewRouter(db, cfg.JWTSecret)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -40,4 +40,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

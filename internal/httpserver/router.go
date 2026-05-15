@@ -1,35 +1,66 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	authpkg "agentbackend/internal/auth"
 	"agentbackend/internal/game"
 	"agentbackend/internal/models"
 	"agentbackend/internal/storage"
 )
 
 type Server struct {
-	store  storage.Storage
-	engine *game.Engine
+	store     storage.Storage
+	engine    *game.Engine
+	jwtSecret string
+	tokenTTL  time.Duration
 }
 
-func NewRouter(store storage.Storage) http.Handler {
+func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
+	secret := os.Getenv("JWT_SECRET")
+	if len(jwtSecret) > 0 && jwtSecret[0] != "" {
+		secret = jwtSecret[0]
+	}
+	if secret == "" {
+		secret = "dev-test-secret"
+	}
+
 	s := &Server{
-		store:  store,
-		engine: game.NewEngine(store),
+		store:     store,
+		engine:    game.NewEngine(store),
+		jwtSecret: secret,
+		tokenTTL:  7 * 24 * time.Hour,
 	}
 
 	r := chi.NewRouter()
 	r.Use(devCORSMiddleware)
 
+	r.Route("/auth", func(r chi.Router) {
+		r.Post("/register", s.handleRegister)
+		r.Post("/login", s.handleLogin)
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware)
+			r.Get("/me", s.handleAuthMe)
+			r.Put("/password", s.handleChangePassword)
+		})
+	})
+
+	r.Get("/leaderboard", s.authMiddleware(http.HandlerFunc(s.handleLeaderboard)).ServeHTTP)
+
 	r.Route("/users", func(r chi.Router) {
+		r.Use(s.authMiddleware)
+		r.Get("/me/profile", s.handleMyProfile)
+		r.Put("/me/profile", s.handleUpdateMyProfile)
+		r.Get("/{id}/profile", s.handleUserProfile)
 		r.Post("/", s.handleCreateUser)
 		r.Get("/", s.handleListUsers)
 		r.Get("/{id}", s.handleGetUser)
@@ -38,6 +69,7 @@ func NewRouter(store storage.Storage) http.Handler {
 	})
 
 	r.Route("/games", func(r chi.Router) {
+		r.Use(s.authMiddleware)
 		r.Post("/", s.handleCreateGame)
 		r.Get("/", s.handleListGames)
 		r.Get("/{id}", s.handleGetGame)
@@ -80,6 +112,49 @@ type errorResponse struct {
 
 type statusResponse struct {
 	Status string `json:"status"`
+}
+
+type contextKey string
+
+const currentUserContextKey contextKey = "current_user"
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, err := authpkg.BearerToken(r.Header.Get("Authorization"))
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "authentication required"})
+			return
+		}
+
+		claims, err := authpkg.ParseToken(s.jwtSecret, token)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid or expired token"})
+			return
+		}
+
+		user, err := s.store.GetUserByID(r.Context(), claims.UserID)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorResponse{Error: "invalid or expired token"})
+			return
+		}
+
+		_ = s.store.TouchUserLastSeen(r.Context(), user.ID, 5*time.Minute)
+
+		ctx := context.WithValue(r.Context(), currentUserContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func currentUser(r *http.Request) *models.User {
+	user, _ := r.Context().Value(currentUserContextKey).(*models.User)
+	return user
+}
+
+func currentUserID(r *http.Request) int64 {
+	if user := currentUser(r); user != nil {
+		return user.ID
+	}
+	return 0
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -202,16 +277,13 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "title is required"})
 		return
 	}
-	if in.HostUserID <= 0 {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "host_user_id is required"})
-		return
-	}
 
-	createdGame, state, _, err := s.engine.CreateGame(r.Context(), in.Title, in.HostUserID)
+	createdGame, state, _, err := s.engine.CreateGame(r.Context(), in.Title, currentUserID(r))
 	if err != nil {
 		writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
 		return
 	}
+	s.decoratePublicState(r.Context(), state)
 
 	writeJSON(w, http.StatusCreated, map[string]any{"game": createdGame, "state": state})
 }
@@ -310,17 +382,13 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid game id"})
 		return
 	}
-	if in.UserID <= 0 {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "user_id is required"})
-		return
-	}
 	if in.Type == "" {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "type is required"})
 		return
 	}
 
 	state, events, err := s.engine.HandleAction(r.Context(), gameID, game.Action{
-		UserID:  in.UserID,
+		UserID:  currentUserID(r),
 		Type:    in.Type,
 		Payload: in.Payload,
 	})
@@ -328,6 +396,7 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
 		return
 	}
+	s.decoratePublicState(r.Context(), state)
 
 	deleted := false
 	if in.Type == game.ActionLeaveGame && state != nil && len(state.Players) == 0 {
@@ -374,11 +443,7 @@ func (s *Server) handleGetGameState(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid game id"})
 		return
 	}
-	viewerID, err := strconv.ParseInt(r.URL.Query().Get("viewer_user_id"), 10, 64)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid viewer_user_id"})
-		return
-	}
+	viewerID := currentUserID(r)
 
 	gameModel, err := s.store.GetGameByID(r.Context(), gameID)
 	if err != nil {
@@ -403,6 +468,7 @@ func (s *Server) handleGetGameState(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
 		return
 	}
+	s.decoratePublicState(r.Context(), publicState)
 
 	writeJSON(w, http.StatusOK, map[string]any{"state": publicState})
 }
@@ -425,7 +491,10 @@ func statusFromError(err error) int {
 		containsText(err.Error(), "not in lobby"),
 		containsText(err.Error(), "viewer is not an active player"),
 		containsText(err.Error(), "game requires"),
-		containsText(err.Error(), "game is full"):
+		containsText(err.Error(), "game is full"),
+		containsText(err.Error(), "duplicate"),
+		containsText(err.Error(), "unique constraint"),
+		containsText(err.Error(), "idx_users_login_lower"):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
@@ -452,8 +521,8 @@ func devCORSMiddleware(next http.Handler) http.Handler {
 		if allowedOrigins[origin] {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		}
 
 		if r.Method == http.MethodOptions {

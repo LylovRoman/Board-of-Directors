@@ -1,47 +1,47 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   API_BASE_URL,
   createGame,
-  createUser,
+  getMe,
   getGameState,
   listGames,
-  listUsers,
+  login,
+  register,
   sendGameAction,
 } from "./api";
-import type { ActionType, Game, PublicGameState, User } from "./types";
+import {
+  AUTH_SESSION_CLEARED_EVENT,
+  clearAuthSession,
+  getAuthToken,
+  readStoredAuthSession,
+  saveAuthSession,
+  saveAuthUser,
+} from "./authSession";
+import type { ActionType, AuthUser, Game, PublicGameState } from "./types";
 import { normalizeStringArray, normalizeVotes } from "./types";
 
-const CURRENT_USER_STORAGE_KEY = "board-of-directors-current-user-id";
-
-function readStoredUserId(): number | null {
-  const raw = window.localStorage.getItem(CURRENT_USER_STORAGE_KEY);
-  if (!raw) {
-    return null;
-  }
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
+type AuthMode = "login" | "register";
 
 export default function DevApp() {
-  const [users, setUsers] = useState<User[]>([]);
+  const [authSession, setAuthSession] = useState(() => readStoredAuthSession());
+  const [isAuthChecking, setIsAuthChecking] = useState(() => Boolean(getAuthToken()));
   const [games, setGames] = useState<Game[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<number | null>(() => readStoredUserId());
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const [gameState, setGameState] = useState<PublicGameState | null>(null);
-  const [userNameInput, setUserNameInput] = useState("");
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authLogin, setAuthLogin] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [gameTitleInput, setGameTitleInput] = useState("");
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isLoadingGames, setIsLoadingGames] = useState(false);
   const [isLoadingGameState, setIsLoadingGameState] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const currentUser = useMemo(
-    () => users.find((user) => user.id === currentUserId) ?? null,
-    [users, currentUserId],
-  );
+  const currentUser: AuthUser | null = authSession?.user ?? null;
+  const currentUserId = currentUser?.id ?? null;
 
   const clearMessages = useCallback(() => {
     setErrorMessage(null);
@@ -53,22 +53,6 @@ export default function DevApp() {
     setErrorMessage(message);
     setSuccessMessage(null);
   }, []);
-
-  const loadUsers = useCallback(async () => {
-    setIsLoadingUsers(true);
-    try {
-      const nextUsers = await listUsers();
-      setUsers(nextUsers);
-      if (currentUserId !== null && !nextUsers.some((user) => user.id === currentUserId)) {
-        setCurrentUserId(null);
-        window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
-      }
-    } catch (error) {
-      handleError(error);
-    } finally {
-      setIsLoadingUsers(false);
-    }
-  }, [currentUserId, handleError]);
 
   const loadGames = useCallback(async () => {
     setIsLoadingGames(true);
@@ -83,10 +67,10 @@ export default function DevApp() {
   }, [handleError]);
 
   const loadGameState = useCallback(
-    async (gameId: number, viewerUserId: number) => {
+    async (gameId: number) => {
       setIsLoadingGameState(true);
       try {
-        const state = await getGameState(gameId, viewerUserId);
+        const state = await getGameState(gameId);
         setGameState(state);
       } catch (error) {
         handleError(error);
@@ -98,19 +82,60 @@ export default function DevApp() {
   );
 
   useEffect(() => {
-    void loadUsers();
-    void loadGames();
-  }, [loadGames, loadUsers]);
+    let canceled = false;
+
+    async function validateStoredSession() {
+      if (!authSession) {
+        setIsAuthChecking(false);
+        return;
+      }
+
+      try {
+        const user = await getMe();
+        if (canceled) {
+          return;
+        }
+        saveAuthUser(user);
+        setAuthSession((session) => (session ? { ...session, user } : null));
+      } catch {
+        if (!canceled) {
+          setAuthSession(null);
+        }
+      } finally {
+        if (!canceled) {
+          setIsAuthChecking(false);
+        }
+      }
+    }
+
+    void validateStoredSession();
+
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   useEffect(() => {
-    if (currentUserId !== null) {
-      window.localStorage.setItem(CURRENT_USER_STORAGE_KEY, String(currentUserId));
+    const handleSessionCleared = () => {
+      setAuthSession(null);
+      setSelectedGameId(null);
+      setGameState(null);
+      setGames([]);
+    };
+
+    window.addEventListener(AUTH_SESSION_CLEARED_EVENT, handleSessionCleared);
+    return () => window.removeEventListener(AUTH_SESSION_CLEARED_EVENT, handleSessionCleared);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthChecking && currentUserId) {
+      void loadGames();
     }
-  }, [currentUserId]);
+  }, [currentUserId, isAuthChecking, loadGames]);
 
   useEffect(() => {
     if (selectedGameId !== null && currentUserId !== null) {
-      void loadGameState(selectedGameId, currentUserId);
+      void loadGameState(selectedGameId);
     }
   }, [selectedGameId, currentUserId, loadGameState]);
 
@@ -118,45 +143,46 @@ export default function DevApp() {
     if (!autoRefresh || selectedGameId === null || currentUserId === null) {
       return undefined;
     }
-    const intervalId = window.setInterval(() => {
-      void loadGameState(selectedGameId, currentUserId);
-    }, 2000);
-    return () => window.clearInterval(intervalId);
+
+    const refreshSelectedGame = () => {
+      if (document.visibilityState === "visible") {
+        void loadGameState(selectedGameId);
+      }
+    };
+
+    const intervalId = window.setInterval(refreshSelectedGame, 10000);
+    document.addEventListener("visibilitychange", refreshSelectedGame);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshSelectedGame);
+    };
   }, [autoRefresh, currentUserId, loadGameState, selectedGameId]);
 
-  async function handleCreateUser(event: React.FormEvent) {
+  async function handleAuthSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!userNameInput.trim()) {
-      setErrorMessage("Введите имя пользователя");
+    const normalizedLogin = authLogin.trim();
+    const normalizedName = authName.trim();
+    if (!normalizedLogin || !authPassword) {
+      setErrorMessage("Enter login and password");
       return;
     }
-    setIsSubmitting(true);
-    clearMessages();
-    try {
-      const user = await createUser(userNameInput.trim());
-      setUserNameInput("");
-      setSuccessMessage(`Пользователь ${user.name} создан`);
-      await loadUsers();
-      setCurrentUserId(user.id);
-    } catch (error) {
-      handleError(error);
-    } finally {
-      setIsSubmitting(false);
+    if (authMode === "register" && !normalizedName) {
+      setErrorMessage("Enter display name");
+      return;
     }
-  }
 
-  async function handleCreatePresetUsers() {
     setIsSubmitting(true);
     clearMessages();
     try {
-      const existingNames = new Set(users.map((user) => user.name.toLowerCase()));
-      for (const name of ["Alice", "Bob", "Carol"]) {
-        if (!existingNames.has(name.toLowerCase())) {
-          await createUser(name);
-        }
-      }
-      setSuccessMessage("Тестовые пользователи Alice, Bob, Carol готовы");
-      await loadUsers();
+      const response = authMode === "login"
+        ? await login({ login: normalizedLogin, password: authPassword })
+        : await register({ login: normalizedLogin, name: normalizedName, password: authPassword });
+      saveAuthSession(response);
+      setAuthSession(response);
+      setAuthPassword("");
+      setSuccessMessage("Authenticated as " + response.user.name);
+      await loadGames();
     } catch (error) {
       handleError(error);
     } finally {
@@ -177,10 +203,7 @@ export default function DevApp() {
     setIsSubmitting(true);
     clearMessages();
     try {
-      const response = await createGame({
-        title: gameTitleInput.trim(),
-        host_user_id: currentUserId,
-      });
+      const response = await createGame({ title: gameTitleInput.trim() });
       setGameTitleInput("");
       setSelectedGameId(response.game.id);
       setGameState(response.state);
@@ -202,14 +225,13 @@ export default function DevApp() {
     clearMessages();
     try {
       const response = await sendGameAction(selectedGameId, {
-        user_id: currentUserId,
         type,
         payload,
       });
       if (response.state) {
         setGameState(response.state);
       } else {
-        await loadGameState(selectedGameId, currentUserId);
+        await loadGameState(selectedGameId);
       }
       setSuccessMessage(`Действие ${type} отправлено`);
     } catch (error) {
@@ -221,11 +243,21 @@ export default function DevApp() {
 
   async function handleManualRefresh() {
     if (!selectedGameId || !currentUserId) {
-      setErrorMessage("Выбери пользователя и игру");
+      setErrorMessage("Choose user and game");
       return;
     }
     clearMessages();
-    await loadGameState(selectedGameId, currentUserId);
+    await loadGameState(selectedGameId);
+  }
+
+  function handleLogout() {
+    clearAuthSession(false);
+    setAuthSession(null);
+    setSelectedGameId(null);
+    setGameState(null);
+    setGames([]);
+    setAuthPassword("");
+    clearMessages();
   }
 
   const availableDecisions = normalizeStringArray(gameState?.available_decisions);
@@ -233,6 +265,37 @@ export default function DevApp() {
   const rejectedDecisions = normalizeStringArray(gameState?.rejected_decisions);
   const currentVotes = normalizeVotes(gameState?.current_votes);
   const availableActions = gameState?.available_actions ?? [];
+
+  if (!currentUser) {
+    return (
+      <div className="app-shell dev-shell">
+        <header className="page-header">
+          <div>
+            <h1>Board of Directors Dev Frontend</h1>
+            <p className="muted">
+              API: <code>{API_BASE_URL}</code> · <a href="/play">Player UI</a>
+            </p>
+          </div>
+        </header>
+        {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
+        <section className="panel auth-panel">
+          <div className="panel-header">
+            <h2>{authMode === "login" ? "Login" : "Register"}</h2>
+            <div className="inline-actions">
+              <button type="button" onClick={() => setAuthMode("login")} disabled={authMode === "login"}>Login</button>
+              <button type="button" onClick={() => setAuthMode("register")} disabled={authMode === "register"}>Register</button>
+            </div>
+          </div>
+          <form className="stack" onSubmit={handleAuthSubmit}>
+            <input value={authLogin} onChange={(event) => setAuthLogin(event.target.value)} placeholder="login" autoComplete="username" />
+            {authMode === "register" ? <input value={authName} onChange={(event) => setAuthName(event.target.value)} placeholder="name" autoComplete="name" /> : null}
+            <input value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="password" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} />
+            <button type="submit" disabled={isSubmitting || isAuthChecking}>{authMode === "login" ? "Login" : "Register"}</button>
+          </form>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell dev-shell">
@@ -255,42 +318,14 @@ export default function DevApp() {
       <div className="grid">
         <section className="panel">
           <div className="panel-header">
-            <h2>Пользователи</h2>
-            <button onClick={() => void loadUsers()} disabled={isLoadingUsers || isSubmitting}>
-              Обновить
-            </button>
+            <h2>Auth</h2>
+            <button onClick={handleLogout}>Logout</button>
           </div>
-          <form className="stack" onSubmit={handleCreateUser}>
-            <input
-              value={userNameInput}
-              onChange={(event) => setUserNameInput(event.target.value)}
-              placeholder="Имя пользователя"
-            />
-            <div className="inline-actions">
-              <button type="submit" disabled={isSubmitting}>
-                Создать пользователя
-              </button>
-              <button type="button" disabled={isSubmitting} onClick={() => void handleCreatePresetUsers()}>
-                Создать Alice, Bob, Carol
-              </button>
-            </div>
-          </form>
-          <div className="list">
-            {users.map((user) => (
-              <button
-                key={user.id}
-                className={user.id === currentUserId ? "list-item selected" : "list-item"}
-                onClick={() => {
-                  clearMessages();
-                  setCurrentUserId(user.id);
-                }}
-              >
-                <span>{user.name}</span>
-                <span className="muted">#{user.id}</span>
-              </button>
-            ))}
-            {!users.length && <p className="muted">Пользователей пока нет.</p>}
+          <div className="stack">
+            <InfoRow label="User" value={currentUser.name + " (#" + currentUser.id + ")"} />
+            <InfoRow label="Login" value={currentUser.login} />
           </div>
+          <p className="muted">Dev actions use the current JWT user. Use another browser profile to test another player.</p>
         </section>
 
         <section className="panel">
@@ -339,7 +374,7 @@ export default function DevApp() {
                 checked={autoRefresh}
                 onChange={(event) => setAutoRefresh(event.target.checked)}
               />
-              Auto-refresh 2s
+              Auto-refresh 10s
             </label>
             <button
               onClick={() => void handleManualRefresh()}
@@ -354,23 +389,6 @@ export default function DevApp() {
           <p className="muted">Выбери игру из списка, чтобы увидеть состояние партии.</p>
         ) : (
           <>
-            <div className="inline-actions compact">
-              <span className="muted">Смотреть как:</span>
-              <select
-                value={currentUserId ?? ""}
-                onChange={(event) => setCurrentUserId(Number(event.target.value))}
-              >
-                <option value="" disabled>
-                  Выбери пользователя
-                </option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name} (#{user.id})
-                  </option>
-                ))}
-              </select>
-            </div>
-
             {isLoadingGameState && !gameState ? <p className="muted">Загрузка состояния...</p> : null}
 
             {gameState ? (

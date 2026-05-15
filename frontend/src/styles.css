@@ -360,10 +360,36 @@ code {
   align-items: end;
 }
 
+.welcome-form.auth-form {
+  grid-template-columns: 1fr;
+}
+
 .welcome-form label {
   grid-column: 1 / -1;
   color: var(--muted);
   font-weight: 700;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 14px;
+  max-width: 420px;
+}
+
+.auth-tab {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  background: rgba(246, 241, 232, 0.08);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.auth-tab.active {
+  background: rgba(217, 164, 65, 0.18);
+  color: var(--ink);
+  border-color: rgba(217, 164, 65, 0.56);
 }
 
 .primary-action,

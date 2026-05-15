@@ -180,6 +180,7 @@ type PublicGameState struct {
 type PublicPlayerState struct {
 	UserID   int64  `json:"user_id"`
 	Name     string `json:"name"`
+	AvatarURL string `json:"avatar_url,omitempty"`
 	ShareBPS int    `json:"share_bps"`
 	IsHost   bool   `json:"is_host"`
 	IsCEO    bool   `json:"is_ceo"`
@@ -201,6 +202,7 @@ type PublicChatMessage struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
 	UserName  string    `json:"user_name"`
+	AvatarURL string    `json:"avatar_url,omitempty"`
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
 }

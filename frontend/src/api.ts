@@ -1,31 +1,49 @@
 import type {
+  AuthResponse,
   CreateGameRequest,
   CreateGameResponse,
-  CreateUserResponse,
   GameActionRequest,
   GameActionResponse,
   GamesResponse,
   GameStateResponse,
+  LoginRequest,
+  MeResponse,
   PublicGameState,
+  RegisterRequest,
   User,
   UsersResponse,
 } from "./types";
+import { clearAuthSession, getAuthToken } from "./authSession";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+interface RequestOptions {
+  auth?: boolean;
+}
+
+async function request<T>(path: string, init?: RequestInit, options: RequestOptions = {}): Promise<T> {
+  const shouldAuthorize = options.auth ?? true;
+  const token = shouldAuthorize ? getAuthToken() : null;
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
     ...init,
+    headers: {
+      ...Object.fromEntries(headers.entries()),
+    },
   });
 
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
 
   if (!response.ok) {
+    if (response.status === 401 && shouldAuthorize) {
+      clearAuthSession();
+    }
     const message =
       typeof data?.error === "string"
         ? data.error
@@ -36,17 +54,36 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+export async function login(input: LoginRequest): Promise<AuthResponse> {
+  return request<AuthResponse>(
+    "/auth/login",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { auth: false },
+  );
+}
+
+export async function register(input: RegisterRequest): Promise<AuthResponse> {
+  return request<AuthResponse>(
+    "/auth/register",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+    { auth: false },
+  );
+}
+
+export async function getMe(): Promise<AuthResponse["user"]> {
+  const data = await request<MeResponse>("/auth/me");
+  return data.user;
+}
+
 export async function listUsers(): Promise<User[]> {
   const data = await request<UsersResponse>("/users/");
   return data.users;
-}
-
-export async function createUser(name: string): Promise<User> {
-  const data = await request<CreateUserResponse>("/users/", {
-    method: "POST",
-    body: JSON.stringify({ name }),
-  });
-  return data.user;
 }
 
 export async function listGames(): Promise<GamesResponse["games"]> {
@@ -61,10 +98,8 @@ export async function createGame(input: CreateGameRequest): Promise<CreateGameRe
   });
 }
 
-export async function getGameState(gameId: number, viewerUserId: number): Promise<PublicGameState> {
-  const data = await request<GameStateResponse>(
-    `/games/${gameId}/state?viewer_user_id=${viewerUserId}`,
-  );
+export async function getGameState(gameId: number): Promise<PublicGameState> {
+  const data = await request<GameStateResponse>(`/games/${gameId}/state`);
   return data.state;
 }
 

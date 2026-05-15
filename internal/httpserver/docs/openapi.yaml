@@ -9,6 +9,96 @@ servers:
   - url: http://localhost:8000
 
 paths:
+  /auth/register:
+    post:
+      summary: Register user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login:
+                  type: string
+                password:
+                  type: string
+                name:
+                  type: string
+                avatar_url:
+                  type: string
+              required: [login, password, name]
+      responses:
+        "201":
+          description: Registered user and JWT token
+
+  /auth/login:
+    post:
+      summary: Login user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login:
+                  type: string
+                password:
+                  type: string
+              required: [login, password]
+      responses:
+        "200":
+          description: Authenticated user and JWT token
+
+  /auth/me:
+    get:
+      summary: Get current authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user
+
+  /auth/password:
+    put:
+      summary: Change current user password
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Password changed
+
+  /leaderboard:
+    get:
+      summary: Get leaderboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [week, month, all]
+      responses:
+        "200":
+          description: Leaderboard entries
+
+  /users/me/profile:
+    get:
+      summary: Get current user profile and stats
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current profile
+    put:
+      summary: Update current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Updated profile
 
   /users:
     post:
@@ -126,6 +216,8 @@ paths:
   /games:
     post:
       summary: Create game
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -147,6 +239,8 @@ paths:
 
     get:
       summary: List games
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: Games list
@@ -163,6 +257,8 @@ paths:
   /games/{id}:
     get:
       summary: Get game by ID
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -183,6 +279,8 @@ paths:
 
     put:
       summary: Update game
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -213,6 +311,8 @@ paths:
 
     delete:
       summary: Delete game
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -227,15 +327,11 @@ paths:
   /games/{id}/state:
     get:
       summary: Get personalized game state
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - in: query
-          name: viewer_user_id
           required: true
           schema:
             type: integer
@@ -254,6 +350,8 @@ paths:
   /games/{id}/actions:
     post:
       summary: Send player action
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: id
@@ -284,6 +382,12 @@ paths:
                     $ref: "#/components/schemas/PublicGameState"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
 
     User:
@@ -292,10 +396,20 @@ components:
         id:
           type: integer
           format: int64
+        login:
+          type: string
         name:
           type: string
+        avatar_url:
+          type: string
+        last_seen_at:
+          type: string
+          nullable: true
         created_at:
           type: string
+        updated_at:
+          type: string
+          nullable: true
       required: [id, name, created_at]
 
     Game:
@@ -315,10 +429,7 @@ components:
       properties:
         title:
           type: string
-        host_user_id:
-          type: integer
-          format: int64
-      required: [title, host_user_id]
+      required: [title]
 
     Event:
       type: object
@@ -348,15 +459,12 @@ components:
     GameActionRequest:
       type: object
       properties:
-        user_id:
-          type: integer
-          format: int64
         type:
           type: string
         payload:
           type: object
           additionalProperties: true
-      required: [user_id, type]
+      required: [type]
 
     PublicPlayerState:
       type: object
@@ -365,6 +473,8 @@ components:
           type: integer
           format: int64
         name:
+          type: string
+        avatar_url:
           type: string
         share_bps:
           type: integer
@@ -490,6 +600,8 @@ components:
           type: integer
           format: int64
         user_name:
+          type: string
+        avatar_url:
           type: string
         message:
           type: string

@@ -19,7 +19,11 @@ type Storage interface {
 	CreateUser(ctx context.Context, user *models.User) error
 	ListUsers(ctx context.Context) ([]models.User, error)
 	GetUserByID(ctx context.Context, id int64) (*models.User, error)
+	GetUserByLogin(ctx context.Context, login string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) error
+	UpdateUserProfile(ctx context.Context, user *models.User) error
+	UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error
+	TouchUserLastSeen(ctx context.Context, id int64, minInterval time.Duration) error
 	DeleteUser(ctx context.Context, id int64) error
 
 	CreateGame(ctx context.Context, game *models.Game) error
@@ -71,18 +75,27 @@ func (p *Postgres) CreateUser(ctx context.Context, user *models.User) error {
 		return errors.New("name is required")
 	}
 
+	if user.Login == "" {
+		query := `
+			INSERT INTO users (name)
+			VALUES ($1)
+			RETURNING id, login, password_hash, avatar_url, last_seen_at, created_at, updated_at
+		`
+		return scanUserRow(p.db.QueryRowContext(ctx, query, user.Name), user)
+	}
+
 	query := `
-		INSERT INTO users (name)
-		VALUES ($1)
-		RETURNING id, created_at
+		INSERT INTO users (login, name, password_hash, avatar_url, last_seen_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5)
+		RETURNING id, login, password_hash, avatar_url, last_seen_at, created_at, updated_at
 	`
 
-	return p.db.QueryRowContext(ctx, query, user.Name).Scan(&user.ID, &user.CreatedAt)
+	return scanUserRow(p.db.QueryRowContext(ctx, query, user.Login, user.Name, user.PasswordHash, user.AvatarURL, user.LastSeenAt), user)
 }
 
 func (p *Postgres) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := p.db.QueryContext(ctx, `
-		SELECT id, name, created_at
+		SELECT id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
 		FROM users
 		ORDER BY id
 	`)
@@ -94,7 +107,7 @@ func (p *Postgres) ListUsers(ctx context.Context) ([]models.User, error) {
 	var users []models.User
 	for rows.Next() {
 		var user models.User
-		if err := rows.Scan(&user.ID, &user.Name, &user.CreatedAt); err != nil {
+		if err := scanUser(rows, &user); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -111,12 +124,32 @@ func (p *Postgres) GetUserByID(ctx context.Context, id int64) (*models.User, err
 	var user models.User
 
 	query := `
-		SELECT id, name, created_at
+		SELECT id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
 
-	err := p.db.QueryRowContext(ctx, query, id).Scan(&user.ID, &user.Name, &user.CreatedAt)
+	err := scanUserRow(p.db.QueryRowContext(ctx, query, id), &user)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (p *Postgres) GetUserByLogin(ctx context.Context, login string) (*models.User, error) {
+	var user models.User
+
+	query := `
+		SELECT id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
+		FROM users
+		WHERE LOWER(login) = LOWER($1)
+	`
+
+	err := scanUserRow(p.db.QueryRowContext(ctx, query, login), &user)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("user not found")
@@ -137,12 +170,13 @@ func (p *Postgres) UpdateUser(ctx context.Context, user *models.User) error {
 
 	query := `
 		UPDATE users
-		SET name = $1
+		SET name = $1,
+			updated_at = NOW()
 		WHERE id = $2
-		RETURNING created_at
+		RETURNING id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
 	`
 
-	err := p.db.QueryRowContext(ctx, query, user.Name, user.ID).Scan(&user.CreatedAt)
+	err := scanUserRow(p.db.QueryRowContext(ctx, query, user.Name, user.ID), user)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("user not found")
@@ -151,6 +185,83 @@ func (p *Postgres) UpdateUser(ctx context.Context, user *models.User) error {
 	}
 
 	return nil
+}
+
+func (p *Postgres) UpdateUserProfile(ctx context.Context, user *models.User) error {
+	if user.ID <= 0 {
+		return errors.New("id is required")
+	}
+	if user.Name == "" {
+		return errors.New("name is required")
+	}
+
+	query := `
+		UPDATE users
+		SET name = $1,
+			avatar_url = NULLIF($2, ''),
+			updated_at = NOW()
+		WHERE id = $3
+		RETURNING id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at
+	`
+
+	err := scanUserRow(p.db.QueryRowContext(ctx, query, user.Name, user.AvatarURL, user.ID), user)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("user not found")
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (p *Postgres) UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error {
+	if id <= 0 {
+		return errors.New("id is required")
+	}
+	if passwordHash == "" {
+		return errors.New("password_hash is required")
+	}
+
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE users
+		SET password_hash = $1,
+			updated_at = NOW()
+		WHERE id = $2
+	`, passwordHash, id)
+	if err != nil {
+		return err
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	return nil
+}
+
+func (p *Postgres) TouchUserLastSeen(ctx context.Context, id int64, minInterval time.Duration) error {
+	if id <= 0 {
+		return errors.New("id is required")
+	}
+
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE users
+		SET last_seen_at = NOW(),
+			updated_at = NOW()
+		WHERE id = $1
+			AND (last_seen_at IS NULL OR last_seen_at < NOW() - ($2::text)::interval)
+	`, id, fmt.Sprintf("%d seconds", int(minInterval.Seconds())))
+	if err != nil {
+		return err
+	}
+
+	_, err = res.RowsAffected()
+	return err
 }
 
 func (p *Postgres) DeleteUser(ctx context.Context, id int64) error {
@@ -477,6 +588,61 @@ func (p *Postgres) ListEventsByGameID(ctx context.Context, gameID int64) ([]mode
 	}
 
 	return events, rows.Err()
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanUserRow(row rowScanner, user *models.User) error {
+	return scanUser(row, user)
+}
+
+func scanUser(row rowScanner, user *models.User) error {
+	var login sql.NullString
+	var passwordHash sql.NullString
+	var avatarURL sql.NullString
+	var lastSeenAt sql.NullTime
+	var updatedAt sql.NullTime
+
+	err := row.Scan(
+		&user.ID,
+		&login,
+		&user.Name,
+		&passwordHash,
+		&avatarURL,
+		&lastSeenAt,
+		&user.CreatedAt,
+		&updatedAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	user.Login = ""
+	if login.Valid {
+		user.Login = login.String
+	}
+	user.PasswordHash = ""
+	if passwordHash.Valid {
+		user.PasswordHash = passwordHash.String
+	}
+	user.AvatarURL = ""
+	if avatarURL.Valid {
+		user.AvatarURL = avatarURL.String
+	}
+	user.LastSeenAt = nil
+	if lastSeenAt.Valid {
+		t := lastSeenAt.Time
+		user.LastSeenAt = &t
+	}
+	user.UpdatedAt = nil
+	if updatedAt.Valid {
+		t := updatedAt.Time
+		user.UpdatedAt = &t
+	}
+
+	return nil
 }
 
 // RunMigrations выполняет все .sql файлы из указанной директории в одной транзакции.

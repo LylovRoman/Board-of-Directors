@@ -1,15 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createGame,
-  createUser,
+  getMe,
   getGameState,
   listGames,
-  listUsers,
+  login,
+  register,
   sendGameAction,
   API_BASE_URL,
 } from "./api";
+import {
+  AUTH_SESSION_CLEARED_EVENT,
+  clearAuthSession,
+  getAuthToken,
+  readStoredAuthSession,
+  saveAuthSession,
+  saveAuthUser,
+} from "./authSession";
 import type {
   ActionType,
+  AuthUser,
   Game,
   GamePhase,
   GameStatus,
@@ -22,7 +32,6 @@ import type {
   PublicChatMessage,
   PublicPlayerState,
   PublicRoundReport,
-  User,
 } from "./types";
 import {
   normalizeChatMessages,
@@ -34,7 +43,6 @@ import {
   normalizeVotes,
 } from "./types";
 
-const CURRENT_USER_STORAGE_KEY = "board-of-directors-current-user-id";
 const SELECTED_GAME_STORAGE_KEY = "board-of-directors-selected-game-id";
 const DECISION_TITLES: Record<string, string> = {
   A: "Враждебное поглощение",
@@ -51,6 +59,8 @@ interface GameCard {
   game: Game;
   state?: PublicGameState;
 }
+
+type AuthMode = "login" | "register";
 
 function readStoredNumber(key: string): number | null {
   const raw = window.localStorage.getItem(key);
@@ -178,17 +188,18 @@ function getErrorMessage(error: unknown): string {
 }
 
 export default function PlayerApp() {
-  const [users, setUsers] = useState<User[]>([]);
+  const [authSession, setAuthSession] = useState(() => readStoredAuthSession());
+  const [isAuthChecking, setIsAuthChecking] = useState(() => Boolean(getAuthToken()));
   const [games, setGames] = useState<Game[]>([]);
   const [gameCards, setGameCards] = useState<GameCard[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<number | null>(() =>
-    readStoredNumber(CURRENT_USER_STORAGE_KEY),
-  );
   const [selectedGameId, setSelectedGameId] = useState<number | null>(() =>
     readStoredNumber(SELECTED_GAME_STORAGE_KEY),
   );
   const [gameState, setGameState] = useState<PublicGameState | null>(null);
-  const [playerName, setPlayerName] = useState("");
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authLogin, setAuthLogin] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [newGameTitle, setNewGameTitle] = useState("");
   const [lobbyFilter, setLobbyFilter] = useState("");
   const [lobbyStatusFilter, setLobbyStatusFilter] = useState<GameStatus | "all">("all");
@@ -198,10 +209,8 @@ export default function PlayerApp() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const currentUser = useMemo(
-    () => users.find((user) => user.id === currentUserId) ?? null,
-    [users, currentUserId],
-  );
+  const currentUser: AuthUser | null = authSession?.user ?? null;
+  const currentUserId = currentUser?.id ?? null;
   const availableActions = gameState?.available_actions ?? [];
   const players = gameState?.players ?? [];
   const currentVotes = normalizeVotes(gameState?.current_votes);
@@ -240,21 +249,6 @@ export default function PlayerApp() {
     setErrorMessage(getErrorMessage(error));
   }, []);
 
-  const loadUsers = useCallback(async () => {
-    try {
-      const nextUsers = await listUsers();
-      setUsers(nextUsers);
-      if (currentUserId !== null && !nextUsers.some((user) => user.id === currentUserId)) {
-        setCurrentUserId(null);
-        setSelectedGameId(null);
-        window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
-        window.localStorage.removeItem(SELECTED_GAME_STORAGE_KEY);
-      }
-    } catch (error) {
-      showError(error);
-    }
-  }, [currentUserId, showError]);
-
   const loadGames = useCallback(async () => {
     try {
       const nextGames = await listGames();
@@ -267,9 +261,9 @@ export default function PlayerApp() {
   }, [showError]);
 
   const loadGameState = useCallback(
-    async (gameId: number, viewerUserId: number) => {
+    async (gameId: number) => {
       try {
-        const state = await getGameState(gameId, viewerUserId);
+        const state = await getGameState(gameId);
         setGameState(state);
         return state;
       } catch (error) {
@@ -281,8 +275,8 @@ export default function PlayerApp() {
   );
 
   const loadGameCards = useCallback(
-    async (sourceGames = games, viewerUserId = currentUserId) => {
-      if (!viewerUserId) {
+    async (sourceGames: Game[]) => {
+      if (!getAuthToken()) {
         setGameCards(sourceGames.map((game) => ({ game })));
         return;
       }
@@ -290,7 +284,7 @@ export default function PlayerApp() {
       const settled = await Promise.allSettled(
         sourceGames.map(async (game) => ({
           game,
-          state: await getGameState(game.id, viewerUserId),
+          state: await getGameState(game.id),
         })),
       );
 
@@ -300,33 +294,82 @@ export default function PlayerApp() {
         ),
       );
     },
-    [currentUserId, games],
+    [],
   );
 
   const refreshEverything = useCallback(async () => {
+    if (!currentUserId) {
+      return;
+    }
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      await loadUsers();
       const nextGames = await loadGames();
-      await loadGameCards(nextGames, currentUserId);
-      if (selectedGameId && currentUserId) {
-        await loadGameState(selectedGameId, currentUserId);
+      await loadGameCards(nextGames);
+      if (selectedGameId) {
+        await loadGameState(selectedGameId);
       }
     } finally {
       setIsLoading(false);
     }
-  }, [currentUserId, loadGameCards, loadGameState, loadGames, loadUsers, selectedGameId]);
+  }, [currentUserId, loadGameCards, loadGameState, loadGames, selectedGameId]);
 
   useEffect(() => {
-    void refreshEverything();
+    let canceled = false;
+
+    async function validateStoredSession() {
+      if (!authSession) {
+        setIsAuthChecking(false);
+        return;
+      }
+
+      try {
+        const user = await getMe();
+        if (canceled) {
+          return;
+        }
+        saveAuthUser(user);
+        setAuthSession((session) => (session ? { ...session, user } : null));
+      } catch {
+        if (!canceled) {
+          setAuthSession(null);
+          setSelectedGameId(null);
+          setGameState(null);
+        }
+      } finally {
+        if (!canceled) {
+          setIsAuthChecking(false);
+        }
+      }
+    }
+
+    void validateStoredSession();
+
+    return () => {
+      canceled = true;
+    };
   }, []);
 
   useEffect(() => {
-    if (currentUserId !== null) {
-      window.localStorage.setItem(CURRENT_USER_STORAGE_KEY, String(currentUserId));
+    const handleSessionCleared = () => {
+      setAuthSession(null);
+      setSelectedGameId(null);
+      setGameState(null);
+      setGames([]);
+      setGameCards([]);
+      window.localStorage.removeItem(SELECTED_GAME_STORAGE_KEY);
+    };
+
+    window.addEventListener(AUTH_SESSION_CLEARED_EVENT, handleSessionCleared);
+    return () => window.removeEventListener(AUTH_SESSION_CLEARED_EVENT, handleSessionCleared);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthChecking && currentUserId) {
+      void refreshEverything();
     }
-  }, [currentUserId]);
+  }, [currentUserId, isAuthChecking]);
+
 
   useEffect(() => {
     if (selectedGameId !== null) {
@@ -337,22 +380,24 @@ export default function PlayerApp() {
   }, [selectedGameId]);
 
   useEffect(() => {
-    if (!currentUserId) {
+    if (!currentUserId || !selectedGameId) {
       return undefined;
     }
 
-    const intervalId = window.setInterval(() => {
-      void (async () => {
-        const nextGames = await loadGames();
-        await loadGameCards(nextGames, currentUserId);
-        if (selectedGameId) {
-          await loadGameState(selectedGameId, currentUserId);
-        }
-      })();
-    }, 2000);
+    const refreshSelectedGame = () => {
+      if (document.visibilityState === "visible") {
+        void loadGameState(selectedGameId);
+      }
+    };
 
-    return () => window.clearInterval(intervalId);
-  }, [currentUserId, loadGameCards, loadGameState, loadGames, selectedGameId]);
+    const intervalId = window.setInterval(refreshSelectedGame, 10000);
+    document.addEventListener("visibilitychange", refreshSelectedGame);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshSelectedGame);
+    };
+  }, [currentUserId, loadGameState, selectedGameId]);
 
   useEffect(() => {
     const isJoinedLobby =
@@ -365,16 +410,16 @@ export default function PlayerApp() {
 
     const leaveLobby = () => {
       const body = JSON.stringify({
-        user_id: currentUserId,
         type: "leave_game",
       });
       const url = `${API_BASE_URL}/games/${selectedGameId}/actions`;
-      if (navigator.sendBeacon?.(url, body)) {
-        return;
-      }
+      const token = getAuthToken();
       void fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body,
         keepalive: true,
       });
@@ -386,23 +431,37 @@ export default function PlayerApp() {
 
   async function handleWelcomeSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const name = playerName.trim();
-    if (!name) {
-      setErrorMessage("Введите имя, чтобы войти в игру.");
+    const normalizedLogin = authLogin.trim();
+    const normalizedName = authName.trim();
+    if (!normalizedLogin || !authPassword) {
+      setErrorMessage("Введите логин и пароль.");
+      return;
+    }
+    if (authMode === "register" && !normalizedName) {
+      setErrorMessage("Введите имя для регистрации.");
       return;
     }
 
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const nextUsers = await listUsers();
-      const existing = nextUsers.find((user) => user.name.trim().toLowerCase() === name.toLowerCase());
-      const user = existing ?? (await createUser(name));
-      setUsers(existing ? nextUsers : [...nextUsers, user]);
-      setCurrentUserId(user.id);
-      setPlayerName(user.name);
+      const response =
+        authMode === "login"
+          ? await login({ login: normalizedLogin, password: authPassword })
+          : await register({
+              login: normalizedLogin,
+              name: normalizedName,
+              password: authPassword,
+            });
+
+      saveAuthSession(response);
+      setAuthSession(response);
+      setAuthPassword("");
+      if (authMode === "register") {
+        setAuthName("");
+      }
       const nextGames = await loadGames();
-      await loadGameCards(nextGames, user.id);
+      await loadGameCards(nextGames);
     } catch (error) {
       showError(error);
     } finally {
@@ -421,13 +480,13 @@ export default function PlayerApp() {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const response = await createGame({ title, host_user_id: currentUserId });
+      const response = await createGame({ title });
       setNewGameTitle("");
       setIsCreatingGame(false);
       setSelectedGameId(response.game.id);
       setGameState(response.state);
       const nextGames = await loadGames();
-      await loadGameCards(nextGames, currentUserId);
+      await loadGameCards(nextGames);
     } catch (error) {
       showError(error);
     } finally {
@@ -443,7 +502,7 @@ export default function PlayerApp() {
     setIsLoading(true);
     setErrorMessage(null);
     setSelectedGameId(gameId);
-    await loadGameState(gameId, currentUserId);
+    await loadGameState(gameId);
     setIsLoading(false);
   }
 
@@ -457,17 +516,16 @@ export default function PlayerApp() {
     setErrorMessage(null);
     try {
       const response = await sendGameAction(selectedGameId, {
-        user_id: currentUserId,
         type,
         payload,
       });
       if (response.state) {
         setGameState(response.state);
       } else {
-        await loadGameState(selectedGameId, currentUserId);
+        await loadGameState(selectedGameId);
       }
       const nextGames = await loadGames();
-      await loadGameCards(nextGames, currentUserId);
+      await loadGameCards(nextGames);
     } catch (error) {
       showError(error);
     } finally {
@@ -480,11 +538,13 @@ export default function PlayerApp() {
   }
 
   function handleLogout() {
-    setCurrentUserId(null);
+    clearAuthSession(false);
+    setAuthSession(null);
     setSelectedGameId(null);
     setGameState(null);
-    setPlayerName("");
-    window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+    setGames([]);
+    setGameCards([]);
+    setAuthPassword("");
     window.localStorage.removeItem(SELECTED_GAME_STORAGE_KEY);
   }
 
@@ -498,17 +558,60 @@ export default function PlayerApp() {
           <p className="welcome-copy">
             Войди в совет, голосуй за решения и попробуй понять, кто ведет компанию не туда.
           </p>
-          <form className="welcome-form" onSubmit={handleWelcomeSubmit}>
-            <label htmlFor="player-name">Твое имя</label>
+          <div className="auth-tabs" role="tablist" aria-label="Авторизация">
+            <button
+              type="button"
+              className={authMode === "login" ? "auth-tab active" : "auth-tab"}
+              onClick={() => {
+                setAuthMode("login");
+                setErrorMessage(null);
+              }}
+            >
+              Вход
+            </button>
+            <button
+              type="button"
+              className={authMode === "register" ? "auth-tab active" : "auth-tab"}
+              onClick={() => {
+                setAuthMode("register");
+                setErrorMessage(null);
+              }}
+            >
+              Регистрация
+            </button>
+          </div>
+          <form className="welcome-form auth-form" onSubmit={handleWelcomeSubmit}>
+            <label htmlFor="auth-login">Логин</label>
             <input
-              id="player-name"
-              value={playerName}
-              onChange={(event) => setPlayerName(event.target.value)}
-              placeholder="Например, Alice"
-              autoComplete="name"
+              id="auth-login"
+              value={authLogin}
+              onChange={(event) => setAuthLogin(event.target.value)}
+              placeholder="Например, alice"
+              autoComplete="username"
             />
-            <button type="submit" className="primary-action" disabled={isSubmitting}>
-              Продолжить
+            {authMode === "register" ? (
+              <>
+                <label htmlFor="auth-name">Твое имя</label>
+                <input
+                  id="auth-name"
+                  value={authName}
+                  onChange={(event) => setAuthName(event.target.value)}
+                  placeholder="Например, Alice"
+                  autoComplete="name"
+                />
+              </>
+            ) : null}
+            <label htmlFor="auth-password">Пароль</label>
+            <input
+              id="auth-password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="Минимум 8 символов"
+              type="password"
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+            />
+            <button type="submit" className="primary-action" disabled={isSubmitting || isAuthChecking}>
+              {authMode === "login" ? "Войти" : "Зарегистрироваться"}
             </button>
           </form>
         </section>
