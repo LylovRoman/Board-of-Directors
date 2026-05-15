@@ -55,6 +55,7 @@ export interface Event {
 export interface PublicPlayerState {
   user_id: number;
   name: string;
+  avatar_url?: string;
   share_bps: number;
   is_host: boolean;
   is_ceo: boolean;
@@ -76,6 +77,7 @@ export interface PublicChatMessage {
   id: number;
   user_id: number;
   user_name: string;
+  avatar_url?: string;
   message: string;
   created_at: string;
 }
@@ -168,6 +170,41 @@ export interface RegisterRequest {
   password: string;
   name: string;
   avatar_url?: string;
+}
+
+export interface RoleStats {
+  games: number;
+  wins: number;
+  losses: number;
+  winrate: number;
+}
+
+export interface UserStats {
+  total: RoleStats;
+  mole: RoleStats;
+  director: RoleStats;
+}
+
+export interface Profile extends User {
+  stats: UserStats;
+}
+
+export interface ProfileResponse {
+  profile: Profile;
+}
+
+export interface UpdateProfileRequest {
+  name: string;
+  avatar_url: string;
+}
+
+export interface UpdateProfileResponse {
+  user: AuthUser;
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
 }
 
 export interface AuthResponse {

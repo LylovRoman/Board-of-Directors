@@ -266,12 +266,69 @@ code {
   min-width: 0;
 }
 
-.player-chip span {
+.profile-chip-button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0.25rem 0.35rem 0.25rem 0.25rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+}
+
+.profile-chip-button:hover {
+  border-color: var(--line);
+  background: rgba(246, 241, 232, 0.08);
+}
+
+.profile-chip-button > span:last-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 800;
+}
+
+.user-avatar {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(246, 241, 232, 0.2);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, rgba(217, 164, 65, 0.24), rgba(78, 170, 160, 0.22)),
+    rgba(18, 18, 17, 0.92);
+  color: #f2cf85;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-small {
+  width: 30px;
+  height: 30px;
+  font-size: 0.78rem;
+}
+
+.avatar-medium {
+  width: 46px;
+  height: 46px;
+  font-size: 1rem;
+}
+
+.avatar-large {
+  width: 72px;
+  height: 72px;
+  font-size: 1.45rem;
 }
 
 .lobby-browser,
@@ -301,6 +358,99 @@ code {
 .history-panel h2 {
   margin: 0;
   font-size: clamp(1.15rem, 2vw, 1.6rem);
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(8, 8, 7, 0.72);
+}
+
+.profile-dialog {
+  display: grid;
+  gap: 16px;
+  width: min(820px, 100%);
+  max-height: min(860px, calc(100vh - 36px));
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+}
+
+.profile-dialog-header {
+  display: flex;
+  gap: 12px;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.profile-title {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.profile-title h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.profile-title span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-stat {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(246, 241, 232, 0.06);
+}
+
+.profile-stat span,
+.profile-stat small {
+  color: var(--muted);
+}
+
+.profile-stat strong {
+  color: #f2cf85;
+  font-size: 1.35rem;
+}
+
+.profile-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(18, 18, 17, 0.72);
+}
+
+.profile-form h3 {
+  margin: 0;
+}
+
+.profile-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .compact-heading {
@@ -448,6 +598,29 @@ code {
   gap: 12px;
 }
 
+.player-card-heading,
+.identity-name,
+.director-identity,
+.chat-author,
+.proposal-author {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.player-card-heading > div,
+.identity-name > h2,
+.director-identity > div,
+.chat-author > strong,
+.proposal-author {
+  min-width: 0;
+}
+
+.identity-name h2 {
+  margin: 0;
+}
+
 .player-actions {
   display: flex;
   flex-wrap: wrap;
@@ -546,7 +719,7 @@ code {
   background: rgba(246, 241, 232, 0.06);
 }
 
-.director-row div:first-child {
+.director-identity > div {
   display: grid;
 }
 
@@ -790,11 +963,11 @@ code {
   background: rgba(77, 159, 114, 0.12);
 }
 
-.chat-message div {
+.chat-message-head {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  align-items: baseline;
+  align-items: center;
 }
 
 .chat-message strong {
@@ -979,7 +1152,7 @@ code {
 
 .toast {
   position: fixed;
-  z-index: 3;
+  z-index: 5;
   right: 18px;
   bottom: 18px;
   display: flex;
@@ -991,6 +1164,11 @@ code {
   border-radius: 8px;
   background: rgba(55, 24, 22, 0.96);
   box-shadow: var(--shadow);
+}
+
+.toast-success {
+  border-color: rgba(77, 159, 114, 0.5);
+  background: rgba(23, 55, 38, 0.96);
 }
 
 .toast span {
@@ -1010,7 +1188,8 @@ code {
   .play-columns,
   .governance-form,
   .lobby-filters,
-  .history-panel {
+  .history-panel,
+  .profile-stats {
     grid-template-columns: 1fr;
   }
 

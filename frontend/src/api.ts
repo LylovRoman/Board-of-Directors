@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  ChangePasswordRequest,
   CreateGameRequest,
   CreateGameResponse,
   GameActionRequest,
@@ -8,8 +9,11 @@ import type {
   GameStateResponse,
   LoginRequest,
   MeResponse,
+  ProfileResponse,
   PublicGameState,
   RegisterRequest,
+  UpdateProfileRequest,
+  UpdateProfileResponse,
   User,
   UsersResponse,
 } from "./types";
@@ -79,6 +83,26 @@ export async function register(input: RegisterRequest): Promise<AuthResponse> {
 export async function getMe(): Promise<AuthResponse["user"]> {
   const data = await request<MeResponse>("/auth/me");
   return data.user;
+}
+
+export async function getMyProfile(): Promise<ProfileResponse["profile"]> {
+  const data = await request<ProfileResponse>("/users/me/profile");
+  return data.profile;
+}
+
+export async function updateMyProfile(input: UpdateProfileRequest): Promise<AuthResponse["user"]> {
+  const data = await request<UpdateProfileResponse>("/users/me/profile", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return data.user;
+}
+
+export async function changePassword(input: ChangePasswordRequest): Promise<void> {
+  await request<{ status: string }>("/auth/password", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function listUsers(): Promise<User[]> {

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  changePassword,
   createGame,
   getMe,
   getGameState,
+  getMyProfile,
   listGames,
   login,
   register,
   sendGameAction,
+  updateMyProfile,
   API_BASE_URL,
 } from "./api";
 import {
@@ -24,6 +27,7 @@ import type {
   GamePhase,
   GameStatus,
   GovernanceProposalType,
+  Profile,
   PublicGameState,
   PublicGovernanceProposal,
   PublicGovernanceReport,
@@ -204,6 +208,13 @@ export default function PlayerApp() {
   const [lobbyStatusFilter, setLobbyStatusFilter] = useState<GameStatus | "all">("all");
   const [onlyMyGames, setOnlyMyGames] = useState(false);
   const [isCreatingGame, setIsCreatingGame] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileName, setProfileName] = useState("");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -247,6 +258,7 @@ export default function PlayerApp() {
   }, [currentUserId, gameCards, lobbyFilter, lobbyStatusFilter, onlyMyGames]);
 
   const showError = useCallback((error: unknown) => {
+    setSuccessMessage(null);
     setErrorMessage(getErrorMessage(error));
   }, []);
 
@@ -529,6 +541,80 @@ export default function PlayerApp() {
     await refreshCurrentView();
   }
 
+  async function openProfile() {
+    if (!currentUserId) {
+      return;
+    }
+    setIsProfileOpen(true);
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      const nextProfile = await getMyProfile();
+      setProfile(nextProfile);
+      setProfileName(nextProfile.name);
+      setProfileAvatarUrl(nextProfile.avatar_url ?? "");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleProfileSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const name = profileName.trim();
+    const avatarUrl = profileAvatarUrl.trim();
+    if (!name) {
+      setErrorMessage("Введите имя.");
+      setSuccessMessage(null);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const user = await updateMyProfile({ name, avatar_url: avatarUrl });
+      saveAuthUser(user);
+      setAuthSession((session) => (session ? { ...session, user } : null));
+      const nextProfile = await getMyProfile();
+      setProfile(nextProfile);
+      setProfileName(nextProfile.name);
+      setProfileAvatarUrl(nextProfile.avatar_url ?? "");
+      if (selectedGameId) {
+        await loadGameState(selectedGameId);
+      }
+      setSuccessMessage("Профиль обновлен.");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handlePasswordSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!currentPassword || !newPassword) {
+      setErrorMessage("Введите текущий и новый пароль.");
+      setSuccessMessage(null);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      await changePassword({ current_password: currentPassword, new_password: newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      setSuccessMessage("Пароль обновлен.");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   async function handleLeaveGame() {
     if (!selectedGameId || !currentUserId) {
       setErrorMessage("Игра или игрок не выбраны.");
@@ -562,9 +648,13 @@ export default function PlayerApp() {
     setAuthSession(null);
     setSelectedGameId(null);
     setGameState(null);
+    setIsProfileOpen(false);
+    setProfile(null);
     setGames([]);
     setGameCards([]);
     setAuthPassword("");
+    setCurrentPassword("");
+    setNewPassword("");
     window.localStorage.removeItem(SELECTED_GAME_STORAGE_KEY);
   }
 
@@ -652,7 +742,10 @@ export default function PlayerApp() {
           <small>тайное заседание</small>
         </div>
         <div className="player-chip">
-          <span>{currentUser.name}</span>
+          <button className="profile-chip-button" onClick={() => void openProfile()}>
+            <UserAvatar name={currentUser.name} avatarUrl={currentUser.avatar_url} size="small" />
+            <span>{currentUser.name}</span>
+          </button>
           <button className="mini-button" onClick={handleLogout}>
             Сменить
           </button>
@@ -660,6 +753,27 @@ export default function PlayerApp() {
       </header>
 
       <Toast message={errorMessage} onClose={() => setErrorMessage(null)} />
+      <Toast message={successMessage} tone="success" onClose={() => setSuccessMessage(null)} />
+
+      {isProfileOpen ? (
+        <ProfileDialog
+          profile={profile}
+          currentUser={currentUser}
+          profileName={profileName}
+          profileAvatarUrl={profileAvatarUrl}
+          currentPassword={currentPassword}
+          newPassword={newPassword}
+          isLoading={isLoading}
+          isSubmitting={isSubmitting}
+          onProfileNameChange={setProfileName}
+          onProfileAvatarUrlChange={setProfileAvatarUrl}
+          onCurrentPasswordChange={setCurrentPassword}
+          onNewPasswordChange={setNewPassword}
+          onSubmitProfile={handleProfileSubmit}
+          onSubmitPassword={handlePasswordSubmit}
+          onClose={() => setIsProfileOpen(false)}
+        />
+      ) : null}
 
       {!selectedGameId ? (
         <section className="lobby-browser">
@@ -823,6 +937,160 @@ export default function PlayerApp() {
   );
 }
 
+function UserAvatar(props: { name: string; avatarUrl?: string; size?: "small" | "medium" | "large" }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const avatarUrl = props.avatarUrl?.trim();
+  const shouldShowImage = Boolean(avatarUrl && failedUrl !== avatarUrl);
+  const initial = Array.from(props.name.trim())[0]?.toUpperCase() ?? "?";
+
+  return (
+    <span className={`user-avatar avatar-${props.size ?? "medium"}`} aria-hidden="true">
+      {shouldShowImage ? (
+        <img src={avatarUrl} alt="" onError={() => setFailedUrl(avatarUrl ?? null)} />
+      ) : (
+        <span>{initial}</span>
+      )}
+    </span>
+  );
+}
+
+function formatWinRate(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function StatTile(props: { label: string; games: number; wins: number; losses: number; winrate: number }) {
+  return (
+    <div className="profile-stat">
+      <span>{props.label}</span>
+      <strong>{props.wins} / {props.games}</strong>
+      <small>{props.losses} поражений · {formatWinRate(props.winrate)}</small>
+    </div>
+  );
+}
+
+function ProfileDialog(props: {
+  profile: Profile | null;
+  currentUser: AuthUser;
+  profileName: string;
+  profileAvatarUrl: string;
+  currentPassword: string;
+  newPassword: string;
+  isLoading: boolean;
+  isSubmitting: boolean;
+  onProfileNameChange: (value: string) => void;
+  onProfileAvatarUrlChange: (value: string) => void;
+  onCurrentPasswordChange: (value: string) => void;
+  onNewPasswordChange: (value: string) => void;
+  onSubmitProfile: (event: React.FormEvent) => void;
+  onSubmitPassword: (event: React.FormEvent) => void;
+  onClose: () => void;
+}) {
+  const shownName = props.profileName || props.currentUser.name;
+  const shownAvatar = props.profileAvatarUrl || props.currentUser.avatar_url;
+  const stats = props.profile?.stats;
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+        <div className="profile-dialog-header">
+          <div className="profile-title">
+            <UserAvatar name={shownName} avatarUrl={shownAvatar} size="large" />
+            <div>
+              <p className="eyebrow">профиль</p>
+              <h2 id="profile-title">{shownName}</h2>
+              <span>@{props.currentUser.login}</span>
+            </div>
+          </div>
+          <button className="mini-button" onClick={props.onClose}>
+            Закрыть
+          </button>
+        </div>
+
+        {props.isLoading && !props.profile ? (
+          <p className="quiet-text">Загружаем профиль...</p>
+        ) : (
+          <>
+            <div className="profile-stats">
+              <StatTile
+                label="Всего"
+                games={stats?.total.games ?? 0}
+                wins={stats?.total.wins ?? 0}
+                losses={stats?.total.losses ?? 0}
+                winrate={stats?.total.winrate ?? 0}
+              />
+              <StatTile
+                label="Крот"
+                games={stats?.mole.games ?? 0}
+                wins={stats?.mole.wins ?? 0}
+                losses={stats?.mole.losses ?? 0}
+                winrate={stats?.mole.winrate ?? 0}
+              />
+              <StatTile
+                label="Директор"
+                games={stats?.director.games ?? 0}
+                wins={stats?.director.wins ?? 0}
+                losses={stats?.director.losses ?? 0}
+                winrate={stats?.director.winrate ?? 0}
+              />
+            </div>
+
+            <form className="profile-form" onSubmit={props.onSubmitProfile}>
+              <h3>Внешний вид</h3>
+              <label>
+                Имя
+                <input
+                  value={props.profileName}
+                  onChange={(event) => props.onProfileNameChange(event.target.value)}
+                  maxLength={64}
+                  autoComplete="name"
+                />
+              </label>
+              <label>
+                URL аватарки
+                <input
+                  value={props.profileAvatarUrl}
+                  onChange={(event) => props.onProfileAvatarUrlChange(event.target.value)}
+                  placeholder="https://example.com/avatar.png"
+                  inputMode="url"
+                />
+              </label>
+              <button className="primary-action" type="submit" disabled={props.isSubmitting}>
+                Сохранить профиль
+              </button>
+            </form>
+
+            <form className="profile-form" onSubmit={props.onSubmitPassword}>
+              <h3>Пароль</h3>
+              <label>
+                Текущий пароль
+                <input
+                  value={props.currentPassword}
+                  onChange={(event) => props.onCurrentPasswordChange(event.target.value)}
+                  type="password"
+                  autoComplete="current-password"
+                />
+              </label>
+              <label>
+                Новый пароль
+                <input
+                  value={props.newPassword}
+                  onChange={(event) => props.onNewPasswordChange(event.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Минимум 8 символов"
+                />
+              </label>
+              <button className="secondary-action" type="submit" disabled={props.isSubmitting}>
+                Сменить пароль
+              </button>
+            </form>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function GameLobbyScreen(props: {
   state: PublicGameState | null;
   currentUserId: number;
@@ -964,7 +1232,10 @@ function StartedGameScreen(props: {
         <aside className="side-stack">
           <section className="identity-card">
             <p className="eyebrow">Ты</p>
-            <h2>{props.me?.name ?? "Наблюдатель"}</h2>
+            <div className="identity-name">
+              <UserAvatar name={props.me?.name ?? "Наблюдатель"} avatarUrl={props.me?.avatar_url} size="medium" />
+              <h2>{props.me?.name ?? "Наблюдатель"}</h2>
+            </div>
             <div className="identity-meta">
               <span>{formatShare(props.me?.share_bps)} доля</span>
               <span>{roleLabel(props.me?.role)}</span>
@@ -987,16 +1258,19 @@ function StartedGameScreen(props: {
                   key={player.user_id}
                   className={player.user_id === props.currentUserId ? "director-row is-current" : "director-row"}
                 >
-                  <div>
-                    <strong>
-                      {player.name}
-                      {isWaitingForPlayer(player.user_id) ? (
-                        <span className="pending-vote" aria-label="ожидаем голос">
-                          ⌛
-                        </span>
-                      ) : null}
-                    </strong>
-                    <span>{formatShare(player.share_bps)}</span>
+                  <div className="director-identity">
+                    <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
+                    <div>
+                      <strong>
+                        {player.name}
+                        {isWaitingForPlayer(player.user_id) ? (
+                          <span className="pending-vote" aria-label="ожидаем голос">
+                            ⌛
+                          </span>
+                        ) : null}
+                      </strong>
+                      <span>{formatShare(player.share_bps)}</span>
+                    </div>
                   </div>
                   <div className="badge-row">
                     {player.is_host ? <span className="badge">Host</span> : null}
@@ -1386,11 +1660,18 @@ function GovernanceProposalCard(props: {
   disabled: boolean;
   onVote: () => void;
 }) {
+  const proposer = props.players.find((player) => player.user_id === props.proposal.proposer_user_id);
+  const proposerName = proposer?.name ?? playerName(props.players, props.proposal.proposer_user_id);
+
   return (
     <article className={props.selected ? "proposal-card selected-vote" : "proposal-card"}>
       <span>Предложение #{props.proposal.id}</span>
       <strong>{describeGovernanceProposal(props.proposal, props.players)}</strong>
-      <small>Автор: {playerName(props.players, props.proposal.proposer_user_id)}</small>
+      <small className="proposal-author">
+        Автор:
+        <UserAvatar name={proposerName} avatarUrl={proposer?.avatar_url} size="small" />
+        {proposerName}
+      </small>
       <button className="primary-action" onClick={props.onVote} disabled={props.disabled}>
         Голосовать
       </button>
@@ -1450,8 +1731,11 @@ function ChatPanel(props: {
           const isMine = message.user_id === props.currentUserId;
           return (
             <article className={isMine ? "chat-message is-mine" : "chat-message"} key={`${message.id}-${message.created_at}`}>
-              <div>
-                <strong>{isMine ? "Ты" : message.user_name}</strong>
+              <div className="chat-message-head">
+                <span className="chat-author">
+                  <UserAvatar name={message.user_name} avatarUrl={message.avatar_url} size="small" />
+                  <strong>{isMine ? "Ты" : message.user_name}</strong>
+                </span>
                 <small>{formatChatTime(message.created_at)}</small>
               </div>
               <p>{message.message}</p>
@@ -1523,9 +1807,12 @@ function PlayerCard(props: {
 }) {
   return (
     <article className={props.player.user_id === props.currentUserId ? "player-card is-current" : "player-card"}>
-      <div>
-        <h2>{props.player.name}</h2>
-        <p>{formatShare(props.player.share_bps)} доля</p>
+      <div className="player-card-heading">
+        <UserAvatar name={props.player.name} avatarUrl={props.player.avatar_url} size="medium" />
+        <div>
+          <h2>{props.player.name}</h2>
+          <p>{formatShare(props.player.share_bps)} доля</p>
+        </div>
       </div>
       <div className="badge-row">
         {props.player.is_host ? <span className="badge">Host</span> : null}
@@ -1629,13 +1916,13 @@ function DecisionList({ values, emptyText }: { values: string[]; emptyText: stri
   );
 }
 
-function Toast({ message, onClose }: { message: string | null; onClose: () => void }) {
+function Toast({ message, tone = "error", onClose }: { message: string | null; tone?: "error" | "success"; onClose: () => void }) {
   if (!message) {
     return null;
   }
 
   return (
-    <div className="toast" role="alert">
+    <div className={`toast toast-${tone}`} role="alert">
       <span>{message}</span>
       <button onClick={onClose}>Закрыть</button>
     </div>
