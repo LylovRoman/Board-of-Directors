@@ -448,6 +448,16 @@ code {
   gap: 12px;
 }
 
+.player-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.player-actions > button {
+  flex: 1 1 112px;
+}
+
 .player-card.is-current,
 .director-row.is-current {
   outline: 2px solid rgba(217, 164, 65, 0.72);

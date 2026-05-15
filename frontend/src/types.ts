@@ -2,6 +2,7 @@ export type ActionType =
   | "join_game"
   | "leave_game"
   | "kick_player"
+  | "ban_player"
   | "send_chat_message"
   | "start_game"
   | "vote"

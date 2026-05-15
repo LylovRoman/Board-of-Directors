@@ -228,8 +228,10 @@ export default function PlayerApp() {
   const canSubmitGovernanceProposal = availableActions.includes("submit_governance_proposal");
   const canSkipGovernanceProposal = availableActions.includes("skip_governance_proposal");
   const canJoin = availableActions.includes("join_game");
+  const canLeave = availableActions.includes("leave_game");
   const canStart = availableActions.includes("start_game");
   const canKick = availableActions.includes("kick_player");
+  const canBan = availableActions.includes("ban_player");
   const canSendChatMessage = availableActions.includes("send_chat_message");
   const filteredGameCards = useMemo(() => {
     const normalizedFilter = lobbyFilter.trim().toLowerCase();
@@ -527,6 +529,28 @@ export default function PlayerApp() {
     await refreshCurrentView();
   }
 
+  async function handleLeaveGame() {
+    if (!selectedGameId || !currentUserId) {
+      setErrorMessage("Игра или игрок не выбраны.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      await sendGameAction(selectedGameId, {
+        type: "leave_game",
+      });
+      setSelectedGameId(null);
+      setGameState(null);
+      await loadGames();
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function handleBackToGames() {
     setSelectedGameId(null);
     setGameState(null);
@@ -777,16 +801,20 @@ export default function PlayerApp() {
           state={gameState}
           currentUserId={currentUserId}
           canJoin={canJoin}
+          canLeave={canLeave}
           canStart={canStart}
           canKick={canKick}
+          canBan={canBan}
           hasMe={hasMe}
           chatMessages={chatMessages}
           canSendChatMessage={canSendChatMessage}
           isLoading={isLoading}
           isSubmitting={isSubmitting}
           onJoin={() => void handleAction("join_game")}
+          onLeave={() => void handleLeaveGame()}
           onStart={() => void handleAction("start_game")}
           onKick={(userId) => void handleAction("kick_player", { user_id: userId })}
+          onBan={(userId) => void handleAction("ban_player", { user_id: userId })}
           onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
           onRefresh={handleManualRefresh}
         />
@@ -799,16 +827,20 @@ function GameLobbyScreen(props: {
   state: PublicGameState | null;
   currentUserId: number;
   canJoin: boolean;
+  canLeave: boolean;
   canStart: boolean;
   canKick: boolean;
+  canBan: boolean;
   hasMe: boolean;
   chatMessages: PublicChatMessage[];
   canSendChatMessage: boolean;
   isLoading: boolean;
   isSubmitting: boolean;
   onJoin: () => void;
+  onLeave: () => void;
   onStart: () => void;
   onKick: (userId: number) => void;
+  onBan: (userId: number) => void;
   onSendChatMessage: (message: string) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
@@ -830,6 +862,11 @@ function GameLobbyScreen(props: {
               Присоединиться
             </button>
           ) : null}
+          {props.canLeave ? (
+            <button className="secondary-action" onClick={props.onLeave} disabled={props.isSubmitting}>
+              Выйти
+            </button>
+          ) : null}
           {props.canStart ? (
             <button className="primary-action" onClick={props.onStart} disabled={props.isSubmitting}>
               Начать игру
@@ -845,7 +882,9 @@ function GameLobbyScreen(props: {
             player={player}
             currentUserId={props.currentUserId}
             canKick={props.canKick && player.user_id !== props.currentUserId}
+            canBan={props.canBan && player.user_id !== props.currentUserId}
             onKick={() => props.onKick(player.user_id)}
+            onBan={() => props.onBan(player.user_id)}
             isSubmitting={props.isSubmitting}
           />
         ))}
@@ -1477,8 +1516,10 @@ function PlayerCard(props: {
   player: PublicPlayerState;
   currentUserId: number;
   canKick: boolean;
+  canBan: boolean;
   isSubmitting: boolean;
   onKick: () => void;
+  onBan: () => void;
 }) {
   return (
     <article className={props.player.user_id === props.currentUserId ? "player-card is-current" : "player-card"}>
@@ -1491,10 +1532,19 @@ function PlayerCard(props: {
         {props.player.is_ceo ? <span className="badge accent">CEO</span> : null}
         {props.player.user_id === props.currentUserId ? <span className="badge current">Вы</span> : null}
       </div>
-      {props.canKick ? (
-        <button className="kick-button" onClick={props.onKick} disabled={props.isSubmitting}>
-          Убрать
-        </button>
+      {props.canKick || props.canBan ? (
+        <div className="player-actions">
+          {props.canKick ? (
+            <button className="secondary-action" onClick={props.onKick} disabled={props.isSubmitting}>
+              Кикнуть
+            </button>
+          ) : null}
+          {props.canBan ? (
+            <button className="kick-button" onClick={props.onBan} disabled={props.isSubmitting}>
+              Забанить
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </article>
   );

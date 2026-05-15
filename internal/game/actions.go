@@ -79,6 +79,38 @@ func (e *Engine) handleKickPlayer(state *GameState, actor *models.User, raw json
 		GameID:     state.GameID,
 		UserID:     &actor.ID,
 		ActorName:  actor.Name,
+		EventType:  models.EventPlayerLeft,
+		EventValue: mustJSON(PlayerLeftPayload{UserID: payload.UserID}),
+	}}, nil
+}
+
+func (e *Engine) handleBanPlayer(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
+	if state.Status != GameStatusLobby {
+		return nil, errors.New("cannot ban after game started")
+	}
+	if actor.ID != state.HostUserID {
+		return nil, errors.New("only host can ban players")
+	}
+
+	var payload BanPlayerActionPayload
+	if err := decodeActionPayload(raw, &payload); err != nil {
+		return nil, err
+	}
+	if payload.UserID == 0 {
+		return nil, errors.New("user_id is required")
+	}
+	if payload.UserID == actor.ID {
+		return nil, errors.New("host cannot ban themselves")
+	}
+
+	if activePlayerByID(state, payload.UserID) == nil {
+		return nil, errors.New("target player is not in lobby")
+	}
+
+	return []models.Event{{
+		GameID:     state.GameID,
+		UserID:     &actor.ID,
+		ActorName:  actor.Name,
 		EventType:  models.EventPlayerKicked,
 		EventValue: mustJSON(PlayerKickedPayload{UserID: payload.UserID}),
 	}}, nil

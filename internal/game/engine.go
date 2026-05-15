@@ -153,6 +153,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleLeaveGame(state, actor)
 	case ActionKickPlayer:
 		return e.handleKickPlayer(state, actor, action.Payload)
+	case ActionBanPlayer:
+		return e.handleBanPlayer(state, actor, action.Payload)
 	case ActionSendChatMessage:
 		return e.handleSendChatMessage(state, actor, action.Payload)
 	case ActionStartGame:

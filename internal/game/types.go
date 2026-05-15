@@ -11,6 +11,7 @@ const (
 	ActionJoinGame                 ActionType = "join_game"
 	ActionLeaveGame                ActionType = "leave_game"
 	ActionKickPlayer               ActionType = "kick_player"
+	ActionBanPlayer                ActionType = "ban_player"
 	ActionSendChatMessage          ActionType = "send_chat_message"
 	ActionStartGame                ActionType = "start_game"
 	ActionVote                     ActionType = "vote"
@@ -178,13 +179,13 @@ type PublicGameState struct {
 }
 
 type PublicPlayerState struct {
-	UserID   int64  `json:"user_id"`
-	Name     string `json:"name"`
+	UserID    int64  `json:"user_id"`
+	Name      string `json:"name"`
 	AvatarURL string `json:"avatar_url,omitempty"`
-	ShareBPS int    `json:"share_bps"`
-	IsHost   bool   `json:"is_host"`
-	IsCEO    bool   `json:"is_ceo"`
-	Role     string `json:"role,omitempty"`
+	ShareBPS  int    `json:"share_bps"`
+	IsHost    bool   `json:"is_host"`
+	IsCEO     bool   `json:"is_ceo"`
+	Role      string `json:"role,omitempty"`
 }
 
 type PublicVoteState struct {
@@ -401,6 +402,10 @@ type GameFinishedPayload struct {
 }
 
 type KickPlayerActionPayload struct {
+	UserID int64 `json:"user_id"`
+}
+
+type BanPlayerActionPayload struct {
 	UserID int64 `json:"user_id"`
 }
 

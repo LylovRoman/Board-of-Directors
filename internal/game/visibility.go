@@ -194,7 +194,7 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 			actions = append(actions, ActionLeaveGame)
 		}
 		if player != nil && player.IsHost && !player.IsKicked && !player.IsLeft {
-			actions = append(actions, ActionKickPlayer, ActionStartGame)
+			actions = append(actions, ActionKickPlayer, ActionBanPlayer, ActionStartGame)
 		}
 	case GameStatusStarted:
 		if player == nil || player.IsKicked || player.IsLeft {

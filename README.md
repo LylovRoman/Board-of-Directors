@@ -289,7 +289,9 @@ MVP-действия:
 
 ```text
 join_game
+leave_game
 kick_player
+ban_player
 start_game
 vote
 ```

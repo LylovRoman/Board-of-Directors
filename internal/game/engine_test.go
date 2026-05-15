@@ -384,6 +384,86 @@ func TestKickedPlayerCannotRejoin(t *testing.T) {
 	}
 }
 
+func TestHostKickAllowsPlayerToRejoin(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			},
+		},
+	}
+	engine := NewEngine(store)
+
+	_, events, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  1,
+		Type:    ActionKickPlayer,
+		Payload: []byte(`{"user_id":2}`),
+	})
+	if err != nil {
+		t.Fatalf("kick player: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventPlayerLeft {
+		t.Fatalf("expected player_left event, got %+v", events)
+	}
+
+	state, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 2, Type: ActionJoinGame})
+	if err != nil {
+		t.Fatalf("rejoin after kick: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventPlayerJoined {
+		t.Fatalf("expected player_joined event, got %+v", events)
+	}
+	if len(state.Players) != 2 {
+		t.Fatalf("expected kicked player to rejoin lobby, got %+v", state.Players)
+	}
+}
+
+func TestHostBanPreventsPlayerRejoin(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			},
+		},
+	}
+	engine := NewEngine(store)
+
+	_, events, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  1,
+		Type:    ActionBanPlayer,
+		Payload: []byte(`{"user_id":2}`),
+	})
+	if err != nil {
+		t.Fatalf("ban player: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventPlayerKicked {
+		t.Fatalf("expected player_kicked event, got %+v", events)
+	}
+
+	_, _, err = engine.HandleAction(context.Background(), 1, Action{UserID: 2, Type: ActionJoinGame})
+	if err == nil || err.Error() != "kicked player cannot rejoin" {
+		t.Fatalf("expected kicked player cannot rejoin error, got %v", err)
+	}
+}
+
 func TestConcurrentStartGameOnlyOneSucceeds(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{
