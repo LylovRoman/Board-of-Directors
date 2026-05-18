@@ -12,6 +12,7 @@ export type ActionType =
 export type GameStatus = "lobby" | "started" | "finished";
 export type GamePhase = "mole_objective_selection" | "major_voting" | "governance_proposal" | "governance_voting";
 export type GovernanceProposalType = "share_transfer" | "treasury_grant" | "treasury_buyback" | "appoint_ceo";
+export type DecisionType = "growth" | "empowerment";
 
 export interface User {
   id: number;
@@ -58,6 +59,7 @@ export interface PublicPlayerState {
   name: string;
   avatar_url?: string;
   share_bps: number;
+  authority_bps: number;
   is_host: boolean;
   is_ceo: boolean;
   role?: string;
@@ -66,6 +68,11 @@ export interface PublicPlayerState {
 export interface PublicVoteState {
   user_id: number;
   has_voted: boolean;
+  proposal_id?: number;
+  abstain?: boolean;
+  share_bps?: number;
+  authority_bps?: number;
+  voting_power_bps?: number;
 }
 
 export interface PublicOwnVoteState {
@@ -87,6 +94,7 @@ export interface PublicGovernanceProposal {
   id: number;
   round: number;
   proposer_user_id: number;
+  author_user_ids?: number[] | null;
   proposal_type: GovernanceProposalType;
   from_user_id?: number;
   to_user_id?: number;
@@ -105,6 +113,25 @@ export interface PublicGovernanceReport {
   outcome: "accepted" | "rejected";
   proposal?: PublicGovernanceProposal;
   reason?: string;
+  votes?: PublicGovernanceVoteReport[] | null;
+}
+
+export interface PublicGovernanceVoteReport {
+  proposal_id?: number;
+  abstain: boolean;
+  share_bps: number;
+  authority_bps: number;
+  voting_power_bps: number;
+  voter_count: number;
+  voters?: PublicGovernanceVoterReport[] | null;
+}
+
+export interface PublicGovernanceVoterReport {
+  user_id: number;
+  name: string;
+  share_bps: number;
+  authority_bps: number;
+  voting_power_bps: number;
 }
 
 export interface PublicDecisionVoteReport {
@@ -140,6 +167,8 @@ export interface PublicGameState {
   governance_round?: number;
   treasury_share_bps: number;
   available_decisions?: string[] | null;
+  major_vote_options?: string[] | null;
+  decision_types?: Record<string, DecisionType> | null;
   accepted_decisions?: string[] | null;
   rejected_decisions?: string[] | null;
   players: PublicPlayerState[];

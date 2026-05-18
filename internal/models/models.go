@@ -41,6 +41,7 @@ const (
 	EventMoleTargetsGenerated   = "mole_targets_generated"
 	EventMoleObjectivesSelected = "mole_objectives_selected"
 	EventPlayerReceivedShare    = "player_received_share"
+	EventPlayerAuthorityGranted = "player_authority_granted"
 	EventCEOSelected            = "ceo_selected"
 	EventVotingRoundStarted     = "voting_round_started"
 

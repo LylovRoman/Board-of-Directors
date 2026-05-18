@@ -228,6 +228,7 @@ func (e *Engine) handleSelectMoleObjectives(state *GameState, actor *models.User
 		return nil, err
 	}
 
+	showcase := e.majorShowcase(state.Available, targets, sabotage)
 	return []models.Event{{
 		GameID:     state.GameID,
 		UserID:     &actor.ID,
@@ -239,7 +240,7 @@ func (e *Engine) handleSelectMoleObjectives(state *GameState, actor *models.User
 		UserID:     &actor.ID,
 		ActorName:  actor.Name,
 		EventType:  models.EventVotingRoundStarted,
-		EventValue: mustJSON(VotingRoundStartedPayload{Round: 1}),
+		EventValue: mustJSON(VotingRoundStartedPayload{Round: 1, ShowcaseDecisions: showcase}),
 	}}, nil
 }
 
@@ -258,10 +259,6 @@ func (e *Engine) handleVote(state *GameState, actor *models.User, raw json.RawMe
 	if player == nil {
 		return nil, errors.New("only active players can vote")
 	}
-	if hasPlayerVoted(state, actor.ID) {
-		return nil, errors.New("player already voted this round")
-	}
-
 	var payload VoteActionPayload
 	if err := decodeActionPayload(raw, &payload); err != nil {
 		return nil, err
@@ -273,6 +270,9 @@ func (e *Engine) handleVote(state *GameState, actor *models.User, raw json.RawMe
 		}
 		if !state.Available[*payload.Decision] {
 			return nil, errors.New("decision is not available")
+		}
+		if !isDecisionInCurrentShowcase(state, *payload.Decision) {
+			return nil, errors.New("decision is not in the current showcase")
 		}
 	} else if player.IsCEO {
 		return nil, errors.New("ceo cannot abstain")
@@ -320,11 +320,15 @@ func (e *Engine) handleSubmitGovernanceProposal(state *GameState, actor *models.
 	if err := decodeActionPayload(raw, &payload); err != nil {
 		return nil, err
 	}
+	payload.ShareBPS = effectiveAuthorityBPS(player)
 	if err := validateGovernanceProposal(state, actor.ID, payload); err != nil {
 		return nil, err
 	}
 
 	proposalID := nextGovernanceProposalID(state)
+	if existing := findMatchingGovernanceProposal(state, payload); existing != nil {
+		proposalID = existing.ID
+	}
 	event := models.Event{
 		GameID:    state.GameID,
 		UserID:    &actor.ID,
@@ -334,6 +338,7 @@ func (e *Engine) handleSubmitGovernanceProposal(state *GameState, actor *models.
 			Round:          state.GovernanceRound,
 			ProposalID:     proposalID,
 			ProposerUserID: actor.ID,
+			AuthorUserIDs:  []int64{actor.ID},
 			ProposalType:   payload.ProposalType,
 			FromUserID:     payload.FromUserID,
 			ToUserID:       payload.ToUserID,
@@ -347,7 +352,7 @@ func (e *Engine) handleSubmitGovernanceProposal(state *GameState, actor *models.
 	if err := ApplyEvent(projected, event); err != nil {
 		return nil, err
 	}
-	events = append(events, governanceEventsAfterSubmission(projected, actor)...)
+	events = append(events, e.governanceEventsAfterSubmission(projected, actor)...)
 	return events, nil
 }
 
@@ -379,7 +384,7 @@ func (e *Engine) handleSkipGovernanceProposal(state *GameState, actor *models.Us
 	if err := ApplyEvent(projected, event); err != nil {
 		return nil, err
 	}
-	events = append(events, governanceEventsAfterSubmission(projected, actor)...)
+	events = append(events, e.governanceEventsAfterSubmission(projected, actor)...)
 	return events, nil
 }
 
@@ -432,7 +437,7 @@ func (e *Engine) handleGovernanceVote(state *GameState, actor *models.User, raw 
 		return events, nil
 	}
 
-	events = append(events, resolveGovernance(projected, actor)...)
+	events = append(events, e.resolveGovernance(projected, actor)...)
 	return events, nil
 }
 
@@ -455,6 +460,7 @@ func (e *Engine) resolveRound(state *GameState, actor *models.User) []models.Eve
 			EventValue: mustJSON(DecisionAcceptedPayload{Round: state.CurrentRound, Decision: decision}),
 		})
 		events = append(events, majorDecisionRewardEvents(state, actor, decision)...)
+		events = append(events, systemChatEvents(state.GameID, actor.ID, formatMajorVoteSummary(state, "accepted", decision, ""))...)
 
 		nextState := cloneState(state)
 		nextState.AcceptedOrder = append(nextState.AcceptedOrder, decision)
@@ -489,15 +495,10 @@ func (e *Engine) resolveRound(state *GameState, actor *models.User) []models.Eve
 				Reason:  "tie_not_resolved",
 			}),
 		})
+		events = append(events, systemChatEvents(state.GameID, actor.ID, formatMajorVoteSummary(state, "rejected", "", "tie_not_resolved"))...)
 	}
 
-	events = append(events, models.Event{
-		GameID:     state.GameID,
-		UserID:     &actor.ID,
-		ActorName:  actor.Name,
-		EventType:  models.EventVotingRoundStarted,
-		EventValue: mustJSON(VotingRoundStartedPayload{Round: state.CurrentRound + 1}),
-	})
+	events = append(events, e.votingRoundStartedEvent(state, actor, state.CurrentRound+1))
 
 	return events
 }
@@ -514,7 +515,28 @@ func majorDecisionRewardEvents(state *GameState, actor *models.User, decision st
 			voters = append(voters, player)
 		}
 	}
-	if len(voters) == 0 || state.TreasuryShareBPS <= 0 {
+	if len(voters) == 0 {
+		return nil
+	}
+
+	if decisionTypes[decision] == DecisionTypeEmpowerment {
+		events := make([]models.Event, 0, len(voters))
+		for _, voter := range voters {
+			events = append(events, models.Event{
+				GameID:    state.GameID,
+				UserID:    &actor.ID,
+				ActorName: actor.Name,
+				EventType: models.EventPlayerAuthorityGranted,
+				EventValue: mustJSON(PlayerAuthorityGrantedPayload{
+					UserID:       voter.UserID,
+					AuthorityBPS: MajorAuthorityRewardBPS,
+				}),
+			})
+		}
+		return events
+	}
+
+	if state.TreasuryShareBPS <= 0 {
 		return nil
 	}
 
@@ -542,19 +564,13 @@ func majorDecisionRewardEvents(state *GameState, actor *models.User, decision st
 	return events
 }
 
-func governanceEventsAfterSubmission(state *GameState, actor *models.User) []models.Event {
+func (e *Engine) governanceEventsAfterSubmission(state *GameState, actor *models.User) []models.Event {
 	if len(state.GovernanceSubmissions) != len(activePlayers(state)) {
 		return nil
 	}
 
 	if len(state.GovernanceProposalOrder) == 0 {
-		return []models.Event{{
-			GameID:     state.GameID,
-			UserID:     &actor.ID,
-			ActorName:  actor.Name,
-			EventType:  models.EventVotingRoundStarted,
-			EventValue: mustJSON(VotingRoundStartedPayload{Round: state.CurrentRound + 1}),
-		}}
+		return []models.Event{e.votingRoundStartedEvent(state, actor, state.CurrentRound+1)}
 	}
 
 	return []models.Event{{
@@ -566,7 +582,7 @@ func governanceEventsAfterSubmission(state *GameState, actor *models.User) []mod
 	}}
 }
 
-func resolveGovernance(state *GameState, actor *models.User) []models.Event {
+func (e *Engine) resolveGovernance(state *GameState, actor *models.User) []models.Event {
 	events := []models.Event{{
 		GameID:     state.GameID,
 		UserID:     &actor.ID,
@@ -585,6 +601,7 @@ func resolveGovernance(state *GameState, actor *models.User) []models.Event {
 			EventValue: mustJSON(GovernanceProposalAcceptedPayload{Round: state.GovernanceRound, ProposalID: proposalID}),
 		})
 		events = append(events, governanceEffectEvents(state, actor, state.GovernanceProposals[proposalID])...)
+		events = append(events, systemChatEvents(state.GameID, actor.ID, formatGovernanceSummary(state, "accepted", proposalID, ""))...)
 	} else {
 		events = append(events, models.Event{
 			GameID:     state.GameID,
@@ -593,15 +610,10 @@ func resolveGovernance(state *GameState, actor *models.User) []models.Event {
 			EventType:  models.EventGovernanceProposalRejected,
 			EventValue: mustJSON(GovernanceProposalRejectedPayload{Round: state.GovernanceRound, Reason: "tie_or_no_votes"}),
 		})
+		events = append(events, systemChatEvents(state.GameID, actor.ID, formatGovernanceSummary(state, "rejected", 0, "tie_or_no_votes"))...)
 	}
 
-	events = append(events, models.Event{
-		GameID:     state.GameID,
-		UserID:     &actor.ID,
-		ActorName:  actor.Name,
-		EventType:  models.EventVotingRoundStarted,
-		EventValue: mustJSON(VotingRoundStartedPayload{Round: state.CurrentRound + 1}),
-	})
+	events = append(events, e.votingRoundStartedEvent(state, actor, state.CurrentRound+1))
 	return events
 }
 
@@ -659,7 +671,7 @@ func resolveGovernanceProposal(state *GameState) (int, bool) {
 		if player == nil || state.GovernanceProposals[*vote.ProposalID] == nil {
 			continue
 		}
-		scores[*vote.ProposalID] += player.ShareBPS
+		scores[*vote.ProposalID] += player.ShareBPS + effectiveAuthorityBPS(player)
 	}
 
 	maxScore := 0
@@ -754,8 +766,8 @@ func validateGovernanceProposal(state *GameState, proposerUserID int64, payload 
 		if payload.FromUserID == payload.ToUserID {
 			return errors.New("cannot transfer shares to self")
 		}
-		if err := validateShareChange(payload.ShareBPS); err != nil {
-			return err
+		if payload.ShareBPS <= 0 {
+			return errors.New("share_bps must be positive")
 		}
 		from := activePlayerByID(state, payload.FromUserID)
 		to := activePlayerByID(state, payload.ToUserID)
@@ -769,8 +781,8 @@ func validateGovernanceProposal(state *GameState, proposerUserID int64, payload 
 		if payload.TargetUserID == 0 {
 			return errors.New("target_user_id is required")
 		}
-		if err := validateShareChange(payload.ShareBPS); err != nil {
-			return err
+		if payload.ShareBPS <= 0 {
+			return errors.New("share_bps must be positive")
 		}
 		if activePlayerByID(state, payload.TargetUserID) == nil {
 			return errors.New("proposal target must be an active player")
@@ -782,8 +794,8 @@ func validateGovernanceProposal(state *GameState, proposerUserID int64, payload 
 		if payload.TargetUserID == 0 {
 			return errors.New("target_user_id is required")
 		}
-		if err := validateShareChange(payload.ShareBPS); err != nil {
-			return err
+		if payload.ShareBPS <= 0 {
+			return errors.New("share_bps must be positive")
 		}
 		target := activePlayerByID(state, payload.TargetUserID)
 		if target == nil {
@@ -793,15 +805,7 @@ func validateGovernanceProposal(state *GameState, proposerUserID int64, payload 
 			return errors.New("player share cannot go below minimum")
 		}
 	case GovernanceProposalAppointCEO:
-		if payload.TargetUserID == 0 {
-			return errors.New("target_user_id is required")
-		}
-		if activePlayerByID(state, payload.TargetUserID) == nil {
-			return errors.New("proposal target must be an active player")
-		}
-		if payload.TargetUserID == state.CEOUserID {
-			return errors.New("target player is already CEO")
-		}
+		return errors.New("appoint_ceo proposals are no longer supported")
 	default:
 		return errors.New("unsupported governance proposal type")
 	}
@@ -838,6 +842,228 @@ func nextGovernanceProposalID(state *GameState) int {
 		}
 	}
 	return maxID + 1
+}
+
+func findMatchingGovernanceProposal(state *GameState, payload SubmitGovernanceProposalActionPayload) *GovernanceProposalState {
+	for _, proposalID := range state.GovernanceProposalOrder {
+		proposal := state.GovernanceProposals[proposalID]
+		if proposal == nil || proposal.ProposalType != payload.ProposalType {
+			continue
+		}
+		switch payload.ProposalType {
+		case GovernanceProposalShareTransfer:
+			if proposal.FromUserID == payload.FromUserID && proposal.ToUserID == payload.ToUserID {
+				return proposal
+			}
+		case GovernanceProposalTreasuryGrant, GovernanceProposalTreasuryBuyback:
+			if proposal.TargetUserID == payload.TargetUserID {
+				return proposal
+			}
+		}
+	}
+	return nil
+}
+
+func isDecisionInCurrentShowcase(state *GameState, decision string) bool {
+	options := state.MajorVoteOptions
+	if len(options) == 0 {
+		options = sortedAvailableDecisions(state.Available)
+	}
+	for _, option := range options {
+		if option == decision {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) votingRoundStartedEvent(state *GameState, actor *models.User, round int) models.Event {
+	return models.Event{
+		GameID:    state.GameID,
+		UserID:    &actor.ID,
+		ActorName: actor.Name,
+		EventType: models.EventVotingRoundStarted,
+		EventValue: mustJSON(VotingRoundStartedPayload{
+			Round:             round,
+			ShowcaseDecisions: e.majorShowcase(state.Available, state.MoleTargets, state.MoleSabotage),
+		}),
+	}
+}
+
+func (e *Engine) majorShowcase(available map[string]bool, targets []string, sabotage string) []string {
+	targetSet := map[string]bool{}
+	for _, target := range targets {
+		targetSet[target] = true
+	}
+	if sabotage != "" {
+		targetSet[sabotage] = true
+	}
+
+	moleOptions := []string{}
+	cleanOptions := []string{}
+	for _, decision := range allDecisions {
+		if !available[decision] {
+			continue
+		}
+		if targetSet[decision] {
+			moleOptions = append(moleOptions, decision)
+		} else {
+			cleanOptions = append(cleanOptions, decision)
+		}
+	}
+
+	if len(moleOptions) < 2 || len(cleanOptions) < 2 {
+		return sortedAvailableDecisions(available)
+	}
+
+	showcase := append(randomDecisionSubset(e, moleOptions, 2), randomDecisionSubset(e, cleanOptions, 2)...)
+	sort.Strings(showcase)
+	return showcase
+}
+
+func randomDecisionSubset(e *Engine, decisions []string, count int) []string {
+	shuffled := append([]string(nil), decisions...)
+	e.shuffleWithRNG(len(shuffled), func(i, j int) {
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	})
+	out := append([]string(nil), shuffled[:count]...)
+	sort.Strings(out)
+	return out
+}
+
+func systemChatEvents(gameID int64, eventUserID int64, message string) []models.Event {
+	chunks := splitRunes(message, MaxChatMessageLength)
+	events := make([]models.Event, 0, len(chunks))
+	for _, chunk := range chunks {
+		events = append(events, models.Event{
+			GameID:     gameID,
+			UserID:     &eventUserID,
+			ActorName:  "Система",
+			EventType:  models.EventChatMessageSent,
+			EventValue: mustJSON(ChatMessageSentPayload{UserID: 0, Message: chunk}),
+		})
+	}
+	return events
+}
+
+func splitRunes(value string, limit int) []string {
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return []string{value}
+	}
+	runes := []rune(value)
+	out := []string{}
+	for len(runes) > 0 {
+		take := limit
+		if len(runes) < take {
+			take = len(runes)
+		}
+		out = append(out, string(runes[:take]))
+		runes = runes[take:]
+	}
+	return out
+}
+
+func formatMajorVoteSummary(state *GameState, outcome string, decision string, reason string) string {
+	var builder strings.Builder
+	if outcome == "accepted" {
+		builder.WriteString(fmt.Sprintf("Итоги major vote: принято %s.", decisionLabelForChat(decision)))
+	} else {
+		builder.WriteString(fmt.Sprintf("Итоги major vote: решение не принято (%s).", reason))
+	}
+
+	report := buildRoundReport(state, state.CurrentRound, outcome, decision, reason)
+	if len(report.Votes) > 0 {
+		builder.WriteString(" Голоса: ")
+	}
+	for i, vote := range report.Votes {
+		if i > 0 {
+			builder.WriteString("; ")
+		}
+		label := decisionLabelForChat(vote.Decision)
+		if vote.Abstain {
+			label = "Воздержались"
+		}
+		names := make([]string, 0, len(vote.Voters))
+		for _, voter := range vote.Voters {
+			names = append(names, voter.Name)
+		}
+		builder.WriteString(fmt.Sprintf("%s — %s (%s)", label, formatBPS(vote.ShareBPS), strings.Join(names, ", ")))
+	}
+	return builder.String()
+}
+
+func formatGovernanceSummary(state *GameState, outcome string, proposalID int, reason string) string {
+	var builder strings.Builder
+	if outcome == "accepted" {
+		builder.WriteString(fmt.Sprintf("Итоги governance: принято предложение #%d: %s.", proposalID, describeGovernanceProposalForChat(state, state.GovernanceProposals[proposalID])))
+	} else {
+		builder.WriteString(fmt.Sprintf("Итоги governance: предложение не принято (%s).", reason))
+	}
+
+	report := buildGovernanceReport(state, state.GovernanceRound, outcome, proposalID, reason)
+	if len(report.Votes) > 0 {
+		builder.WriteString(" Голоса: ")
+	}
+	for i, vote := range report.Votes {
+		if i > 0 {
+			builder.WriteString("; ")
+		}
+		label := fmt.Sprintf("Предложение #%d", vote.ProposalID)
+		if vote.Abstain {
+			label = "Воздержались"
+		}
+		voters := make([]string, 0, len(vote.Voters))
+		for _, voter := range vote.Voters {
+			voters = append(voters, fmt.Sprintf(
+				"%s %s + %s = %s",
+				voter.Name,
+				formatBPS(voter.ShareBPS),
+				formatBPS(voter.AuthorityBPS),
+				formatBPS(voter.VotingPowerBPS),
+			))
+		}
+		builder.WriteString(fmt.Sprintf("%s — %s (%s)", label, formatBPS(vote.VotingPowerBPS), strings.Join(voters, ", ")))
+	}
+	return builder.String()
+}
+
+func decisionLabelForChat(decision string) string {
+	if title := decisionTitles[decision]; title != "" {
+		return fmt.Sprintf("%s — %s", decision, title)
+	}
+	return decision
+}
+
+func describeGovernanceProposalForChat(state *GameState, proposal *GovernanceProposalState) string {
+	if proposal == nil {
+		return "неизвестное предложение"
+	}
+	switch proposal.ProposalType {
+	case GovernanceProposalShareTransfer:
+		return fmt.Sprintf("%s передает %s игроку %s", playerNameForChat(state, proposal.FromUserID), formatBPS(proposal.ShareBPS), playerNameForChat(state, proposal.ToUserID))
+	case GovernanceProposalTreasuryGrant:
+		return fmt.Sprintf("выдать %s из резерва игроку %s", formatBPS(proposal.ShareBPS), playerNameForChat(state, proposal.TargetUserID))
+	case GovernanceProposalTreasuryBuyback:
+		return fmt.Sprintf("оштрафовать %s на %s в пользу резерва", playerNameForChat(state, proposal.TargetUserID), formatBPS(proposal.ShareBPS))
+	case GovernanceProposalAppointCEO:
+		return fmt.Sprintf("назначить CEO: %s", playerNameForChat(state, proposal.TargetUserID))
+	default:
+		return "корпоративный маневр"
+	}
+}
+
+func playerNameForChat(state *GameState, userID int64) string {
+	if player := state.Players[userID]; player != nil && player.Name != "" {
+		return player.Name
+	}
+	return fmt.Sprintf("Игрок #%d", userID)
+}
+
+func formatBPS(bps int) string {
+	if bps%100 == 0 {
+		return fmt.Sprintf("%d%%", bps/100)
+	}
+	return fmt.Sprintf("%.1f%%", float64(bps)/100)
 }
 
 func normalizeMoleObjectives(payload SelectMoleObjectivesActionPayload) ([]string, string, error) {
@@ -956,6 +1182,7 @@ func cloneState(state *GameState) *GameState {
 			continue
 		}
 		cp := *v
+		cp.AuthorUserIDs = append([]int64(nil), v.AuthorUserIDs...)
 		cloned.GovernanceProposals[k] = &cp
 	}
 	cloned.GovernanceProposalOrder = append([]int(nil), state.GovernanceProposalOrder...)
@@ -971,6 +1198,7 @@ func cloneState(state *GameState) *GameState {
 	for k, v := range state.Available {
 		cloned.Available[k] = v
 	}
+	cloned.MajorVoteOptions = append([]string(nil), state.MajorVoteOptions...)
 	cloned.AcceptedOrder = append([]string(nil), state.AcceptedOrder...)
 	cloned.MoleTargets = append([]string(nil), state.MoleTargets...)
 	cloned.MoleSabotage = state.MoleSabotage

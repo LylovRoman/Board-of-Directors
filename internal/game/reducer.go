@@ -50,9 +50,12 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		player, exists := state.Players[payload.UserID]
 		if !exists {
-			player = &PlayerState{UserID: payload.UserID}
+			player = &PlayerState{UserID: payload.UserID, AuthorityBPS: InitialAuthorityBPS}
 			state.Players[payload.UserID] = player
 			state.PlayerOrder = append(state.PlayerOrder, payload.UserID)
+		}
+		if player.AuthorityBPS == 0 {
+			player.AuthorityBPS = InitialAuthorityBPS
 		}
 		player.Name = payload.Name
 		player.IsKicked = false
@@ -129,6 +132,14 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if player := state.Players[payload.UserID]; player != nil {
 			player.ShareBPS = payload.ShareBPS
 		}
+	case models.EventPlayerAuthorityGranted:
+		var payload PlayerAuthorityGrantedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if player := state.Players[payload.UserID]; player != nil {
+			player.AuthorityBPS += payload.AuthorityBPS
+		}
 	case models.EventCEOSelected:
 		var payload CEOSelectedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -147,6 +158,11 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.GovernanceProposalOrder = nil
 		state.GovernanceSubmissions = map[int64]GovernanceSubmissionState{}
 		state.GovernanceVotes = map[int64]GovernanceVoteState{}
+		if len(payload.ShowcaseDecisions) > 0 {
+			state.MajorVoteOptions = append([]string(nil), payload.ShowcaseDecisions...)
+		} else {
+			state.MajorVoteOptions = sortedAvailableDecisions(state.Available)
+		}
 	case models.EventVoteSubmitted:
 		var payload VoteSubmittedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -188,6 +204,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.GovernanceProposalOrder = nil
 		state.GovernanceSubmissions = map[int64]GovernanceSubmissionState{}
 		state.GovernanceVotes = map[int64]GovernanceVoteState{}
+		state.MajorVoteOptions = nil
 	case models.EventGovernanceProposalSubmitted:
 		var payload GovernanceProposalSubmittedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -196,17 +213,29 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if state.GovernanceProposals == nil {
 			state.GovernanceProposals = map[int]*GovernanceProposalState{}
 		}
-		state.GovernanceProposals[payload.ProposalID] = &GovernanceProposalState{
-			ID:             payload.ProposalID,
-			Round:          payload.Round,
-			ProposerUserID: payload.ProposerUserID,
-			ProposalType:   payload.ProposalType,
-			FromUserID:     payload.FromUserID,
-			ToUserID:       payload.ToUserID,
-			TargetUserID:   payload.TargetUserID,
-			ShareBPS:       payload.ShareBPS,
+		authors := append([]int64(nil), payload.AuthorUserIDs...)
+		if len(authors) == 0 {
+			authors = []int64{payload.ProposerUserID}
 		}
-		state.GovernanceProposalOrder = append(state.GovernanceProposalOrder, payload.ProposalID)
+		if existing := state.GovernanceProposals[payload.ProposalID]; existing != nil {
+			existing.AuthorUserIDs = mergeAuthorIDs(existing.AuthorUserIDs, authors...)
+			if existing.ShareBPS < payload.ShareBPS {
+				existing.ShareBPS = payload.ShareBPS
+			}
+		} else {
+			state.GovernanceProposals[payload.ProposalID] = &GovernanceProposalState{
+				ID:             payload.ProposalID,
+				Round:          payload.Round,
+				ProposerUserID: payload.ProposerUserID,
+				AuthorUserIDs:  mergeAuthorIDs(nil, authors...),
+				ProposalType:   payload.ProposalType,
+				FromUserID:     payload.FromUserID,
+				ToUserID:       payload.ToUserID,
+				TargetUserID:   payload.TargetUserID,
+				ShareBPS:       payload.ShareBPS,
+			}
+			state.GovernanceProposalOrder = append(state.GovernanceProposalOrder, payload.ProposalID)
+		}
 		state.GovernanceSubmissions[payload.ProposerUserID] = GovernanceSubmissionState{
 			UserID:     payload.ProposerUserID,
 			Status:     "submitted",
@@ -297,6 +326,9 @@ func ApplyEvent(state *GameState, event models.Event) error {
 	}
 
 	for _, player := range state.Players {
+		if player.AuthorityBPS == 0 {
+			player.AuthorityBPS = InitialAuthorityBPS
+		}
 		player.IsHost = player.UserID == state.HostUserID
 		player.IsCEO = player.UserID == state.CEOUserID
 		if player.UserID == state.MoleUserID {
@@ -387,12 +419,127 @@ func buildGovernanceReport(state *GameState, round int, outcome string, proposal
 		Round:   round,
 		Outcome: outcome,
 		Reason:  reason,
+		Votes:   buildGovernanceVoteReports(state),
 	}
 	if proposal := state.GovernanceProposals[proposalID]; proposal != nil {
 		cp := *proposal
+		cp.AuthorUserIDs = append([]int64(nil), proposal.AuthorUserIDs...)
 		report.Proposal = &cp
 	}
 	return report
+}
+
+func buildGovernanceVoteReports(state *GameState) []GovernanceVoteReport {
+	type bucket struct {
+		proposalID     int
+		abstain        bool
+		shareBPS       int
+		authorityBPS   int
+		votingPowerBPS int
+		count          int
+		voters         []GovernanceVoterReport
+	}
+
+	buckets := map[string]*bucket{}
+	for _, userID := range state.PlayerOrder {
+		vote, ok := state.GovernanceVotes[userID]
+		if !ok {
+			continue
+		}
+		player := state.Players[vote.UserID]
+		if player == nil || player.IsKicked || player.IsLeft {
+			continue
+		}
+
+		key := "abstain"
+		proposalID := 0
+		abstain := true
+		if !vote.Abstain && vote.ProposalID != nil && state.GovernanceProposals[*vote.ProposalID] != nil {
+			proposalID = *vote.ProposalID
+			key = fmt.Sprintf("proposal:%d", proposalID)
+			abstain = false
+		}
+
+		if buckets[key] == nil {
+			buckets[key] = &bucket{proposalID: proposalID, abstain: abstain}
+		}
+		authorityBPS := effectiveAuthorityBPS(player)
+		votingPowerBPS := player.ShareBPS + authorityBPS
+		buckets[key].shareBPS += player.ShareBPS
+		buckets[key].authorityBPS += authorityBPS
+		buckets[key].votingPowerBPS += votingPowerBPS
+		buckets[key].count++
+		buckets[key].voters = append(buckets[key].voters, GovernanceVoterReport{
+			UserID:         player.UserID,
+			Name:           player.Name,
+			ShareBPS:       player.ShareBPS,
+			AuthorityBPS:   authorityBPS,
+			VotingPowerBPS: votingPowerBPS,
+		})
+	}
+
+	keys := make([]string, 0, len(buckets))
+	for key := range buckets {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i] == "abstain" {
+			return false
+		}
+		if keys[j] == "abstain" {
+			return true
+		}
+		return keys[i] < keys[j]
+	})
+
+	out := make([]GovernanceVoteReport, 0, len(keys))
+	for _, key := range keys {
+		bucket := buckets[key]
+		out = append(out, GovernanceVoteReport{
+			ProposalID:     bucket.proposalID,
+			Abstain:        bucket.abstain,
+			ShareBPS:       bucket.shareBPS,
+			AuthorityBPS:   bucket.authorityBPS,
+			VotingPowerBPS: bucket.votingPowerBPS,
+			VoterCount:     bucket.count,
+			Voters:         append([]GovernanceVoterReport(nil), bucket.voters...),
+		})
+	}
+	return out
+}
+
+func effectiveAuthorityBPS(player *PlayerState) int {
+	if player == nil {
+		return 0
+	}
+	authorityBPS := player.AuthorityBPS
+	if authorityBPS == 0 {
+		authorityBPS = InitialAuthorityBPS
+	}
+	if player.IsCEO {
+		authorityBPS += CEOAuthorityBonusBPS
+	}
+	return authorityBPS
+}
+
+func mergeAuthorIDs(existing []int64, incoming ...int64) []int64 {
+	seen := map[int64]bool{}
+	for _, userID := range existing {
+		if userID != 0 {
+			seen[userID] = true
+		}
+	}
+	for _, userID := range incoming {
+		if userID != 0 {
+			seen[userID] = true
+		}
+	}
+	out := make([]int64, 0, len(seen))
+	for userID := range seen {
+		out = append(out, userID)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 func decodeEventValue(value string, dst any) error {

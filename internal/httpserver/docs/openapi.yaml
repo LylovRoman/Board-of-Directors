@@ -476,6 +476,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SelectMoleObjectivesPayload"
             - $ref: "#/components/schemas/VotePayload"
+            - $ref: "#/components/schemas/SubmitGovernanceProposalPayload"
             - type: object
               additionalProperties: true
       required: [type]
@@ -499,6 +500,7 @@ components:
 
     VotePayload:
       type: object
+      description: Used for major voting and governance voting. During major voting, decision must be one of current major_vote_options.
       properties:
         decision:
           type: string
@@ -506,6 +508,24 @@ components:
           type: integer
         abstain:
           type: boolean
+
+    SubmitGovernanceProposalPayload:
+      type: object
+      description: Governance proposal submission. Backend ignores client share_bps and uses the proposer's effective authority as proposal strength.
+      properties:
+        proposal_type:
+          type: string
+          enum: [share_transfer, treasury_grant, treasury_buyback]
+        from_user_id:
+          type: integer
+          format: int64
+        to_user_id:
+          type: integer
+          format: int64
+        target_user_id:
+          type: integer
+          format: int64
+      required: [proposal_type]
 
     PublicPlayerState:
       type: object
@@ -519,6 +539,9 @@ components:
           type: string
         share_bps:
           type: integer
+        authority_bps:
+          type: integer
+          description: Effective authority in bps, including the current CEO +1% bonus when applicable.
         is_host:
           type: boolean
         is_ceo:
@@ -534,6 +557,21 @@ components:
           format: int64
         has_voted:
           type: boolean
+        proposal_id:
+          type: integer
+          description: Present during governance_voting when this player voted for a proposal.
+        abstain:
+          type: boolean
+          description: Present during governance_voting after this player voted.
+        share_bps:
+          type: integer
+          description: Revealed during governance_voting.
+        authority_bps:
+          type: integer
+          description: Revealed during governance_voting.
+        voting_power_bps:
+          type: integer
+          description: share_bps + authority_bps, revealed during governance_voting.
       required: [user_id, has_voted]
 
     PublicOwnVoteState:
@@ -557,6 +595,12 @@ components:
         proposer_user_id:
           type: integer
           format: int64
+        author_user_ids:
+          type: array
+          description: All authors when semantically duplicate governance proposals are merged.
+          items:
+            type: integer
+            format: int64
         proposal_type:
           type: string
           enum: [share_transfer, treasury_grant, treasury_buyback, appoint_ceo]
@@ -598,7 +642,49 @@ components:
           $ref: "#/components/schemas/PublicGovernanceProposal"
         reason:
           type: string
+        votes:
+          type: array
+          description: Revealed governance vote math for the resolved governance round.
+          items:
+            $ref: "#/components/schemas/PublicGovernanceVoteReport"
       required: [round, outcome]
+
+    PublicGovernanceVoteReport:
+      type: object
+      properties:
+        proposal_id:
+          type: integer
+        abstain:
+          type: boolean
+        share_bps:
+          type: integer
+        authority_bps:
+          type: integer
+        voting_power_bps:
+          type: integer
+        voter_count:
+          type: integer
+        voters:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicGovernanceVoterReport"
+      required: [abstain, share_bps, authority_bps, voting_power_bps, voter_count, voters]
+
+    PublicGovernanceVoterReport:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        share_bps:
+          type: integer
+        authority_bps:
+          type: integer
+        voting_power_bps:
+          type: integer
+      required: [user_id, name, share_bps, authority_bps, voting_power_bps]
 
     PublicDecisionVoteReport:
       type: object
@@ -694,6 +780,16 @@ components:
           type: array
           items:
             type: string
+        major_vote_options:
+          type: array
+          description: Current 4-card major vote showcase. Falls back to available_decisions for legacy rounds.
+          items:
+            type: string
+        decision_types:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [growth, empowerment]
         accepted_decisions:
           type: array
           items:

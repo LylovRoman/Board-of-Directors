@@ -46,6 +46,13 @@ const (
 	GovernanceProposalAppointCEO      GovernanceProposalType = "appoint_ceo"
 )
 
+type DecisionType string
+
+const (
+	DecisionTypeGrowth      DecisionType = "growth"
+	DecisionTypeEmpowerment DecisionType = "empowerment"
+)
+
 const (
 	MinPlayers               = 3
 	MaxPlayers               = 8
@@ -53,6 +60,9 @@ const (
 	InitialPlayerSharesBPS   = 8000
 	InitialTreasurySharesBPS = 2000
 	MajorDecisionRewardBPS   = 100
+	InitialAuthorityBPS      = 300
+	CEOAuthorityBonusBPS     = 100
+	MajorAuthorityRewardBPS  = 100
 	MaxShareChangeBPS        = 500
 	MinPlayerShareBPS        = 500
 	MaxChatMessageLength     = 500
@@ -60,6 +70,28 @@ const (
 )
 
 var allDecisions = []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+
+var decisionTypes = map[string]DecisionType{
+	"A": DecisionTypeGrowth,
+	"B": DecisionTypeGrowth,
+	"C": DecisionTypeEmpowerment,
+	"D": DecisionTypeGrowth,
+	"E": DecisionTypeGrowth,
+	"F": DecisionTypeEmpowerment,
+	"G": DecisionTypeEmpowerment,
+	"H": DecisionTypeEmpowerment,
+}
+
+var decisionTitles = map[string]string{
+	"A": "Выпуск облигаций",
+	"B": "Экспансия на новый рынок",
+	"C": "Выплата дивидендов по акциям",
+	"D": "Запуск экспериментального продукта",
+	"E": "Сделка слияния",
+	"F": "Оптимизация неэффективного персонала",
+	"G": "Агрессивная налоговая стратегия",
+	"H": "Обратный выкуп акций",
+}
 
 var sharePresets = map[int][]int{
 	3: {3500, 2500, 2000},
@@ -104,18 +136,20 @@ type GameState struct {
 	RoundReports            []RoundReport
 	GovernanceReports       []GovernanceReport
 	Available               map[string]bool
+	MajorVoteOptions        []string
 	ChatMessages            []ChatMessageState
 }
 
 type PlayerState struct {
-	UserID   int64  `json:"user_id"`
-	Name     string `json:"name"`
-	ShareBPS int    `json:"share_bps"`
-	IsHost   bool   `json:"is_host"`
-	IsCEO    bool   `json:"is_ceo"`
-	IsLeft   bool   `json:"is_left"`
-	IsKicked bool   `json:"is_kicked"`
-	Role     string `json:"role,omitempty"`
+	UserID       int64  `json:"user_id"`
+	Name         string `json:"name"`
+	ShareBPS     int    `json:"share_bps"`
+	AuthorityBPS int    `json:"authority_bps"`
+	IsHost       bool   `json:"is_host"`
+	IsCEO        bool   `json:"is_ceo"`
+	IsLeft       bool   `json:"is_left"`
+	IsKicked     bool   `json:"is_kicked"`
+	Role         string `json:"role,omitempty"`
 }
 
 type VoteState struct {
@@ -128,6 +162,7 @@ type GovernanceProposalState struct {
 	ID             int                    `json:"id"`
 	Round          int                    `json:"round"`
 	ProposerUserID int64                  `json:"proposer_user_id"`
+	AuthorUserIDs  []int64                `json:"author_user_ids,omitempty"`
 	ProposalType   GovernanceProposalType `json:"proposal_type"`
 	FromUserID     int64                  `json:"from_user_id,omitempty"`
 	ToUserID       int64                  `json:"to_user_id,omitempty"`
@@ -166,6 +201,8 @@ type PublicGameState struct {
 	GovernanceRound       int                          `json:"governance_round"`
 	TreasuryShareBPS      int                          `json:"treasury_share_bps"`
 	AvailableDecisions    []string                     `json:"available_decisions"`
+	MajorVoteOptions      []string                     `json:"major_vote_options"`
+	DecisionTypes         map[string]DecisionType      `json:"decision_types"`
 	AcceptedDecisions     []string                     `json:"accepted_decisions"`
 	RejectedDecisions     []string                     `json:"rejected_decisions"`
 	Players               []PublicPlayerState          `json:"players"`
@@ -185,18 +222,24 @@ type PublicGameState struct {
 }
 
 type PublicPlayerState struct {
-	UserID    int64  `json:"user_id"`
-	Name      string `json:"name"`
-	AvatarURL string `json:"avatar_url,omitempty"`
-	ShareBPS  int    `json:"share_bps"`
-	IsHost    bool   `json:"is_host"`
-	IsCEO     bool   `json:"is_ceo"`
-	Role      string `json:"role,omitempty"`
+	UserID       int64  `json:"user_id"`
+	Name         string `json:"name"`
+	AvatarURL    string `json:"avatar_url,omitempty"`
+	ShareBPS     int    `json:"share_bps"`
+	AuthorityBPS int    `json:"authority_bps"`
+	IsHost       bool   `json:"is_host"`
+	IsCEO        bool   `json:"is_ceo"`
+	Role         string `json:"role,omitempty"`
 }
 
 type PublicVoteState struct {
-	UserID   int64 `json:"user_id"`
-	HasVoted bool  `json:"has_voted"`
+	UserID         int64 `json:"user_id"`
+	HasVoted       bool  `json:"has_voted"`
+	ProposalID     int   `json:"proposal_id,omitempty"`
+	Abstain        bool  `json:"abstain,omitempty"`
+	ShareBPS       int   `json:"share_bps,omitempty"`
+	AuthorityBPS   int   `json:"authority_bps,omitempty"`
+	VotingPowerBPS int   `json:"voting_power_bps,omitempty"`
 }
 
 type PublicOwnVoteState struct {
@@ -218,6 +261,7 @@ type PublicGovernanceProposal struct {
 	ID             int                    `json:"id"`
 	Round          int                    `json:"round"`
 	ProposerUserID int64                  `json:"proposer_user_id"`
+	AuthorUserIDs  []int64                `json:"author_user_ids,omitempty"`
 	ProposalType   GovernanceProposalType `json:"proposal_type"`
 	FromUserID     int64                  `json:"from_user_id,omitempty"`
 	ToUserID       int64                  `json:"to_user_id,omitempty"`
@@ -236,13 +280,51 @@ type GovernanceReport struct {
 	Outcome  string
 	Proposal *GovernanceProposalState
 	Reason   string
+	Votes    []GovernanceVoteReport
 }
 
 type PublicGovernanceReport struct {
-	Round    int                       `json:"round"`
-	Outcome  string                    `json:"outcome"`
-	Proposal *PublicGovernanceProposal `json:"proposal,omitempty"`
-	Reason   string                    `json:"reason,omitempty"`
+	Round    int                          `json:"round"`
+	Outcome  string                       `json:"outcome"`
+	Proposal *PublicGovernanceProposal    `json:"proposal,omitempty"`
+	Reason   string                       `json:"reason,omitempty"`
+	Votes    []PublicGovernanceVoteReport `json:"votes,omitempty"`
+}
+
+type GovernanceVoteReport struct {
+	ProposalID     int
+	Abstain        bool
+	ShareBPS       int
+	AuthorityBPS   int
+	VotingPowerBPS int
+	VoterCount     int
+	Voters         []GovernanceVoterReport
+}
+
+type GovernanceVoterReport struct {
+	UserID         int64
+	Name           string
+	ShareBPS       int
+	AuthorityBPS   int
+	VotingPowerBPS int
+}
+
+type PublicGovernanceVoteReport struct {
+	ProposalID     int                           `json:"proposal_id,omitempty"`
+	Abstain        bool                          `json:"abstain"`
+	ShareBPS       int                           `json:"share_bps"`
+	AuthorityBPS   int                           `json:"authority_bps"`
+	VotingPowerBPS int                           `json:"voting_power_bps"`
+	VoterCount     int                           `json:"voter_count"`
+	Voters         []PublicGovernanceVoterReport `json:"voters"`
+}
+
+type PublicGovernanceVoterReport struct {
+	UserID         int64  `json:"user_id"`
+	Name           string `json:"name"`
+	ShareBPS       int    `json:"share_bps"`
+	AuthorityBPS   int    `json:"authority_bps"`
+	VotingPowerBPS int    `json:"voting_power_bps"`
 }
 
 type RoundReport struct {
@@ -330,12 +412,18 @@ type PlayerReceivedSharePayload struct {
 	ShareBPS int   `json:"share_bps"`
 }
 
+type PlayerAuthorityGrantedPayload struct {
+	UserID       int64 `json:"user_id"`
+	AuthorityBPS int   `json:"authority_bps"`
+}
+
 type CEOSelectedPayload struct {
 	UserID int64 `json:"user_id"`
 }
 
 type VotingRoundStartedPayload struct {
-	Round int `json:"round"`
+	Round             int      `json:"round"`
+	ShowcaseDecisions []string `json:"showcase_decisions,omitempty"`
 }
 
 type VoteSubmittedPayload struct {
@@ -353,6 +441,7 @@ type GovernanceProposalSubmittedPayload struct {
 	Round          int                    `json:"round"`
 	ProposalID     int                    `json:"proposal_id"`
 	ProposerUserID int64                  `json:"proposer_user_id"`
+	AuthorUserIDs  []int64                `json:"author_user_ids,omitempty"`
 	ProposalType   GovernanceProposalType `json:"proposal_type"`
 	FromUserID     int64                  `json:"from_user_id,omitempty"`
 	ToUserID       int64                  `json:"to_user_id,omitempty"`

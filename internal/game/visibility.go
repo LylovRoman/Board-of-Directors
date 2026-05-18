@@ -15,6 +15,8 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		TreasuryShareBPS:      state.TreasuryShareBPS,
 		AcceptedDecisions:     append([]string(nil), state.AcceptedOrder...),
 		RejectedDecisions:     append([]string(nil), state.RejectedOrder...),
+		MajorVoteOptions:      append([]string(nil), state.MajorVoteOptions...),
+		DecisionTypes:         publicDecisionTypes(),
 		GovernanceProposals:   publicGovernanceProposals(state),
 		GovernanceSubmissions: publicGovernanceSubmissions(state),
 		GovernanceReports:     publicGovernanceReports(state.GovernanceReports),
@@ -33,11 +35,12 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		}
 
 		publicPlayer := PublicPlayerState{
-			UserID:   player.UserID,
-			Name:     player.Name,
-			ShareBPS: player.ShareBPS,
-			IsHost:   player.IsHost,
-			IsCEO:    player.IsCEO,
+			UserID:       player.UserID,
+			Name:         player.Name,
+			ShareBPS:     player.ShareBPS,
+			AuthorityBPS: effectiveAuthorityBPS(player),
+			IsHost:       player.IsHost,
+			IsCEO:        player.IsCEO,
 		}
 
 		if player.UserID == viewerUserID {
@@ -53,10 +56,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		}
 
 		publicState.Players = append(publicState.Players, publicPlayer)
-		publicState.CurrentVotes = append(publicState.CurrentVotes, PublicVoteState{
-			UserID:   player.UserID,
-			HasVoted: hasPlayerVotedForPhase(state, player.UserID),
-		})
+		publicState.CurrentVotes = append(publicState.CurrentVotes, publicVoteStateForPlayer(state, player))
 	}
 
 	if state.Phase == GamePhaseGovernanceVoting {
@@ -80,6 +80,33 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 	return publicState, nil
 }
 
+func publicDecisionTypes() map[string]DecisionType {
+	out := make(map[string]DecisionType, len(decisionTypes))
+	for decision, decisionType := range decisionTypes {
+		out[decision] = decisionType
+	}
+	return out
+}
+
+func publicVoteStateForPlayer(state *GameState, player *PlayerState) PublicVoteState {
+	out := PublicVoteState{
+		UserID:   player.UserID,
+		HasVoted: hasPlayerVotedForPhase(state, player.UserID),
+	}
+	if state.Phase != GamePhaseGovernanceVoting || !out.HasVoted {
+		return out
+	}
+	vote := state.GovernanceVotes[player.UserID]
+	out.Abstain = vote.Abstain
+	if vote.ProposalID != nil {
+		out.ProposalID = *vote.ProposalID
+	}
+	out.ShareBPS = player.ShareBPS
+	out.AuthorityBPS = effectiveAuthorityBPS(player)
+	out.VotingPowerBPS = out.ShareBPS + out.AuthorityBPS
+	return out
+}
+
 func publicGovernanceProposals(state *GameState) []PublicGovernanceProposal {
 	out := make([]PublicGovernanceProposal, 0, len(state.GovernanceProposalOrder))
 	for _, proposalID := range state.GovernanceProposalOrder {
@@ -97,6 +124,7 @@ func publicGovernanceProposal(proposal *GovernanceProposalState) PublicGovernanc
 		ID:             proposal.ID,
 		Round:          proposal.Round,
 		ProposerUserID: proposal.ProposerUserID,
+		AuthorUserIDs:  append([]int64(nil), proposal.AuthorUserIDs...),
 		ProposalType:   proposal.ProposalType,
 		FromUserID:     proposal.FromUserID,
 		ToUserID:       proposal.ToUserID,
@@ -134,7 +162,39 @@ func publicGovernanceReports(reports []GovernanceReport) []PublicGovernanceRepor
 			proposal := publicGovernanceProposal(report.Proposal)
 			publicReport.Proposal = &proposal
 		}
+		publicReport.Votes = publicGovernanceVoteReports(report.Votes)
 		out = append(out, publicReport)
+	}
+	return out
+}
+
+func publicGovernanceVoteReports(reports []GovernanceVoteReport) []PublicGovernanceVoteReport {
+	out := make([]PublicGovernanceVoteReport, 0, len(reports))
+	for _, report := range reports {
+		publicReport := PublicGovernanceVoteReport{
+			ProposalID:     report.ProposalID,
+			Abstain:        report.Abstain,
+			ShareBPS:       report.ShareBPS,
+			AuthorityBPS:   report.AuthorityBPS,
+			VotingPowerBPS: report.VotingPowerBPS,
+			VoterCount:     report.VoterCount,
+			Voters:         publicGovernanceVoters(report.Voters),
+		}
+		out = append(out, publicReport)
+	}
+	return out
+}
+
+func publicGovernanceVoters(voters []GovernanceVoterReport) []PublicGovernanceVoterReport {
+	out := make([]PublicGovernanceVoterReport, 0, len(voters))
+	for _, voter := range voters {
+		out = append(out, PublicGovernanceVoterReport{
+			UserID:         voter.UserID,
+			Name:           voter.Name,
+			ShareBPS:       voter.ShareBPS,
+			AuthorityBPS:   voter.AuthorityBPS,
+			VotingPowerBPS: voter.VotingPowerBPS,
+		})
 	}
 	return out
 }
@@ -223,9 +283,7 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 				actions = append(actions, ActionSelectMoleObjectives)
 			}
 		case GamePhaseMajorVoting:
-			if !hasPlayerVoted(state, viewerUserID) {
-				actions = append(actions, ActionVote)
-			}
+			actions = append(actions, ActionVote)
 		case GamePhaseGovernanceProposal:
 			if _, ok := state.GovernanceSubmissions[viewerUserID]; !ok {
 				actions = append(actions, ActionSubmitGovernanceProposal, ActionSkipGovernanceProposal)

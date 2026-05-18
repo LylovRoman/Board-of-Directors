@@ -24,6 +24,7 @@ import {
 import type {
   ActionType,
   AuthUser,
+  DecisionType,
   Game,
   GamePhase,
   GameStatus,
@@ -36,6 +37,7 @@ import type {
   PublicOwnVoteState,
   PublicChatMessage,
   PublicPlayerState,
+  PublicVoteState,
   PublicRoundReport,
 } from "./types";
 import {
@@ -50,7 +52,7 @@ import {
 
 const SELECTED_GAME_STORAGE_KEY = "board-of-directors-selected-game-id";
 const DECISION_TITLES: Record<string, string> = {
-  A: "Враждебное поглощение",
+  A: "Выпуск облигаций",
   B: "Экспансия на новый рынок",
   C: "Выплата дивидендов по акциям",
   D: "Запуск экспериментального продукта",
@@ -60,6 +62,16 @@ const DECISION_TITLES: Record<string, string> = {
   H: "Обратный выкуп акций",
 };
 const DECISION_OPTIONS = Object.keys(DECISION_TITLES);
+const DECISION_TYPE_FALLBACK: Record<string, DecisionType> = {
+  A: "growth",
+  B: "growth",
+  C: "empowerment",
+  D: "growth",
+  E: "growth",
+  F: "empowerment",
+  G: "empowerment",
+  H: "empowerment",
+};
 
 interface GameCard {
   game: Game;
@@ -131,6 +143,10 @@ function decisionLabel(decision: string): string {
   return title === decision ? decision : `${decision} — ${title}`;
 }
 
+function decisionType(decision: string, decisionTypes?: Record<string, DecisionType> | null): DecisionType {
+  return decisionTypes?.[decision] ?? DECISION_TYPE_FALLBACK[decision] ?? "growth";
+}
+
 function percentToBps(value: string): number {
   const normalized = value.replace(",", ".").trim();
   const percent = Number.parseFloat(normalized);
@@ -175,7 +191,7 @@ function describeGovernanceProposal(proposal: PublicGovernanceProposal, players:
     case "treasury_grant":
       return `Выдать ${formatShare(proposal.share_bps)} из резерва игроку ${playerName(players, proposal.target_user_id)}`;
     case "treasury_buyback":
-      return `Выкупить ${formatShare(proposal.share_bps)} у игрока ${playerName(players, proposal.target_user_id)} в резерв`;
+      return `Оштрафовать ${playerName(players, proposal.target_user_id)} на ${formatShare(proposal.share_bps)} в резерв`;
     case "appoint_ceo":
       return `Назначить CEO: ${playerName(players, proposal.target_user_id)}`;
     default:
@@ -230,6 +246,8 @@ export default function PlayerApp() {
   const currentVotes = normalizeVotes(gameState?.current_votes);
   const acceptedDecisions = normalizeStringArray(gameState?.accepted_decisions);
   const availableDecisions = normalizeStringArray(gameState?.available_decisions);
+  const majorVoteOptions = normalizeStringArray(gameState?.major_vote_options);
+  const decisionTypes = gameState?.decision_types ?? DECISION_TYPE_FALLBACK;
   const roundReports = normalizeRoundReports(gameState?.round_reports);
   const chatMessages = normalizeChatMessages(gameState?.chat_messages);
   const governanceProposals = normalizeGovernanceProposals(gameState?.governance_proposals);
@@ -897,6 +915,8 @@ export default function PlayerApp() {
           governanceReports={governanceReports}
           chatMessages={chatMessages}
           availableDecisions={availableDecisions}
+          majorVoteOptions={majorVoteOptions}
+          decisionTypes={decisionTypes}
           moleTargets={moleTargets}
           moleSabotage={moleSabotage}
           moleVictoryPoints={gameState.mole_victory_points}
@@ -1198,11 +1218,13 @@ function StartedGameScreen(props: {
   governanceReports: PublicGovernanceReport[];
   chatMessages: PublicChatMessage[];
   availableDecisions: string[];
+  majorVoteOptions: string[];
+  decisionTypes: Record<string, DecisionType>;
   moleTargets: string[];
   moleSabotage: string;
   moleVictoryPoints?: number;
   playersVictoryPoints?: number;
-  currentVotes: { user_id: number; has_voted: boolean }[];
+  currentVotes: PublicVoteState[];
   hasVoted: boolean;
   myCurrentVote: PublicOwnVoteState | null;
   canVote: boolean;
@@ -1231,6 +1253,7 @@ function StartedGameScreen(props: {
     }
     return !props.currentVotes.some((item) => item.user_id === userId && item.has_voted);
   };
+  const displayedMajorOptions = props.majorVoteOptions.length ? props.majorVoteOptions : props.availableDecisions;
 
   return (
     <section className="game-stage">
@@ -1254,6 +1277,7 @@ function StartedGameScreen(props: {
             </div>
             <div className="identity-meta">
               <span>{formatShare(props.me?.share_bps)} доля</span>
+              <span>{formatShare(props.me?.authority_bps)} полномочия</span>
               <span>{roleLabel(props.me?.role)}</span>
               {props.me?.is_ceo ? <strong>CEO</strong> : null}
             </div>
@@ -1296,7 +1320,9 @@ function StartedGameScreen(props: {
                           </span>
                         ) : null}
                       </strong>
-                      <span>{formatShare(player.share_bps)}</span>
+                      <span>
+                        Доля {formatShare(player.share_bps)} · Полномочия {formatShare(player.authority_bps)}
+                      </span>
                     </div>
                   </div>
                   <div className="badge-row">
@@ -1341,6 +1367,7 @@ function StartedGameScreen(props: {
             <GovernanceVotingPhase
               players={props.players}
               proposals={props.governanceProposals}
+              currentVotes={props.currentVotes}
               myCurrentVote={props.myCurrentVote}
               canVote={props.canVote}
               hasVoted={props.hasVoted}
@@ -1356,32 +1383,32 @@ function StartedGameScreen(props: {
                   <p className="eyebrow">голосование</p>
                   <h2>Выбери решение</h2>
                 </div>
-                {props.hasVoted ? <span className="wait-pill">Вы проголосовали, ждем остальных</span> : null}
+                {props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
               </div>
 
               <div className="decision-grid">
-                {props.availableDecisions.map((decision) => {
+                {displayedMajorOptions.map((decision) => {
                   const isMoleTarget = props.me?.role === "mole" && props.moleTargets.includes(decision);
                   const isMoleSabotage = props.me?.role === "mole" && props.moleSabotage === decision;
                   const isSelected = props.myCurrentVote?.decision === decision;
+                  const type = decisionType(decision, props.decisionTypes);
                   return (
-                    <article
-                      className={["decision-card", isMoleTarget ? "mole-target" : "", isMoleSabotage ? "mole-sabotage" : "", isSelected ? "selected-vote" : ""]
+                    <button
+                      type="button"
+                      className={["decision-card", "decision-card-button", type, isMoleTarget ? "mole-target" : "", isMoleSabotage ? "mole-sabotage" : "", isSelected ? "selected-vote" : ""]
                         .filter(Boolean)
                         .join(" ")}
                       key={decision}
+                      onClick={() => props.onVote(decision)}
+                      disabled={!props.canVote || props.isSubmitting}
                     >
                       <span>{isMoleSabotage ? "Диверсия" : isMoleTarget ? "Подкоп" : "Решение"}</span>
                       <strong>{decisionTitle(decision)}</strong>
-                      <small>{decision}</small>
-                      <button
-                        className={isMoleSabotage ? "primary-action sabotage-vote-action" : isMoleTarget ? "primary-action mole-vote-action" : "primary-action"}
-                        onClick={() => props.onVote(decision)}
-                        disabled={!props.canVote || props.hasVoted || props.isSubmitting}
-                      >
-                        Голосовать
-                      </button>
-                    </article>
+                      <div className="decision-meta">
+                        <small className="decision-letter">{decision}</small>
+                        <DecisionTypeTag type={type} />
+                      </div>
+                    </button>
                   );
                 })}
               </div>
@@ -1394,7 +1421,7 @@ function StartedGameScreen(props: {
                       : "secondary-action abstain-button"
                   }
                   onClick={props.onAbstain}
-                  disabled={!canAbstain || props.hasVoted || props.isSubmitting}
+                  disabled={!canAbstain || props.isSubmitting}
                 >
                   Воздержаться
                 </button>
@@ -1535,16 +1562,20 @@ function MoleObjectiveSelectionPhase(props: {
         {DECISION_OPTIONS.map((decision) => {
           const isTarget = selectedTargets.has(decision);
           const isSabotage = sabotage === decision;
+          const type = decisionType(decision);
           return (
             <article
-              className={["objective-card", isTarget ? "is-target" : "", isSabotage ? "is-sabotage" : ""]
+              className={["objective-card", type, isTarget ? "is-target" : "", isSabotage ? "is-sabotage" : ""]
                 .filter(Boolean)
                 .join(" ")}
               key={decision}
             >
               <span>{isSabotage ? "Диверсия" : isTarget ? "Подкоп" : "Решение"}</span>
               <strong>{decisionTitle(decision)}</strong>
-              <small>{decision}</small>
+              <div className="decision-meta">
+                <small>{decision}</small>
+                <DecisionTypeTag type={type} />
+              </div>
               <div className="objective-actions">
                 <button type="button" className="secondary-action" onClick={() => toggleTarget(decision)} disabled={props.isSubmitting || (!isTarget && (targets.length >= 3 || isSabotage))}>
                   Подкоп
@@ -1574,61 +1605,50 @@ function GovernanceProposalPhase(props: {
   onSubmit: (payload: Record<string, unknown>) => void;
   onSkip: () => void;
 }) {
-  const [proposalType, setProposalType] = useState<GovernanceProposalType>("share_transfer");
-  const [fromUserId, setFromUserId] = useState(() => props.currentUserId);
-  const [toUserId, setToUserId] = useState(() => props.players.find((player) => player.user_id !== props.currentUserId)?.user_id ?? props.currentUserId);
-  const [targetUserId, setTargetUserId] = useState(() => props.currentUserId);
-  const [sharePercent, setSharePercent] = useState("5");
+  const [plusUserId, setPlusUserId] = useState<number | null>(null);
+  const [minusUserId, setMinusUserId] = useState<number | null>(null);
 
   const mySubmission = props.submissions.find((submission) => submission.user_id === props.currentUserId);
   const canAct = props.canSubmit || props.canSkip;
-  const currentCEO = props.players.find((player) => player.is_ceo);
-  const fallbackNonCEOId = props.players.find((player) => !player.is_ceo)?.user_id ?? targetUserId;
-  const appointTargetUserId = targetUserId === currentCEO?.user_id ? fallbackNonCEOId : targetUserId;
-  const canSubmitForm =
-    props.canSubmit &&
-    (proposalType !== "share_transfer" || fromUserId !== toUserId) &&
-    (proposalType !== "appoint_ceo" || appointTargetUserId !== currentCEO?.user_id);
+  const currentPlayer = props.players.find((player) => player.user_id === props.currentUserId);
+  const canSubmitForm = props.canSubmit && (Boolean(plusUserId) || Boolean(minusUserId)) && plusUserId !== minusUserId;
+
+  function togglePlus(userId: number) {
+    setPlusUserId((current) => (current === userId ? null : userId));
+    setMinusUserId((current) => (current === userId ? null : current));
+  }
+
+  function toggleMinus(userId: number) {
+    setMinusUserId((current) => (current === userId ? null : userId));
+    setPlusUserId((current) => (current === userId ? null : current));
+  }
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSubmitForm) {
       return;
     }
-    const shareBps = percentToBps(sharePercent);
-
-    if (proposalType === "share_transfer") {
+    if (plusUserId && minusUserId) {
       props.onSubmit({
-        proposal_type: proposalType,
-        from_user_id: fromUserId,
-        to_user_id: toUserId,
-        share_bps: shareBps,
+        proposal_type: "share_transfer",
+        from_user_id: minusUserId,
+        to_user_id: plusUserId,
       });
       return;
     }
-
-    if (proposalType === "treasury_grant") {
+    if (plusUserId) {
       props.onSubmit({
-        proposal_type: proposalType,
-        target_user_id: targetUserId,
-        share_bps: shareBps,
+        proposal_type: "treasury_grant",
+        target_user_id: plusUserId,
       });
       return;
     }
-
-    if (proposalType === "treasury_buyback") {
+    if (minusUserId) {
       props.onSubmit({
-        proposal_type: proposalType,
-        target_user_id: targetUserId,
-        share_bps: shareBps,
+        proposal_type: "treasury_buyback",
+        target_user_id: minusUserId,
       });
-      return;
     }
-
-    props.onSubmit({
-      proposal_type: proposalType,
-      target_user_id: appointTargetUserId,
-    });
   }
 
   return (
@@ -1645,67 +1665,55 @@ function GovernanceProposalPhase(props: {
         <p className="quiet-text">Ты уже {mySubmission.status === "submitted" ? "подал предложение" : "пропустил манёвр"}.</p>
       ) : (
         <form className="governance-form" onSubmit={submit}>
-          <label>
-            Тип манёвра
-            <select value={proposalType} onChange={(event) => setProposalType(event.target.value as GovernanceProposalType)}>
-              <option value="share_transfer">Передача доли</option>
-              <option value="treasury_grant">Грант из резерва</option>
-              <option value="treasury_buyback">Выкуп доли в резерв</option>
-              <option value="appoint_ceo">Назначить CEO</option>
-            </select>
-          </label>
+          <div className="governance-proposal-summary">
+            <span>Сила предложения</span>
+            <strong>{formatShare(currentPlayer?.authority_bps)} полномочия</strong>
+          </div>
 
-          {proposalType === "share_transfer" ? (
-            <>
-              <label>
-                От кого
-                <PlayerSelect
-                  players={props.players}
-                  value={fromUserId}
-                  excludeUserIds={[toUserId]}
-                  onChange={(nextUserId) => {
-                    setFromUserId(nextUserId);
-                    if (nextUserId === toUserId) {
-                      setToUserId(props.players.find((player) => player.user_id !== nextUserId)?.user_id ?? nextUserId);
-                    }
-                  }}
-                />
-              </label>
-              <label>
-                Кому
-                <PlayerSelect
-                  players={props.players}
-                  value={toUserId}
-                  excludeUserIds={[fromUserId]}
-                  onChange={(nextUserId) => {
-                    setToUserId(nextUserId);
-                    if (nextUserId === fromUserId) {
-                      setFromUserId(props.players.find((player) => player.user_id !== nextUserId)?.user_id ?? nextUserId);
-                    }
-                  }}
-                />
-              </label>
-              <ShareInput value={sharePercent} onChange={setSharePercent} />
-            </>
-          ) : proposalType === "treasury_grant" || proposalType === "treasury_buyback" ? (
-            <>
-              <label>
-                {proposalType === "treasury_grant" ? "Получатель" : "У кого выкупить"}
-                <PlayerSelect players={props.players} value={targetUserId} onChange={setTargetUserId} />
-              </label>
-              <ShareInput value={sharePercent} onChange={setSharePercent} />
-            </>
-          ) : (
-            <label>
-              Новый CEO
-              <PlayerSelect
-                players={props.players}
-                value={appointTargetUserId}
-                excludeUserIds={currentCEO ? [currentCEO.user_id] : []}
-                onChange={setTargetUserId}
-              />
-            </label>
-          )}
+          <div className="governance-pick-grid">
+            {props.players.map((player) => (
+              <article
+                className={[
+                  "governance-player-card",
+                  plusUserId === player.user_id ? "plus-selected" : "",
+                  minusUserId === player.user_id ? "minus-selected" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                key={player.user_id}
+              >
+                <div className="governance-player-main">
+                  <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
+                  <div>
+                    <strong>{player.name}</strong>
+                    <span>{formatShare(player.share_bps)} · {formatShare(player.authority_bps)}</span>
+                  </div>
+                </div>
+                <div className="governance-icon-actions">
+                  <button
+                    type="button"
+                    className="icon-action plus-action"
+                    onClick={() => togglePlus(player.user_id)}
+                    disabled={!props.canSubmit || props.isSubmitting}
+                    aria-label={`Дать долю: ${player.name}`}
+                    title="Дать долю"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-action minus-action"
+                    onClick={() => toggleMinus(player.user_id)}
+                    disabled={!props.canSubmit || props.isSubmitting}
+                    aria-label={`Оштрафовать: ${player.name}`}
+                    title="Оштрафовать"
+                  >
+                    −
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
 
           <div className="governance-actions">
             <button className="primary-action" type="submit" disabled={!canSubmitForm || props.isSubmitting}>
@@ -1730,6 +1738,7 @@ function GovernanceProposalPhase(props: {
 function GovernanceVotingPhase(props: {
   players: PublicPlayerState[];
   proposals: PublicGovernanceProposal[];
+  currentVotes: PublicVoteState[];
   myCurrentVote: PublicOwnVoteState | null;
   canVote: boolean;
   hasVoted: boolean;
@@ -1756,12 +1765,15 @@ function GovernanceVotingPhase(props: {
             key={proposal.id}
             proposal={proposal}
             players={props.players}
+            currentVotes={props.currentVotes}
             selected={props.myCurrentVote?.proposal_id === proposal.id}
             disabled={!props.canVote || props.hasVoted || props.isSubmitting}
             onVote={() => props.onVote(proposal.id)}
           />
         ))}
       </div>
+
+      <GovernanceLiveVoteMath votes={props.currentVotes} players={props.players} />
 
       {props.isCEO ? null : (
         <button
@@ -1779,26 +1791,71 @@ function GovernanceVotingPhase(props: {
 function GovernanceProposalCard(props: {
   proposal: PublicGovernanceProposal;
   players: PublicPlayerState[];
+  currentVotes: PublicVoteState[];
   selected: boolean;
   disabled: boolean;
   onVote: () => void;
 }) {
   const proposer = props.players.find((player) => player.user_id === props.proposal.proposer_user_id);
   const proposerName = proposer?.name ?? playerName(props.players, props.proposal.proposer_user_id);
+  const authorIds = props.proposal.author_user_ids?.length ? props.proposal.author_user_ids : [props.proposal.proposer_user_id];
+  const proposalVotes = props.currentVotes.filter((vote) => vote.has_voted && vote.proposal_id === props.proposal.id);
 
   return (
     <article className={props.selected ? "proposal-card selected-vote" : "proposal-card"}>
       <span>Предложение #{props.proposal.id}</span>
       <strong>{describeGovernanceProposal(props.proposal, props.players)}</strong>
-      <small className="proposal-author">
-        Автор:
-        <UserAvatar name={proposerName} avatarUrl={proposer?.avatar_url} size="small" />
-        {proposerName}
-      </small>
+      <small>Сила: {formatShare(props.proposal.share_bps)}</small>
+      <div className="proposal-authors">
+        {authorIds.map((authorId) => {
+          const author = props.players.find((player) => player.user_id === authorId);
+          const name = author?.name ?? playerName(props.players, authorId);
+          return (
+            <span className="proposal-author" key={authorId}>
+              <UserAvatar name={name} avatarUrl={author?.avatar_url ?? proposer?.avatar_url} size="small" />
+              {name}
+            </span>
+          );
+        })}
+      </div>
+      {proposalVotes.length ? (
+        <div className="vote-math-list">
+          {proposalVotes.map((vote) => (
+            <VoteMathLine key={vote.user_id} vote={vote} players={props.players} />
+          ))}
+        </div>
+      ) : null}
       <button className="primary-action" onClick={props.onVote} disabled={props.disabled}>
         Голосовать
       </button>
     </article>
+  );
+}
+
+function GovernanceLiveVoteMath(props: { votes: PublicVoteState[]; players: PublicPlayerState[] }) {
+  const abstainers = props.votes.filter((vote) => vote.has_voted && vote.abstain);
+  if (!abstainers.length) {
+    return null;
+  }
+  return (
+    <div className="vote-math-panel">
+      <span>Воздержались</span>
+      <div className="vote-math-list">
+        {abstainers.map((vote) => (
+          <VoteMathLine key={vote.user_id} vote={vote} players={props.players} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VoteMathLine(props: { vote: PublicVoteState; players: PublicPlayerState[] }) {
+  const player = props.players.find((item) => item.user_id === props.vote.user_id);
+  const name = player?.name ?? playerName(props.players, props.vote.user_id);
+  return (
+    <small className="vote-math-line">
+      {name}: {formatShare(props.vote.share_bps)} + {formatShare(props.vote.authority_bps)} = {formatShare(props.vote.voting_power_bps)}
+    </small>
   );
 }
 
@@ -1812,8 +1869,27 @@ function GovernanceReportList(props: { reports: PublicGovernanceReport[]; player
       <h2>Корпоративные манёвры</h2>
       {props.reports.slice(-3).map((report) => (
         <div className={report.outcome === "accepted" ? "governance-report accepted" : "governance-report"} key={report.round}>
-          <span>Раунд {report.round}</span>
-          <strong>{governanceReportText(report, props.players)}</strong>
+          <div>
+            <span>Раунд {report.round}</span>
+            <strong>{governanceReportText(report, props.players)}</strong>
+          </div>
+          {report.votes?.length ? (
+            <div className="governance-report-votes">
+              {report.votes.map((vote) => (
+                <div className="governance-report-vote" key={`${report.round}-${vote.abstain ? "abstain" : vote.proposal_id}`}>
+                  <span>{vote.abstain ? "Воздержались" : `Предложение #${vote.proposal_id}`}</span>
+                  <strong>{formatShare(vote.voting_power_bps)}</strong>
+                  <div className="vote-math-list">
+                    {(vote.voters ?? []).map((voter) => (
+                      <small className="vote-math-line" key={voter.user_id}>
+                        {voter.name}: {formatShare(voter.share_bps)} + {formatShare(voter.authority_bps)} = {formatShare(voter.voting_power_bps)}
+                      </small>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ))}
     </div>
@@ -1934,7 +2010,7 @@ function PlayerCard(props: {
         <UserAvatar name={props.player.name} avatarUrl={props.player.avatar_url} size="medium" />
         <div>
           <h2>{props.player.name}</h2>
-          <p>{formatShare(props.player.share_bps)} доля</p>
+          <p>Доля {formatShare(props.player.share_bps)} · Полномочия {formatShare(props.player.authority_bps)}</p>
         </div>
       </div>
       <div className="badge-row">
@@ -2038,6 +2114,18 @@ function DecisionList({ values, emptyText }: { values: string[]; emptyText: stri
         <span key={`${value}-${index}`}>{decisionLabel(value)}</span>
       ))}
     </div>
+  );
+}
+
+function DecisionTypeTag({ type }: { type: DecisionType }) {
+  const isEmpowerment = type === "empowerment";
+  return (
+    <span
+      className={isEmpowerment ? "decision-type-tag empowerment" : "decision-type-tag growth"}
+      title={isEmpowerment ? "Победители получают +1% к Полномочиям" : "Победители получают +1% к доле"}
+    >
+      +1%
+    </span>
   );
 }
 
