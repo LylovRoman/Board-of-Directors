@@ -45,6 +45,10 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 			publicState.Me = publicPlayer
 			if player.Role == "mole" {
 				publicState.MoleTargets = append([]string(nil), state.MoleTargets...)
+				publicState.MoleSabotage = state.MoleSabotage
+				molePoints, playersPoints := victoryPoints(state)
+				publicState.MoleVictoryPoints = &molePoints
+				publicState.PlayersVictoryPoints = &playersPoints
 			}
 		}
 
@@ -151,9 +155,22 @@ func publicRoundReports(reports []RoundReport) []PublicRoundReport {
 				Abstain:    vote.Abstain,
 				ShareBPS:   vote.ShareBPS,
 				VoterCount: vote.VoterCount,
+				Voters:     publicDecisionVoters(vote.Voters),
 			})
 		}
 		out = append(out, publicReport)
+	}
+	return out
+}
+
+func publicDecisionVoters(voters []DecisionVoterReport) []PublicDecisionVoterReport {
+	out := make([]PublicDecisionVoterReport, 0, len(voters))
+	for _, voter := range voters {
+		out = append(out, PublicDecisionVoterReport{
+			UserID:   voter.UserID,
+			Name:     voter.Name,
+			ShareBPS: voter.ShareBPS,
+		})
 	}
 	return out
 }
@@ -201,6 +218,10 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 			return actions
 		}
 		switch state.Phase {
+		case GamePhaseMoleObjectiveSelection:
+			if player.Role == "mole" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
+				actions = append(actions, ActionSelectMoleObjectives)
+			}
 		case GamePhaseMajorVoting:
 			if !hasPlayerVoted(state, viewerUserID) {
 				actions = append(actions, ActionVote)

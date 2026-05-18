@@ -222,7 +222,7 @@ code {
 }
 
 .mini-button {
-  min-height: 32px;
+  min-height: 38px;
   padding: 0.36rem 0.62rem;
   font-size: 0.82rem;
 }
@@ -701,6 +701,50 @@ code {
     rgba(35, 35, 32, 0.94);
 }
 
+.secret-card h3 {
+  margin: 12px 0 8px;
+  font-size: 0.95rem;
+}
+
+.score-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.score-row span {
+  padding: 6px 9px;
+  border: 1px solid rgba(246, 241, 232, 0.14);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  color: #f2cf85;
+  font-weight: 900;
+}
+
+.sabotage-secret {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 48, 64, 0.55);
+  border-radius: 8px;
+  background: linear-gradient(150deg, rgba(88, 0, 13, 0.8), rgba(6, 0, 3, 0.92));
+  box-shadow: inset 0 0 24px rgba(255, 0, 34, 0.12);
+}
+
+.sabotage-secret span {
+  color: #ff4057;
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sabotage-secret strong {
+  color: #ff9aa6;
+  line-height: 1.2;
+}
+
 .director-list,
 .vote-list {
   display: grid;
@@ -750,6 +794,81 @@ code {
   gap: 10px;
 }
 
+.objective-selection {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.waiting-selection {
+  min-height: 220px;
+  align-content: center;
+}
+
+.objective-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.objective-card {
+  display: grid;
+  grid-template-rows: auto minmax(3.2rem, 1fr) auto auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 190px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(18, 18, 17, 0.74);
+}
+
+.objective-card.is-target {
+  border-color: rgba(130, 112, 199, 0.78);
+  background:
+    linear-gradient(160deg, rgba(130, 112, 199, 0.24), transparent 66%),
+    rgba(20, 18, 30, 0.9);
+}
+
+.objective-card.is-sabotage {
+  border-color: rgba(255, 48, 64, 0.82);
+  background:
+    linear-gradient(160deg, rgba(128, 0, 18, 0.5), transparent 68%),
+    rgba(8, 1, 4, 0.94);
+}
+
+.objective-card span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.objective-card strong {
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+
+.objective-card small {
+  justify-self: start;
+  padding: 4px 9px;
+  border: 1px solid rgba(246, 241, 232, 0.16);
+  border-radius: 999px;
+  background: rgba(246, 241, 232, 0.07);
+  color: #f2cf85;
+  font-weight: 900;
+}
+
+.objective-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .decision-card,
 .proposal-card {
   display: grid;
@@ -778,6 +897,16 @@ code {
   background:
     linear-gradient(160deg, rgba(130, 112, 199, 0.26), transparent 66%),
     rgba(20, 18, 30, 0.9);
+}
+
+.decision-card.mole-sabotage {
+  border-color: rgba(255, 48, 64, 0.82);
+  background:
+    linear-gradient(160deg, rgba(128, 0, 18, 0.52), transparent 68%),
+    rgba(8, 1, 4, 0.94);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 48, 64, 0.24),
+    0 14px 30px rgba(112, 0, 18, 0.22);
 }
 
 .decision-card.selected-vote,
@@ -840,6 +969,14 @@ code {
   background: linear-gradient(180deg, #bfa9ff, #745bc5);
   color: #130d29;
   box-shadow: 0 10px 24px rgba(116, 91, 197, 0.28);
+}
+
+.decision-card .sabotage-vote-action,
+.sabotage-pick-action {
+  border: 1px solid rgba(255, 64, 87, 0.52);
+  background: linear-gradient(180deg, #ff4057, #7c0013);
+  color: #1d0005;
+  box-shadow: 0 10px 24px rgba(124, 0, 19, 0.32);
 }
 
 .abstain-button {
@@ -1090,7 +1227,7 @@ code {
 
 .round-report-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px 92px;
+  grid-template-columns: minmax(0, 1fr) 76px;
   justify-content: stretch;
   padding: 10px;
   border-radius: 8px;
@@ -1112,9 +1249,10 @@ code {
 }
 
 .round-report-row small {
+  display: block;
+  margin-top: 4px;
   color: var(--muted);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+  text-align: left;
 }
 
 .finish-screen {

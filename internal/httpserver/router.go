@@ -471,6 +471,7 @@ func isPrivateActionEvent(eventType string) bool {
 	switch eventType {
 	case models.EventMoleSelected,
 		models.EventMoleTargetsGenerated,
+		models.EventMoleObjectivesSelected,
 		models.EventVoteSubmitted,
 		models.EventGovernanceVoteSubmitted:
 		return true

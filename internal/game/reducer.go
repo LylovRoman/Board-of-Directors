@@ -100,6 +100,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		})
 	case models.EventGameStarted:
 		state.Status = GameStatusStarted
+		state.Phase = GamePhaseMoleObjectiveSelection
 		state.TreasuryShareBPS = InitialTreasurySharesBPS
 	case models.EventMoleSelected:
 		var payload MoleSelectedPayload
@@ -113,6 +114,13 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			return err
 		}
 		state.MoleTargets = append([]string(nil), payload.Targets...)
+	case models.EventMoleObjectivesSelected:
+		var payload MoleObjectivesSelectedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.MoleTargets = append([]string(nil), payload.Targets...)
+		state.MoleSabotage = payload.Sabotage
 	case models.EventPlayerReceivedShare:
 		var payload PlayerReceivedSharePayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -307,10 +315,15 @@ func buildRoundReport(state *GameState, round int, outcome string, decision stri
 		abstain  bool
 		shareBPS int
 		count    int
+		voters   []DecisionVoterReport
 	}
 
 	buckets := map[string]*bucket{}
-	for _, vote := range state.CurrentVotes {
+	for _, userID := range state.PlayerOrder {
+		vote, ok := state.CurrentVotes[userID]
+		if !ok {
+			continue
+		}
 		player := state.Players[vote.UserID]
 		if player == nil || player.IsKicked || player.IsLeft {
 			continue
@@ -328,6 +341,11 @@ func buildRoundReport(state *GameState, round int, outcome string, decision stri
 		}
 		buckets[key].shareBPS += player.ShareBPS
 		buckets[key].count++
+		buckets[key].voters = append(buckets[key].voters, DecisionVoterReport{
+			UserID:   player.UserID,
+			Name:     player.Name,
+			ShareBPS: player.ShareBPS,
+		})
 	}
 
 	keys := make([]string, 0, len(buckets))
@@ -358,6 +376,7 @@ func buildRoundReport(state *GameState, round int, outcome string, decision stri
 			Abstain:    bucket.abstain,
 			ShareBPS:   bucket.shareBPS,
 			VoterCount: bucket.count,
+			Voters:     append([]DecisionVoterReport(nil), bucket.voters...),
 		})
 	}
 	return report

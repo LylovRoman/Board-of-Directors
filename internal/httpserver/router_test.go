@@ -589,24 +589,27 @@ func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 	if !hasEventType(store.events, models.EventMoleSelected) {
 		t.Fatalf("expected stored event %s", models.EventMoleSelected)
 	}
-	if !hasEventType(store.events, models.EventMoleTargetsGenerated) {
-		t.Fatalf("expected stored event %s", models.EventMoleTargetsGenerated)
+	if hasEventType(store.events, models.EventMoleTargetsGenerated) {
+		t.Fatalf("did not expect stored legacy event %s", models.EventMoleTargetsGenerated)
 	}
 	if hasEventType(resp.Events, models.EventMoleSelected) {
 		t.Fatalf("response must not expose %s: %+v", models.EventMoleSelected, resp.Events)
 	}
-	if hasEventType(resp.Events, models.EventMoleTargetsGenerated) {
-		t.Fatalf("response must not expose %s: %+v", models.EventMoleTargetsGenerated, resp.Events)
-	}
 	if !hasEventType(resp.Events, models.EventGameStarted) {
 		t.Fatalf("expected public response event %s", models.EventGameStarted)
 	}
-	if !hasEventType(resp.Events, models.EventVotingRoundStarted) {
-		t.Fatalf("expected public response event %s", models.EventVotingRoundStarted)
+	if hasEventType(resp.Events, models.EventVotingRoundStarted) {
+		t.Fatalf("did not expect voting to start before mole objectives are selected")
+	}
+	if resp.State.Phase != game.GamePhaseMoleObjectiveSelection {
+		t.Fatalf("expected mole objective selection phase, got %s", resp.State.Phase)
 	}
 	if resp.State.Me.Role == "mole" {
-		if len(resp.State.MoleTargets) != 3 {
-			t.Fatalf("expected mole host to see 3 mole targets, got %v", resp.State.MoleTargets)
+		if len(resp.State.MoleTargets) != 0 || resp.State.MoleSabotage != "" {
+			t.Fatalf("expected mole objectives to be empty before selection, got %v / %q", resp.State.MoleTargets, resp.State.MoleSabotage)
+		}
+		if !hasAction(resp.State.AvailableActions, game.ActionSelectMoleObjectives) {
+			t.Fatalf("expected mole host to be able to select objectives, got %v", resp.State.AvailableActions)
 		}
 	} else {
 		if resp.State.Me.Role != "player" {
@@ -615,6 +618,29 @@ func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 		if len(resp.State.MoleTargets) != 0 {
 			t.Fatalf("expected non-mole host to not see mole targets, got %v", resp.State.MoleTargets)
 		}
+	}
+}
+
+func hasAction(actions []game.ActionType, action game.ActionType) bool {
+	for _, item := range actions {
+		if item == action {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPublicActionEventsHidesMoleObjectivesSelected(t *testing.T) {
+	events := []models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","C","F"],"sabotage":"H"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1}`},
+	}
+	publicEvents := publicActionEvents(events)
+	if hasEventType(publicEvents, models.EventMoleObjectivesSelected) {
+		t.Fatalf("response must not expose %s: %+v", models.EventMoleObjectivesSelected, publicEvents)
+	}
+	if !hasEventType(publicEvents, models.EventVotingRoundStarted) {
+		t.Fatalf("expected public response event %s", models.EventVotingRoundStarted)
 	}
 }
 

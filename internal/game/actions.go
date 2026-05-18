@@ -167,7 +167,6 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 	e.shufflePlayers(shuffledPlayers)
 	mole := shuffledPlayers[0]
 	ceo := shuffledPlayers[1%len(shuffledPlayers)]
-	targets := e.randomTargets()
 
 	events := []models.Event{{
 		GameID:     state.GameID,
@@ -181,12 +180,6 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 		ActorName:  actor.Name,
 		EventType:  models.EventMoleSelected,
 		EventValue: mustJSON(MoleSelectedPayload{UserID: mole.UserID}),
-	}, {
-		GameID:     state.GameID,
-		UserID:     &actor.ID,
-		ActorName:  actor.Name,
-		EventType:  models.EventMoleTargetsGenerated,
-		EventValue: mustJSON(MoleTargetsGeneratedPayload{Targets: targets}),
 	}}
 
 	for i, player := range shuffledPlayers {
@@ -207,16 +200,47 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 			EventType:  models.EventCEOSelected,
 			EventValue: mustJSON(CEOSelectedPayload{UserID: ceo.UserID}),
 		},
-		models.Event{
-			GameID:     state.GameID,
-			UserID:     &actor.ID,
-			ActorName:  actor.Name,
-			EventType:  models.EventVotingRoundStarted,
-			EventValue: mustJSON(VotingRoundStartedPayload{Round: 1}),
-		},
 	)
 
 	return events, nil
+}
+
+func (e *Engine) handleSelectMoleObjectives(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
+	if state.Status != GameStatusStarted || state.IsFinished {
+		return nil, errors.New("game is not active")
+	}
+	if state.Phase != GamePhaseMoleObjectiveSelection {
+		return nil, errors.New("mole objective selection is not active")
+	}
+	if actor.ID != state.MoleUserID {
+		return nil, errors.New("only mole can select objectives")
+	}
+	if len(state.MoleTargets) > 0 || state.MoleSabotage != "" {
+		return nil, errors.New("mole objectives already selected")
+	}
+
+	var payload SelectMoleObjectivesActionPayload
+	if err := decodeActionPayload(raw, &payload); err != nil {
+		return nil, err
+	}
+	targets, sabotage, err := normalizeMoleObjectives(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return []models.Event{{
+		GameID:     state.GameID,
+		UserID:     &actor.ID,
+		ActorName:  actor.Name,
+		EventType:  models.EventMoleObjectivesSelected,
+		EventValue: mustJSON(MoleObjectivesSelectedPayload{Targets: targets, Sabotage: sabotage}),
+	}, {
+		GameID:     state.GameID,
+		UserID:     &actor.ID,
+		ActorName:  actor.Name,
+		EventType:  models.EventVotingRoundStarted,
+		EventValue: mustJSON(VotingRoundStartedPayload{Round: 1}),
+	}}, nil
 }
 
 func (e *Engine) handleVote(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
@@ -816,37 +840,82 @@ func nextGovernanceProposalID(state *GameState) int {
 	return maxID + 1
 }
 
+func normalizeMoleObjectives(payload SelectMoleObjectivesActionPayload) ([]string, string, error) {
+	if len(payload.Targets) != 3 {
+		return nil, "", errors.New("exactly 3 mole targets are required")
+	}
+	sabotage := strings.TrimSpace(payload.Sabotage)
+	if sabotage == "" {
+		return nil, "", errors.New("sabotage is required")
+	}
+	if !isDecisionID(sabotage) {
+		return nil, "", errors.New("sabotage is not a valid decision")
+	}
+
+	seen := map[string]bool{}
+	targets := make([]string, 0, len(payload.Targets))
+	for _, rawTarget := range payload.Targets {
+		target := strings.TrimSpace(rawTarget)
+		if !isDecisionID(target) {
+			return nil, "", errors.New("target is not a valid decision")
+		}
+		if seen[target] {
+			return nil, "", errors.New("mole targets must be unique")
+		}
+		if target == sabotage {
+			return nil, "", errors.New("sabotage cannot also be a mole target")
+		}
+		seen[target] = true
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	return targets, sabotage, nil
+}
+
+func isDecisionID(decision string) bool {
+	for _, available := range allDecisions {
+		if decision == available {
+			return true
+		}
+	}
+	return false
+}
+
 func detectWinner(state *GameState) (string, string) {
+	molePoints, playersPoints := victoryPoints(state)
+	if molePoints >= 3 {
+		return "mole", "mole_targets_collected"
+	}
+	if playersPoints >= 3 {
+		return "players", "three_clean_decisions_collected"
+	}
+	return "", ""
+}
+
+func victoryPoints(state *GameState) (int, int) {
 	accepted := map[string]bool{}
-	cleanCount := 0
 	targets := map[string]bool{}
 	for _, target := range state.MoleTargets {
 		targets[target] = true
 	}
+
+	molePoints := 0
+	playersPoints := 0
 	for _, decision := range state.AcceptedOrder {
 		if accepted[decision] {
 			continue
 		}
 		accepted[decision] = true
-		if !targets[decision] {
-			cleanCount++
+		switch {
+		case state.MoleSabotage != "" && decision == state.MoleSabotage:
+			molePoints += 2
+		case targets[decision]:
+			molePoints++
+		default:
+			playersPoints++
 		}
 	}
-
-	allTargetsAccepted := true
-	for _, target := range state.MoleTargets {
-		if !accepted[target] {
-			allTargetsAccepted = false
-			break
-		}
-	}
-	if allTargetsAccepted {
-		return "mole", "mole_targets_collected"
-	}
-	if cleanCount >= 3 {
-		return "players", "three_clean_decisions_collected"
-	}
-	return "", ""
+	return molePoints, playersPoints
 }
 
 func activePlayers(state *GameState) []*PlayerState {
@@ -904,6 +973,7 @@ func cloneState(state *GameState) *GameState {
 	}
 	cloned.AcceptedOrder = append([]string(nil), state.AcceptedOrder...)
 	cloned.MoleTargets = append([]string(nil), state.MoleTargets...)
+	cloned.MoleSabotage = state.MoleSabotage
 	cloned.RejectedOrder = append([]string(nil), state.RejectedOrder...)
 	cloned.RoundReports = append([]RoundReport(nil), state.RoundReports...)
 	cloned.GovernanceReports = append([]GovernanceReport(nil), state.GovernanceReports...)

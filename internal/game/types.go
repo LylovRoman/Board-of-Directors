@@ -14,6 +14,7 @@ const (
 	ActionBanPlayer                ActionType = "ban_player"
 	ActionSendChatMessage          ActionType = "send_chat_message"
 	ActionStartGame                ActionType = "start_game"
+	ActionSelectMoleObjectives     ActionType = "select_mole_objectives"
 	ActionVote                     ActionType = "vote"
 	ActionSubmitGovernanceProposal ActionType = "submit_governance_proposal"
 	ActionSkipGovernanceProposal   ActionType = "skip_governance_proposal"
@@ -30,9 +31,10 @@ const (
 type GamePhase string
 
 const (
-	GamePhaseMajorVoting        GamePhase = "major_voting"
-	GamePhaseGovernanceProposal GamePhase = "governance_proposal"
-	GamePhaseGovernanceVoting   GamePhase = "governance_voting"
+	GamePhaseMoleObjectiveSelection GamePhase = "mole_objective_selection"
+	GamePhaseMajorVoting            GamePhase = "major_voting"
+	GamePhaseGovernanceProposal     GamePhase = "governance_proposal"
+	GamePhaseGovernanceVoting       GamePhase = "governance_voting"
 )
 
 type GovernanceProposalType string
@@ -86,6 +88,7 @@ type GameState struct {
 	CEOUserID               int64
 	MoleUserID              int64
 	MoleTargets             []string
+	MoleSabotage            string
 	CurrentRound            int
 	GovernanceRound         int
 	TreasuryShareBPS        int `json:"treasury_share_bps"`
@@ -175,6 +178,9 @@ type PublicGameState struct {
 	RoundReports          []PublicRoundReport          `json:"round_reports"`
 	ChatMessages          []PublicChatMessage          `json:"chat_messages"`
 	MoleTargets           []string                     `json:"mole_targets,omitempty"`
+	MoleSabotage          string                       `json:"mole_sabotage,omitempty"`
+	MoleVictoryPoints     *int                         `json:"mole_victory_points,omitempty"`
+	PlayersVictoryPoints  *int                         `json:"players_victory_points,omitempty"`
 	AvailableActions      []ActionType                 `json:"available_actions"`
 }
 
@@ -252,6 +258,13 @@ type DecisionVoteReport struct {
 	Abstain    bool
 	ShareBPS   int
 	VoterCount int
+	Voters     []DecisionVoterReport
+}
+
+type DecisionVoterReport struct {
+	UserID   int64
+	Name     string
+	ShareBPS int
 }
 
 type PublicRoundReport struct {
@@ -263,10 +276,17 @@ type PublicRoundReport struct {
 }
 
 type PublicDecisionVoteReport struct {
-	Decision   string `json:"decision"`
-	Abstain    bool   `json:"abstain"`
-	ShareBPS   int    `json:"share_bps"`
-	VoterCount int    `json:"voter_count"`
+	Decision   string                      `json:"decision"`
+	Abstain    bool                        `json:"abstain"`
+	ShareBPS   int                         `json:"share_bps"`
+	VoterCount int                         `json:"voter_count"`
+	Voters     []PublicDecisionVoterReport `json:"voters"`
+}
+
+type PublicDecisionVoterReport struct {
+	UserID   int64  `json:"user_id"`
+	Name     string `json:"name"`
+	ShareBPS int    `json:"share_bps"`
 }
 
 type GameCreatedPayload struct {
@@ -298,6 +318,11 @@ type MoleSelectedPayload struct {
 
 type MoleTargetsGeneratedPayload struct {
 	Targets []string `json:"targets"`
+}
+
+type MoleObjectivesSelectedPayload struct {
+	Targets  []string `json:"targets"`
+	Sabotage string   `json:"sabotage"`
 }
 
 type PlayerReceivedSharePayload struct {
@@ -411,6 +436,11 @@ type BanPlayerActionPayload struct {
 
 type SendChatMessageActionPayload struct {
 	Message string `json:"message"`
+}
+
+type SelectMoleObjectivesActionPayload struct {
+	Targets  []string `json:"targets"`
+	Sabotage string   `json:"sabotage"`
 }
 
 type VoteActionPayload struct {

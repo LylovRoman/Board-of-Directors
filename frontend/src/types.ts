@@ -5,11 +5,12 @@ export type ActionType =
   | "ban_player"
   | "send_chat_message"
   | "start_game"
+  | "select_mole_objectives"
   | "vote"
   | "submit_governance_proposal"
   | "skip_governance_proposal";
 export type GameStatus = "lobby" | "started" | "finished";
-export type GamePhase = "major_voting" | "governance_proposal" | "governance_voting";
+export type GamePhase = "mole_objective_selection" | "major_voting" | "governance_proposal" | "governance_voting";
 export type GovernanceProposalType = "share_transfer" | "treasury_grant" | "treasury_buyback" | "appoint_ceo";
 
 export interface User {
@@ -111,6 +112,13 @@ export interface PublicDecisionVoteReport {
   abstain: boolean;
   share_bps: number;
   voter_count: number;
+  voters?: PublicDecisionVoterReport[] | null;
+}
+
+export interface PublicDecisionVoterReport {
+  user_id: number;
+  name: string;
+  share_bps: number;
 }
 
 export interface PublicRoundReport {
@@ -144,6 +152,9 @@ export interface PublicGameState {
   round_reports?: PublicRoundReport[] | null;
   chat_messages?: PublicChatMessage[] | null;
   mole_targets?: string[];
+  mole_sabotage?: string;
+  mole_victory_points?: number;
+  players_victory_points?: number;
   available_actions: ActionType[];
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import {
   changePassword,
   createGame,
@@ -58,6 +59,7 @@ const DECISION_TITLES: Record<string, string> = {
   G: "Агрессивная налоговая стратегия",
   H: "Обратный выкуп акций",
 };
+const DECISION_OPTIONS = Object.keys(DECISION_TITLES);
 
 interface GameCard {
   game: Game;
@@ -89,6 +91,8 @@ function statusLabel(status?: GameStatus): string {
 
 function phaseLabel(phase?: GamePhase): string {
   switch (phase) {
+    case "mole_objective_selection":
+      return "Выбор целей Крота";
     case "governance_proposal":
     case "governance_voting":
       return "Корпоративные манёвры";
@@ -232,10 +236,12 @@ export default function PlayerApp() {
   const governanceSubmissions = normalizeGovernanceSubmissions(gameState?.governance_submissions);
   const governanceReports = normalizeGovernanceReports(gameState?.governance_reports);
   const moleTargets = normalizeStringArray(gameState?.mole_targets);
+  const moleSabotage = gameState?.mole_sabotage ?? "";
   const me = gameState?.me;
   const hasMe = Boolean(me && me.user_id === currentUserId);
   const hasVoted = currentVotes.some((vote) => vote.user_id === currentUserId && vote.has_voted);
   const canVote = availableActions.includes("vote");
+  const canSelectMoleObjectives = availableActions.includes("select_mole_objectives");
   const canSubmitGovernanceProposal = availableActions.includes("submit_governance_proposal");
   const canSkipGovernanceProposal = availableActions.includes("skip_governance_proposal");
   const canJoin = availableActions.includes("join_game");
@@ -892,14 +898,19 @@ export default function PlayerApp() {
           chatMessages={chatMessages}
           availableDecisions={availableDecisions}
           moleTargets={moleTargets}
+          moleSabotage={moleSabotage}
+          moleVictoryPoints={gameState.mole_victory_points}
+          playersVictoryPoints={gameState.players_victory_points}
           currentVotes={currentVotes}
           hasVoted={hasVoted}
           myCurrentVote={gameState.my_current_vote ?? null}
           canVote={canVote}
+          canSelectMoleObjectives={canSelectMoleObjectives}
           canSubmitGovernanceProposal={canSubmitGovernanceProposal}
           canSkipGovernanceProposal={canSkipGovernanceProposal}
           canSendChatMessage={canSendChatMessage}
           isSubmitting={isSubmitting}
+          onSelectMoleObjectives={(payload) => void handleAction("select_mole_objectives", payload)}
           onVote={(decision) => void handleAction("vote", { decision, abstain: false })}
           onVoteProposal={(proposalId) => void handleAction("vote", { proposal_id: proposalId, abstain: false })}
           onAbstain={() => void handleAction("vote", { abstain: true })}
@@ -1188,14 +1199,19 @@ function StartedGameScreen(props: {
   chatMessages: PublicChatMessage[];
   availableDecisions: string[];
   moleTargets: string[];
+  moleSabotage: string;
+  moleVictoryPoints?: number;
+  playersVictoryPoints?: number;
   currentVotes: { user_id: number; has_voted: boolean }[];
   hasVoted: boolean;
   myCurrentVote: PublicOwnVoteState | null;
   canVote: boolean;
+  canSelectMoleObjectives: boolean;
   canSubmitGovernanceProposal: boolean;
   canSkipGovernanceProposal: boolean;
   canSendChatMessage: boolean;
   isSubmitting: boolean;
+  onSelectMoleObjectives: (payload: Record<string, unknown>) => void;
   onVote: (decision: string) => void;
   onVoteProposal: (proposalId: number) => void;
   onAbstain: () => void;
@@ -1246,7 +1262,18 @@ function StartedGameScreen(props: {
           {props.me?.role === "mole" ? (
             <section className="secret-card">
               <p className="eyebrow">Твои цели</p>
-              <DecisionList values={props.moleTargets} emptyText="Цели еще не раскрыты." />
+              <div className="score-row">
+                <span>Крот: {props.moleVictoryPoints ?? 0}/3</span>
+                <span>Совет: {props.playersVictoryPoints ?? 0}/3</span>
+              </div>
+              <h3>Подкопы</h3>
+              <DecisionList values={props.moleTargets} emptyText="Цели еще не выбраны." />
+              {props.moleSabotage ? (
+                <div className="sabotage-secret">
+                  <span>Диверсия</span>
+                  <strong>{decisionLabel(props.moleSabotage)}</strong>
+                </div>
+              ) : null}
             </section>
           ) : null}
 
@@ -1292,7 +1319,14 @@ function StartedGameScreen(props: {
             onSend={props.onSendChatMessage}
           />
 
-          {props.phase === "governance_proposal" ? (
+          {props.phase === "mole_objective_selection" ? (
+            <MoleObjectiveSelectionPhase
+              isMole={props.me?.role === "mole"}
+              canSelect={props.canSelectMoleObjectives}
+              isSubmitting={props.isSubmitting}
+              onSubmit={props.onSelectMoleObjectives}
+            />
+          ) : props.phase === "governance_proposal" ? (
             <GovernanceProposalPhase
               players={props.players}
               submissions={props.governanceSubmissions}
@@ -1328,19 +1362,20 @@ function StartedGameScreen(props: {
               <div className="decision-grid">
                 {props.availableDecisions.map((decision) => {
                   const isMoleTarget = props.me?.role === "mole" && props.moleTargets.includes(decision);
+                  const isMoleSabotage = props.me?.role === "mole" && props.moleSabotage === decision;
                   const isSelected = props.myCurrentVote?.decision === decision;
                   return (
                     <article
-                      className={["decision-card", isMoleTarget ? "mole-target" : "", isSelected ? "selected-vote" : ""]
+                      className={["decision-card", isMoleTarget ? "mole-target" : "", isMoleSabotage ? "mole-sabotage" : "", isSelected ? "selected-vote" : ""]
                         .filter(Boolean)
                         .join(" ")}
                       key={decision}
                     >
-                      <span>{isMoleTarget ? "Твоя цель" : "Решение"}</span>
+                      <span>{isMoleSabotage ? "Диверсия" : isMoleTarget ? "Подкоп" : "Решение"}</span>
                       <strong>{decisionTitle(decision)}</strong>
                       <small>{decision}</small>
                       <button
-                        className={isMoleTarget ? "primary-action mole-vote-action" : "primary-action"}
+                        className={isMoleSabotage ? "primary-action sabotage-vote-action" : isMoleTarget ? "primary-action mole-vote-action" : "primary-action"}
                         onClick={() => props.onVote(decision)}
                         disabled={!props.canVote || props.hasVoted || props.isSubmitting}
                       >
@@ -1438,6 +1473,94 @@ function FinishScreen(props: {
         </button>
       </div>
     </section>
+  );
+}
+
+function MoleObjectiveSelectionPhase(props: {
+  isMole: boolean;
+  canSelect: boolean;
+  isSubmitting: boolean;
+  onSubmit: (payload: Record<string, unknown>) => void;
+}) {
+  const [targets, setTargets] = useState<string[]>([]);
+  const [sabotage, setSabotage] = useState("");
+  const selectedTargets = new Set(targets);
+  const canSubmit = props.canSelect && targets.length === 3 && Boolean(sabotage) && !selectedTargets.has(sabotage);
+
+  function toggleTarget(decision: string) {
+    setTargets((current) => {
+      if (current.includes(decision)) {
+        return current.filter((item) => item !== decision);
+      }
+      if (current.length >= 3 || sabotage === decision) {
+        return current;
+      }
+      return [...current, decision].sort();
+    });
+  }
+
+  function chooseSabotage(decision: string) {
+    setSabotage(decision);
+    setTargets((current) => current.filter((item) => item !== decision));
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+    props.onSubmit({ targets, sabotage });
+  }
+
+  if (!props.isMole) {
+    return (
+      <section className="objective-selection waiting-selection">
+        <p className="eyebrow">подготовка</p>
+        <h2>Крот выбирает цели</h2>
+        <p className="quiet-text">Первое голосование начнется, когда тайный Крот выберет три Подкопа и одну Диверсию.</p>
+      </section>
+    );
+  }
+
+  return (
+    <form className="objective-selection" onSubmit={submit}>
+      <div className="section-heading compact-heading">
+        <div>
+          <p className="eyebrow">секретный выбор</p>
+          <h2>Выбери Подкопы и Диверсию</h2>
+        </div>
+        <span className="wait-pill">{targets.length}/3 Подкопа</span>
+      </div>
+      <div className="objective-grid">
+        {DECISION_OPTIONS.map((decision) => {
+          const isTarget = selectedTargets.has(decision);
+          const isSabotage = sabotage === decision;
+          return (
+            <article
+              className={["objective-card", isTarget ? "is-target" : "", isSabotage ? "is-sabotage" : ""]
+                .filter(Boolean)
+                .join(" ")}
+              key={decision}
+            >
+              <span>{isSabotage ? "Диверсия" : isTarget ? "Подкоп" : "Решение"}</span>
+              <strong>{decisionTitle(decision)}</strong>
+              <small>{decision}</small>
+              <div className="objective-actions">
+                <button type="button" className="secondary-action" onClick={() => toggleTarget(decision)} disabled={props.isSubmitting || (!isTarget && (targets.length >= 3 || isSabotage))}>
+                  Подкоп
+                </button>
+                <button type="button" className="sabotage-pick-action" onClick={() => chooseSabotage(decision)} disabled={props.isSubmitting}>
+                  Диверсия
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      <button className="primary-action" type="submit" disabled={!canSubmit || props.isSubmitting}>
+        Подтвердить цели
+      </button>
+    </form>
   );
 }
 
@@ -1891,9 +2014,11 @@ function RoundReportDetails(props: { report: PublicRoundReport | null; onClose: 
       <div className="round-report-votes">
         {props.report.votes.map((vote) => (
           <div className="round-report-row" key={`${props.report?.round}-${vote.decision}`}>
-            <span>{vote.abstain ? "Воздержались" : decisionLabel(vote.decision)}</span>
+            <div>
+              <span>{vote.abstain ? "Воздержались" : decisionLabel(vote.decision)}</span>
+              <small>{(vote.voters ?? []).map((voter) => voter.name).join(", ") || formatVotesCount(vote.voter_count)}</small>
+            </div>
             <strong>{formatShare(vote.share_bps)}</strong>
-            <small>{formatVotesCount(vote.voter_count)}</small>
           </div>
         ))}
         {!props.report.votes.length ? <p className="quiet-text">Подробных голосов для этого раунда нет.</p> : null}

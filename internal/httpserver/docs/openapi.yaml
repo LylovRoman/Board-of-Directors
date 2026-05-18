@@ -374,7 +374,7 @@ paths:
                 type: object
                 properties:
                   events:
-                    description: Public emitted events only. Private events such as mole selection, mole targets, and submitted votes are omitted.
+                    description: Public emitted events only. Private events such as mole selection, mole objectives, and submitted votes are omitted.
                     type: array
                     items:
                       $ref: "#/components/schemas/Event"
@@ -461,10 +461,51 @@ components:
       properties:
         type:
           type: string
+          enum:
+            - join_game
+            - leave_game
+            - kick_player
+            - ban_player
+            - send_chat_message
+            - start_game
+            - select_mole_objectives
+            - vote
+            - submit_governance_proposal
+            - skip_governance_proposal
         payload:
-          type: object
-          additionalProperties: true
+          oneOf:
+            - $ref: "#/components/schemas/SelectMoleObjectivesPayload"
+            - $ref: "#/components/schemas/VotePayload"
+            - type: object
+              additionalProperties: true
       required: [type]
+
+    SelectMoleObjectivesPayload:
+      type: object
+      description: Private action payload submitted only by the Mole during mole_objective_selection.
+      properties:
+        targets:
+          type: array
+          minItems: 3
+          maxItems: 3
+          uniqueItems: true
+          items:
+            type: string
+            enum: [A, B, C, D, E, F, G, H]
+        sabotage:
+          type: string
+          enum: [A, B, C, D, E, F, G, H]
+      required: [targets, sabotage]
+
+    VotePayload:
+      type: object
+      properties:
+        decision:
+          type: string
+        proposal_id:
+          type: integer
+        abstain:
+          type: boolean
 
     PublicPlayerState:
       type: object
@@ -570,7 +611,24 @@ components:
           type: integer
         voter_count:
           type: integer
-      required: [decision, abstain, share_bps, voter_count]
+        voters:
+          type: array
+          description: Revealed voters for this decision group after the round is resolved.
+          items:
+            $ref: "#/components/schemas/PublicDecisionVoterReport"
+      required: [decision, abstain, share_bps, voter_count, voters]
+
+    PublicDecisionVoterReport:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        share_bps:
+          type: integer
+      required: [user_id, name, share_bps]
 
     PublicRoundReport:
       type: object
@@ -621,7 +679,7 @@ components:
           type: string
         phase:
           type: string
-          enum: [major_voting, governance_proposal, governance_voting]
+          enum: [mole_objective_selection, major_voting, governance_proposal, governance_voting]
         is_finished:
           type: boolean
         winner:
@@ -678,8 +736,18 @@ components:
             $ref: "#/components/schemas/PublicChatMessage"
         mole_targets:
           type: array
+          description: Private. Present only for the Mole; these are the 1-point Podkop objectives.
           items:
             type: string
+        mole_sabotage:
+          type: string
+          description: Private. Present only for the Mole; this is the 2-point Sabotage objective.
+        mole_victory_points:
+          type: integer
+          description: Private. Present only for the Mole.
+        players_victory_points:
+          type: integer
+          description: Private. Present only for the Mole.
         available_actions:
           type: array
           items:

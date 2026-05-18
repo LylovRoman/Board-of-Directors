@@ -93,6 +93,7 @@ player_kicked
 game_started
 mole_selected
 mole_targets_generated
+mole_objectives_selected
 player_received_share
 ceo_selected
 voting_round_started
@@ -266,7 +267,7 @@ DELETE /games/{id}
 GET /games/{id}/state?viewer_user_id=1
 ```
 
-Возвращает персонализированное состояние партии. Цели крота раскрываются только самому кроту.
+Возвращает персонализированное состояние партии. Подкопы, Диверсия и счет победных очков раскрываются только самому Кроту.
 
 #### Отправить действие игрока
 
@@ -293,6 +294,7 @@ leave_game
 kick_player
 ban_player
 start_game
+select_mole_objectives
 vote
 ```
 

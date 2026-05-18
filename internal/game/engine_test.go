@@ -202,6 +202,124 @@ func TestProjectStateShowsMoleTargetsOnlyToMole(t *testing.T) {
 	}
 }
 
+func TestSelectMoleObjectivesStartsFirstVotingRound(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+				{EventType: models.EventGameStarted, EventValue: `{}`},
+				{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+				{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+			},
+		},
+	}
+
+	engine := NewEngine(store)
+	state, events, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  2,
+		Type:    ActionSelectMoleObjectives,
+		Payload: []byte(`{"targets":["C","A","F"],"sabotage":"H"}`),
+	})
+	if err != nil {
+		t.Fatalf("HandleAction: %v", err)
+	}
+	if len(events) != 2 || events[0].EventType != models.EventMoleObjectivesSelected || events[1].EventType != models.EventVotingRoundStarted {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if state.Phase != GamePhaseMajorVoting || state.CurrentRound != 1 {
+		t.Fatalf("expected first major voting round, got phase=%s round=%d", state.Phase, state.CurrentRound)
+	}
+	if state.MoleSabotage != "H" || len(state.MoleTargets) != 3 {
+		t.Fatalf("expected selected objectives, got targets=%v sabotage=%q", state.MoleTargets, state.MoleSabotage)
+	}
+}
+
+func TestSelectMoleObjectivesValidatesActorAndPayload(t *testing.T) {
+	baseEvents := []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+	}
+	cases := []struct {
+		name    string
+		userID  int64
+		payload string
+	}{
+		{name: "non mole", userID: 1, payload: `{"targets":["A","C","F"],"sabotage":"H"}`},
+		{name: "too few targets", userID: 2, payload: `{"targets":["A","C"],"sabotage":"H"}`},
+		{name: "duplicate targets", userID: 2, payload: `{"targets":["A","A","C"],"sabotage":"H"}`},
+		{name: "invalid target", userID: 2, payload: `{"targets":["A","C","Z"],"sabotage":"H"}`},
+		{name: "overlapping sabotage", userID: 2, payload: `{"targets":["A","C","F"],"sabotage":"F"}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &stubStore{
+				users: map[int64]models.User{
+					1: {ID: 1, Name: "Alice"},
+					2: {ID: 2, Name: "Bob"},
+					3: {ID: 3, Name: "Carol"},
+				},
+				games:  map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+				events: map[int64][]models.Event{1: append([]models.Event(nil), baseEvents...)},
+			}
+			_, _, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+				UserID:  tc.userID,
+				Type:    ActionSelectMoleObjectives,
+				Payload: []byte(tc.payload),
+			})
+			if err == nil {
+				t.Fatalf("expected validation error")
+			}
+		})
+	}
+}
+
+func TestDetectWinnerUsesSabotageVictoryPoints(t *testing.T) {
+	state := &GameState{
+		MoleTargets:   []string{"A", "C", "F"},
+		MoleSabotage:  "H",
+		AcceptedOrder: []string{"H", "A"},
+	}
+	winner, reason := detectWinner(state)
+	if winner != "mole" || reason != "mole_targets_collected" {
+		t.Fatalf("expected mole victory from sabotage plus target, got %q / %q", winner, reason)
+	}
+}
+
+func TestDetectWinnerCountsCleanDecisionsForPlayers(t *testing.T) {
+	state := &GameState{
+		MoleTargets:   []string{"A", "C", "F"},
+		MoleSabotage:  "H",
+		AcceptedOrder: []string{"B", "D", "E"},
+	}
+	winner, reason := detectWinner(state)
+	if winner != "players" || reason != "three_clean_decisions_collected" {
+		t.Fatalf("expected players victory from clean decisions, got %q / %q", winner, reason)
+	}
+}
+
 func TestProjectStateAllowsLobbyViewForNonParticipant(t *testing.T) {
 	state, err := BuildState(1, "Mafia", []models.Event{
 		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
