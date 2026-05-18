@@ -1800,7 +1800,6 @@ function GovernanceVotingPhase(props: {
       <div className="section-heading compact-heading">
         <div>
           <p className="eyebrow">Корпоративные манёвры</p>
-          <h2>Выбери предложение</h2>
         </div>
         {props.hasVoted ? <span className="wait-pill">Вы проголосовали, ждем остальных</span> : null}
       </div>
@@ -1866,7 +1865,6 @@ function GovernanceProposalCard(props: {
         }
       }}
     >
-      <span>Предложение #{props.proposal.id}</span>
       <strong>{describeGovernanceProposal(props.proposal, props.players)}</strong>
       <small>Сила: {formatShare(props.proposal.share_bps)}</small>
       <div className="proposal-authors">
@@ -1881,13 +1879,6 @@ function GovernanceProposalCard(props: {
           );
         })}
       </div>
-      {proposalVotes.length ? (
-        <div className="vote-math-list">
-          {proposalVotes.map((vote) => (
-            <VoteMathLine key={vote.user_id} vote={vote} players={props.players} />
-          ))}
-        </div>
-      ) : null}
     </article>
   );
 }
@@ -2019,7 +2010,6 @@ function ChatPanel(props: {
       <div className="chat-heading">
         <div>
           <p className="eyebrow">чат</p>
-          <h2>{historyMode ? "История решений" : "Переговорная"}</h2>
         </div>
         <div className="chat-heading-actions">
           <button

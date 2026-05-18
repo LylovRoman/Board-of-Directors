@@ -1190,19 +1190,13 @@ func formatGovernanceSystemMessage(state *GameState, outcome string, proposalID 
 	report := buildGovernanceReport(state, state.GovernanceRound, outcome, proposalID, reason)
 	details := []string{}
 	for _, vote := range report.Votes {
-		label := fmt.Sprintf("Предложение #%d", vote.ProposalID)
+		label := describeGovernanceProposalForChat(state, state.GovernanceProposals[proposalID])
 		if vote.Abstain {
 			label = "Воздержались"
 		}
 		voters := make([]string, 0, len(vote.Voters))
 		for _, voter := range vote.Voters {
-			voters = append(voters, fmt.Sprintf(
-				"%s %s + %s = %s",
-				voter.Name,
-				formatBPS(voter.ShareBPS),
-				formatBPS(voter.AuthorityBPS),
-				formatBPS(voter.VotingPowerBPS),
-			))
+			voters = append(voters, voter.Name)
 		}
 		details = append(details, fmt.Sprintf("%s: %s (%s)", label, formatBPS(vote.VotingPowerBPS), strings.Join(voters, ", ")))
 	}
@@ -1211,7 +1205,7 @@ func formatGovernanceSystemMessage(state *GameState, outcome string, proposalID 
 	systemEventType := "governance_rejected"
 	tone := "warning"
 	if outcome == "accepted" {
-		summary = fmt.Sprintf("Раунд %d: принято предложение #%d: %s.", state.GovernanceRound, proposalID, describeGovernanceProposalForChat(state, state.GovernanceProposals[proposalID]))
+		summary = fmt.Sprintf("Раунд %d: принято %s.", state.GovernanceRound, describeGovernanceProposalForChat(state, state.GovernanceProposals[proposalID]))
 		systemEventType = "governance_accepted"
 		tone = "success"
 	}

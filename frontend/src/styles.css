@@ -341,6 +341,7 @@ code {
 }
 
 .section-heading {
+  margin-bottom: 10px;
   display: flex;
   justify-content: space-between;
   gap: 18px;
@@ -921,18 +922,21 @@ code {
   padding: 7px;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.decision-card {
+  grid-template-rows: auto minmax(3.8rem, 1fr) auto;
   background:
     linear-gradient(160deg, rgba(255, 202, 92, 0.60), transparent 66%),
     rgba(18, 18, 17, 0.74);
 }
 
-.decision-card {
-  grid-template-rows: auto minmax(3.8rem, 1fr) auto;
-}
-
 .proposal-card {
   gap: 10px;
   grid-template-rows: auto 1fr auto auto;
+  background:
+    linear-gradient(160deg, rgba(92, 168, 255, 0.60), transparent 66%),
+    rgba(18, 18, 17, 0.74);
 }
 
 button.decision-card {
@@ -945,7 +949,6 @@ button.decision-card {
 
 button.decision-card:disabled,
 .proposal-card-button.is-disabled {
-  cursor: wait;
   opacity: 0.74;
 }
 
@@ -992,7 +995,6 @@ button.decision-card:disabled,
 .decision-card > span,
 .proposal-card span,
 .proposal-card small {
-  color: var(--muted);
   font-weight: 800;
 }
 
@@ -1298,7 +1300,6 @@ button.decision-card:disabled,
 
 .chat-panel {
   display: grid;
-  gap: 12px;
   min-width: 0;
   padding: 7px;
   border: 1px solid var(--line);
@@ -1342,6 +1343,7 @@ button.decision-card:disabled,
 }
 
 .chat-messages {
+  padding: 5px 0;
   display: grid;
   gap: 8px;
   max-height: min(58vh, 620px);
