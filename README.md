@@ -400,6 +400,9 @@ curl -X POST http://localhost:8000/games/1/actions \
 - Docker Compose
 - Swagger/OpenAPI
 - персонализированный `GET state`
+- live WebSocket `GET /games/{id}/ws?token=<jwt>` для персонализированных state push сообщений
+- governance revote: повторный `vote` в `governance_voting` перезаписывает текущий выбор до закрытия фазы
+- финальные `final_summary` и `replay_steps` в state завершенной игры
 - endpoint для действий игроков
 
 ## Возможное улучшение миграции

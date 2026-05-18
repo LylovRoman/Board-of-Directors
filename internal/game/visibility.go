@@ -1,6 +1,9 @@
 package game
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameState, error) {
 	publicState := &PublicGameState{
@@ -65,6 +68,11 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 
 		publicState.Players = append(publicState.Players, publicPlayer)
 		publicState.CurrentVotes = append(publicState.CurrentVotes, publicVoteStateForPlayer(state, player))
+	}
+
+	if state.IsFinished {
+		publicState.FinalSummary = publicFinalSummary(state)
+		publicState.ReplaySteps = publicReplaySteps(state)
 	}
 
 	if state.Phase == GamePhaseGovernanceVoting {
@@ -307,9 +315,7 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 				actions = append(actions, ActionSubmitGovernanceProposal, ActionSkipGovernanceProposal)
 			}
 		case GamePhaseGovernanceVoting:
-			if _, ok := state.GovernanceVotes[viewerUserID]; !ok {
-				actions = append(actions, ActionVote)
-			}
+			actions = append(actions, ActionVote)
 		}
 	}
 
@@ -340,5 +346,200 @@ func sortedAvailableDecisions(available map[string]bool) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+func publicFinalSummary(state *GameState) *PublicFinalSummary {
+	if state == nil || !state.IsFinished {
+		return nil
+	}
+	molePoints, playersPoints := victoryPoints(state)
+	summary := &PublicFinalSummary{
+		Winner:        state.Winner,
+		MoleUserID:    state.MoleUserID,
+		MoleTargets:   append([]string(nil), state.MoleTargets...),
+		MoleSabotage:  state.MoleSabotage,
+		MolePoints:    molePoints,
+		PlayersPoints: playersPoints,
+		PlayerStats:   make([]PublicFinalPlayerStats, 0, len(state.PlayerOrder)),
+		WinnerUserIDs: []int64{},
+	}
+
+	minMistakes := -1
+	targetSet := moleObjectiveSet(state.MoleTargets, state.MoleSabotage)
+	for _, userID := range state.PlayerOrder {
+		player := state.Players[userID]
+		if player == nil || player.IsKicked || player.IsLeft {
+			continue
+		}
+
+		won := (state.Winner == "mole" && player.Role == "mole") ||
+			(state.Winner == "players" && player.Role != "mole")
+		if won {
+			summary.WinnerUserIDs = append(summary.WinnerUserIDs, player.UserID)
+		}
+
+		stat := PublicFinalPlayerStats{
+			UserID: player.UserID,
+			Name:   player.Name,
+			Role:   player.Role,
+			Won:    won,
+		}
+		for _, report := range state.RoundReports {
+			for _, vote := range report.Votes {
+				if vote.Abstain || vote.Decision == "" {
+					continue
+				}
+				for _, voter := range vote.Voters {
+					if voter.UserID != player.UserID {
+						continue
+					}
+					stat.MajorVotes++
+					isMoleObjective := targetSet[vote.Decision]
+					if (player.Role == "mole" && isMoleObjective) || (player.Role != "mole" && !isMoleObjective) {
+						stat.AlignedVotes++
+					}
+				}
+			}
+		}
+		stat.Mistakes = stat.MajorVotes - stat.AlignedVotes
+		if stat.MajorVotes > 0 {
+			stat.AccuracyBPS = stat.AlignedVotes * TotalSharesBPS / stat.MajorVotes
+		}
+
+		if minMistakes == -1 || stat.Mistakes < minMistakes {
+			minMistakes = stat.Mistakes
+			summary.LeastMistakeUserIDs = []int64{stat.UserID}
+		} else if stat.Mistakes == minMistakes {
+			summary.LeastMistakeUserIDs = append(summary.LeastMistakeUserIDs, stat.UserID)
+		}
+		summary.PlayerStats = append(summary.PlayerStats, stat)
+	}
+
+	return summary
+}
+
+func publicReplaySteps(state *GameState) []PublicReplayStep {
+	if state == nil || !state.IsFinished {
+		return nil
+	}
+	steps := []PublicReplayStep{{
+		ID:      "setup",
+		Kind:    "setup",
+		Title:   "Старт заседания",
+		Summary: fmt.Sprintf("В партии %d директоров. Один из них играет за Крота.", len(activePlayers(state))),
+	}}
+
+	governanceIndex := 0
+	for _, report := range state.RoundReports {
+		steps = append(steps, replayStepForRoundReport(report))
+		if report.Outcome == "accepted" && governanceIndex < len(state.GovernanceReports) {
+			steps = append(steps, replayStepForGovernanceReport(state, state.GovernanceReports[governanceIndex]))
+			governanceIndex++
+		}
+	}
+	for governanceIndex < len(state.GovernanceReports) {
+		steps = append(steps, replayStepForGovernanceReport(state, state.GovernanceReports[governanceIndex]))
+		governanceIndex++
+	}
+
+	molePoints, playersPoints := victoryPoints(state)
+	steps = append(steps, PublicReplayStep{
+		ID:      "final",
+		Kind:    "final",
+		Title:   "Финальное раскрытие",
+		Summary: fmt.Sprintf("Победитель: %s. Счет: Крот %d/3, Совет %d/3.", state.Winner, molePoints, playersPoints),
+		Winner:  state.Winner,
+	})
+	return steps
+}
+
+func replayStepForRoundReport(report RoundReport) PublicReplayStep {
+	title := fmt.Sprintf("Major vote, раунд %d", report.Round)
+	summary := "Решение не принято."
+	if report.Outcome == "accepted" {
+		summary = fmt.Sprintf("Принято решение %s.", decisionLabelForChat(report.Decision))
+	}
+	return PublicReplayStep{
+		ID:       fmt.Sprintf("major-%d", report.Round),
+		Kind:     "major_vote",
+		Title:    title,
+		Summary:  summary,
+		Round:    report.Round,
+		Outcome:  report.Outcome,
+		Decision: report.Decision,
+		Votes:    replayVotesForRoundReport(report),
+	}
+}
+
+func replayVotesForRoundReport(report RoundReport) []PublicReplayVote {
+	out := make([]PublicReplayVote, 0, len(report.Votes))
+	for _, vote := range report.Votes {
+		label := decisionLabelForChat(vote.Decision)
+		if vote.Abstain {
+			label = "Воздержались"
+		}
+		out = append(out, PublicReplayVote{
+			Label:    label,
+			ShareBPS: vote.ShareBPS,
+			Voters:   decisionVoterNames(vote.Voters),
+		})
+	}
+	return out
+}
+
+func replayStepForGovernanceReport(state *GameState, report GovernanceReport) PublicReplayStep {
+	title := fmt.Sprintf("Governance, раунд %d", report.Round)
+	summary := "Маневр не принят."
+	if report.Outcome == "accepted" && report.Proposal != nil {
+		summary = fmt.Sprintf("Принят маневр: %s.", describeGovernanceProposalForChat(state, report.Proposal))
+	}
+	var proposal *PublicGovernanceProposal
+	if report.Proposal != nil {
+		publicProposal := publicGovernanceProposal(report.Proposal)
+		proposal = &publicProposal
+	}
+	return PublicReplayStep{
+		ID:       fmt.Sprintf("governance-%d", report.Round),
+		Kind:     "governance",
+		Title:    title,
+		Summary:  summary,
+		Round:    report.Round,
+		Outcome:  report.Outcome,
+		Proposal: proposal,
+		Votes:    replayVotesForGovernanceReport(report),
+	}
+}
+
+func replayVotesForGovernanceReport(report GovernanceReport) []PublicReplayVote {
+	out := make([]PublicReplayVote, 0, len(report.Votes))
+	for _, vote := range report.Votes {
+		label := fmt.Sprintf("Предложение #%d", vote.ProposalID)
+		if vote.Abstain {
+			label = "Воздержались"
+		}
+		out = append(out, PublicReplayVote{
+			Label:          label,
+			ShareBPS:       vote.ShareBPS,
+			VotingPowerBPS: vote.VotingPowerBPS,
+			Voters:         governanceVoterNames(vote.Voters),
+		})
+	}
+	return out
+}
+
+func decisionVoterNames(voters []DecisionVoterReport) []string {
+	out := make([]string, 0, len(voters))
+	for _, voter := range voters {
+		out = append(out, voter.Name)
+	}
+	return out
+}
+
+func governanceVoterNames(voters []GovernanceVoterReport) []string {
+	out := make([]string, 0, len(voters))
+	for _, voter := range voters {
+		out = append(out, voter.Name)
+	}
 	return out
 }

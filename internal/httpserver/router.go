@@ -71,15 +71,17 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 	})
 
 	r.Route("/games", func(r chi.Router) {
-		r.Use(s.authMiddleware)
-		r.Post("/", s.handleCreateGame)
-		r.Get("/", s.handleListGames)
-		r.Get("/{id}", s.handleGetGame)
-		r.Get("/{id}/state", s.handleGetGameState)
 		r.Get("/{id}/ws", s.handleGameWebSocket)
-		r.Post("/{id}/actions", s.handleGameAction)
-		r.Put("/{id}", s.handleUpdateGame)
-		r.Delete("/{id}", s.handleDeleteGame)
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware)
+			r.Post("/", s.handleCreateGame)
+			r.Get("/", s.handleListGames)
+			r.Get("/{id}", s.handleGetGame)
+			r.Get("/{id}/state", s.handleGetGameState)
+			r.Post("/{id}/actions", s.handleGameAction)
+			r.Put("/{id}", s.handleUpdateGame)
+			r.Delete("/{id}", s.handleDeleteGame)
+		})
 	})
 
 	r.Get("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +300,14 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usersByID := map[int64]models.User{}
+	users, err := s.store.ListUsers(r.Context())
+	if err == nil {
+		for _, user := range users {
+			usersByID[user.ID] = user
+		}
+	}
+
 	items := make([]gameListItem, 0, len(games))
 	for _, gameModel := range games {
 		item := gameListItem{
@@ -320,13 +330,28 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 
 		item.Title = state.Title
 		item.Status = state.Status
+		item.Phase = state.Phase
+		item.Winner = state.Winner
 		item.CurrentRound = state.CurrentRound
 		for _, userID := range state.PlayerOrder {
 			if player := state.Players[userID]; player != nil && !player.IsLeft && !player.IsKicked {
 				item.PlayerUserIDs = append(item.PlayerUserIDs, userID)
+				item.Players = append(item.Players, gameListPlayer{
+					UserID:    userID,
+					Name:      player.Name,
+					AvatarURL: usersByID[userID].AvatarURL,
+					IsHost:    player.IsHost,
+					IsCEO:     player.IsCEO,
+				})
 			}
 		}
 		item.PlayerCount = len(item.PlayerUserIDs)
+		for _, userID := range item.PlayerUserIDs {
+			if userID == currentUserID(r) {
+				item.IsMember = true
+				break
+			}
+		}
 		items = append(items, item)
 	}
 
@@ -334,13 +359,25 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 }
 
 type gameListItem struct {
-	ID            int64           `json:"id"`
-	Title         string          `json:"title"`
-	CreatedAt     time.Time       `json:"created_at"`
-	Status        game.GameStatus `json:"status"`
-	CurrentRound  int             `json:"current_round"`
-	PlayerCount   int             `json:"player_count"`
-	PlayerUserIDs []int64         `json:"player_user_ids"`
+	ID            int64            `json:"id"`
+	Title         string           `json:"title"`
+	CreatedAt     time.Time        `json:"created_at"`
+	Status        game.GameStatus  `json:"status"`
+	Phase         game.GamePhase   `json:"phase,omitempty"`
+	Winner        string           `json:"winner,omitempty"`
+	CurrentRound  int              `json:"current_round"`
+	PlayerCount   int              `json:"player_count"`
+	PlayerUserIDs []int64          `json:"player_user_ids"`
+	Players       []gameListPlayer `json:"players"`
+	IsMember      bool             `json:"is_member"`
+}
+
+type gameListPlayer struct {
+	UserID    int64  `json:"user_id"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+	IsHost    bool   `json:"is_host"`
+	IsCEO     bool   `json:"is_ceo"`
 }
 
 func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {

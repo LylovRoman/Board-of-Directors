@@ -244,6 +244,8 @@ type PublicGameState struct {
 	Memorandum            *PublicMemorandum            `json:"memorandum,omitempty"`
 	MoleVictoryPoints     *int                         `json:"mole_victory_points,omitempty"`
 	PlayersVictoryPoints  *int                         `json:"players_victory_points,omitempty"`
+	FinalSummary          *PublicFinalSummary          `json:"final_summary,omitempty"`
+	ReplaySteps           []PublicReplayStep           `json:"replay_steps,omitempty"`
 	AvailableActions      []ActionType                 `json:"available_actions"`
 }
 
@@ -407,6 +409,49 @@ type PublicDecisionVoterReport struct {
 	UserID   int64  `json:"user_id"`
 	Name     string `json:"name"`
 	ShareBPS int    `json:"share_bps"`
+}
+
+type PublicFinalSummary struct {
+	Winner              string                   `json:"winner"`
+	WinnerUserIDs       []int64                  `json:"winner_user_ids"`
+	MoleUserID          int64                    `json:"mole_user_id"`
+	MoleTargets         []string                 `json:"mole_targets"`
+	MoleSabotage        string                   `json:"mole_sabotage"`
+	MolePoints          int                      `json:"mole_points"`
+	PlayersPoints       int                      `json:"players_points"`
+	LeastMistakeUserIDs []int64                  `json:"least_mistake_user_ids"`
+	PlayerStats         []PublicFinalPlayerStats `json:"player_stats"`
+}
+
+type PublicFinalPlayerStats struct {
+	UserID       int64  `json:"user_id"`
+	Name         string `json:"name"`
+	Role         string `json:"role"`
+	Won          bool   `json:"won"`
+	MajorVotes   int    `json:"major_votes"`
+	AlignedVotes int    `json:"aligned_votes"`
+	Mistakes     int    `json:"mistakes"`
+	AccuracyBPS  int    `json:"accuracy_bps"`
+}
+
+type PublicReplayStep struct {
+	ID       string                    `json:"id"`
+	Kind     string                    `json:"kind"`
+	Title    string                    `json:"title"`
+	Summary  string                    `json:"summary"`
+	Round    int                       `json:"round,omitempty"`
+	Outcome  string                    `json:"outcome,omitempty"`
+	Decision string                    `json:"decision,omitempty"`
+	Proposal *PublicGovernanceProposal `json:"proposal,omitempty"`
+	Winner   string                    `json:"winner,omitempty"`
+	Votes    []PublicReplayVote        `json:"votes,omitempty"`
+}
+
+type PublicReplayVote struct {
+	Label          string   `json:"label"`
+	ShareBPS       int      `json:"share_bps,omitempty"`
+	VotingPowerBPS int      `json:"voting_power_bps,omitempty"`
+	Voters         []string `json:"voters"`
 }
 
 type GameCreatedPayload struct {

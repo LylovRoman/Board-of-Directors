@@ -11,7 +11,6 @@ import {
   register,
   sendGameAction,
   updateMyProfile,
-  API_BASE_URL,
   WS_BASE_URL,
 } from "./api";
 import {
@@ -53,6 +52,7 @@ import {
 } from "./types";
 
 const SELECTED_GAME_STORAGE_KEY = "board-of-directors-selected-game-id";
+const SOUND_STORAGE_KEY = "board-of-directors-sound-enabled";
 const DECISION_TITLES: Record<string, string> = {
   A: "Выпуск облигаций",
   B: "Экспансия на новый рынок",
@@ -80,6 +80,8 @@ interface GameCard {
 }
 
 type AuthMode = "login" | "register";
+type LiveStatus = "idle" | "connecting" | "connected" | "reconnecting" | "fallback";
+type LobbySort = "newest" | "players" | "round";
 
 function readStoredNumber(key: string): number | null {
   const raw = window.localStorage.getItem(key);
@@ -88,6 +90,10 @@ function readStoredNumber(key: string): number | null {
   }
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readStoredBoolean(key: string): boolean {
+  return window.localStorage.getItem(key) === "true";
 }
 
 function statusLabel(status?: GameStatus): string {
@@ -134,6 +140,25 @@ function winnerLabel(winner?: string): string {
 function formatShare(bps?: number): string {
   const value = typeof bps === "number" ? bps : 0;
   return `${(value / 100).toFixed(value % 100 === 0 ? 0 : 1)}%`;
+}
+
+function formatAccuracy(bps?: number): string {
+  return formatShare(bps);
+}
+
+function liveStatusLabel(status: LiveStatus): string {
+  switch (status) {
+    case "connected":
+      return "live";
+    case "connecting":
+      return "подключение";
+    case "reconnecting":
+      return "переподключение";
+    case "fallback":
+      return "обновление";
+    default:
+      return "offline";
+  }
 }
 
 function decisionTitle(decision: string): string {
@@ -222,6 +247,30 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
+function playUiSound(kind: "vote" | "phase" | "finish", enabled: boolean) {
+  if (!enabled) {
+    return;
+  }
+  const AudioContextConstructor =
+    window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextConstructor) {
+    return;
+  }
+  const context = new AudioContextConstructor();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.frequency.value = kind === "finish" ? 420 : kind === "phase" ? 320 : 240;
+  oscillator.type = "sine";
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.2);
+  window.setTimeout(() => void context.close(), 260);
+}
+
 export default function PlayerApp() {
   const [authSession, setAuthSession] = useState(() => readStoredAuthSession());
   const [isAuthChecking, setIsAuthChecking] = useState(() => Boolean(getAuthToken()));
@@ -239,6 +288,11 @@ export default function PlayerApp() {
   const [lobbyFilter, setLobbyFilter] = useState("");
   const [lobbyStatusFilter, setLobbyStatusFilter] = useState<GameStatus | "all">("all");
   const [onlyMyGames, setOnlyMyGames] = useState(false);
+  const [lobbySort, setLobbySort] = useState<LobbySort>("newest");
+  const [isRulesOpen, setIsRulesOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => readStoredBoolean(SOUND_STORAGE_KEY));
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>("idle");
   const [isCreatingGame, setIsCreatingGame] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -281,18 +335,35 @@ export default function PlayerApp() {
   const canKick = availableActions.includes("kick_player");
   const canBan = availableActions.includes("ban_player");
   const canSendChatMessage = availableActions.includes("send_chat_message");
+  const lobbyStats = useMemo(() => {
+    const active = gameCards.filter(({ game }) => game.status === "started").length;
+    const waiting = gameCards.filter(({ game }) => game.status === "lobby").length;
+    const finished = gameCards.filter(({ game }) => game.status === "finished").length;
+    const mine = gameCards.filter(({ game }) => Boolean(game.is_member || (currentUserId && game.player_user_ids?.includes(currentUserId)))).length;
+    return { active, waiting, finished, mine };
+  }, [currentUserId, gameCards]);
+
   const filteredGameCards = useMemo(() => {
     const normalizedFilter = lobbyFilter.trim().toLowerCase();
-    return gameCards.filter(({ game }) => {
+    const filtered = gameCards.filter(({ game }) => {
       const title = game.title.toLowerCase();
       const matchesText = !normalizedFilter || title.includes(normalizedFilter);
       const matchesStatus = lobbyStatusFilter === "all" || game.status === lobbyStatusFilter;
       const matchesOwner =
         !onlyMyGames ||
-        Boolean(currentUserId && game.player_user_ids?.includes(currentUserId));
+        Boolean(game.is_member || (currentUserId && game.player_user_ids?.includes(currentUserId)));
       return matchesText && matchesStatus && matchesOwner;
     });
-  }, [currentUserId, gameCards, lobbyFilter, lobbyStatusFilter, onlyMyGames]);
+    return [...filtered].sort((left, right) => {
+      if (lobbySort === "players") {
+        return (right.game.player_count ?? 0) - (left.game.player_count ?? 0);
+      }
+      if (lobbySort === "round") {
+        return (right.game.current_round ?? 0) - (left.game.current_round ?? 0);
+      }
+      return new Date(right.game.created_at).getTime() - new Date(left.game.created_at).getTime();
+    });
+  }, [currentUserId, gameCards, lobbyFilter, lobbySort, lobbyStatusFilter, onlyMyGames]);
 
   const showError = useCallback((error: unknown) => {
     setSuccessMessage(null);
@@ -425,26 +496,46 @@ export default function PlayerApp() {
   }, [selectedGameId]);
 
   useEffect(() => {
+    window.localStorage.setItem(SOUND_STORAGE_KEY, String(soundEnabled));
+  }, [soundEnabled]);
+
+  useEffect(() => {
     if (!currentUserId || !selectedGameId) {
+      setLiveStatus("idle");
       return undefined;
     }
 
     const token = getAuthToken();
     if (!token) {
+      setLiveStatus("fallback");
       return undefined;
     }
 
     let socket: WebSocket | null = null;
     let reconnectId: number | null = null;
     let closed = false;
+    let reconnectAttempts = 0;
 
     const connect = () => {
+      setLiveStatus(reconnectAttempts === 0 ? "connecting" : "reconnecting");
       socket = new WebSocket(`${WS_BASE_URL}/games/${selectedGameId}/ws?token=${encodeURIComponent(token)}`);
+      socket.onopen = () => {
+        reconnectAttempts = 0;
+        setLiveStatus("connected");
+      };
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as { type?: string; state?: PublicGameState };
           if (data.type === "state" && data.state) {
-            setGameState(data.state);
+            setGameState((previous) => {
+              if (previous && previous.phase !== data.state?.phase) {
+                playUiSound("phase", soundEnabled);
+              }
+              if (previous && !previous.is_finished && data.state?.is_finished) {
+                playUiSound("finish", soundEnabled);
+              }
+              return data.state ?? previous;
+            });
           }
         } catch {
           // Ignore malformed live messages; the next state push will recover the view.
@@ -452,8 +543,19 @@ export default function PlayerApp() {
       };
       socket.onclose = () => {
         if (!closed) {
-          reconnectId = window.setTimeout(connect, 1200);
+          reconnectAttempts += 1;
+          if (reconnectAttempts > 5) {
+            setLiveStatus("fallback");
+            void getGameState(selectedGameId)
+              .then(setGameState)
+              .catch(() => undefined);
+            return;
+          }
+          reconnectId = window.setTimeout(connect, Math.min(8000, 900 * reconnectAttempts));
         }
+      };
+      socket.onerror = () => {
+        socket?.close();
       };
     };
 
@@ -468,43 +570,26 @@ export default function PlayerApp() {
 
     return () => {
       closed = true;
+      setLiveStatus("idle");
       if (reconnectId !== null) {
         window.clearTimeout(reconnectId);
       }
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       socket?.close();
     };
-  }, [currentUserId, loadGameState, selectedGameId]);
+  }, [currentUserId, loadGameState, selectedGameId, soundEnabled]);
 
   useEffect(() => {
-    const isJoinedLobby =
-      Boolean(selectedGameId && currentUserId) &&
-      gameState?.status === "lobby" &&
-      gameState.players?.some((player) => player.user_id === currentUserId) === true;
-    if (!isJoinedLobby || !selectedGameId || !currentUserId) {
+    if (!selectedGameId || liveStatus !== "fallback") {
       return undefined;
     }
-
-    const leaveLobby = () => {
-      const body = JSON.stringify({
-        type: "leave_game",
-      });
-      const url = `${API_BASE_URL}/games/${selectedGameId}/actions`;
-      const token = getAuthToken();
-      void fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body,
-        keepalive: true,
-      });
-    };
-
-    window.addEventListener("pagehide", leaveLobby);
-    return () => window.removeEventListener("pagehide", leaveLobby);
-  }, [currentUserId, gameState, selectedGameId]);
+    const intervalId = window.setInterval(() => {
+      void getGameState(selectedGameId)
+        .then(setGameState)
+        .catch(() => undefined);
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [liveStatus, loadGameState, selectedGameId]);
 
   async function handleWelcomeSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -595,6 +680,15 @@ export default function PlayerApp() {
         payload,
       });
       if (response.state) {
+        if (type === "vote") {
+          playUiSound("vote", soundEnabled);
+        }
+        if (gameState && gameState.phase !== response.state.phase) {
+          playUiSound("phase", soundEnabled);
+        }
+        if (gameState && !gameState.is_finished && response.state.is_finished) {
+          playUiSound("finish", soundEnabled);
+        }
         setGameState(response.state);
       } else {
         await loadGameState(selectedGameId);
@@ -810,6 +904,14 @@ export default function PlayerApp() {
           <span>Board of Directors</span>
           <small>тайное заседание</small>
         </div>
+        <div className="topbar-tools">
+          <span className={`live-pill live-${liveStatus}`}>{liveStatusLabel(liveStatus)}</span>
+          <button className="mini-button" onClick={() => setIsRulesOpen(true)}>Правила</button>
+          <button className="mini-button" onClick={() => setIsTutorialOpen(true)}>Обучение</button>
+          <button className={soundEnabled ? "mini-button active" : "mini-button"} onClick={() => setSoundEnabled((value) => !value)}>
+            {soundEnabled ? "Звук: вкл" : "Звук: выкл"}
+          </button>
+        </div>
         <div className="player-chip">
           <button className="profile-chip-button" onClick={() => void openProfile()}>
             <UserAvatar name={currentUser.name} avatarUrl={currentUser.avatar_url} size="small" />
@@ -843,6 +945,8 @@ export default function PlayerApp() {
           onClose={() => setIsProfileOpen(false)}
         />
       ) : null}
+      {isRulesOpen ? <RulesDialog onClose={() => setIsRulesOpen(false)} /> : null}
+      {isTutorialOpen ? <TutorialDialog onClose={() => setIsTutorialOpen(false)} /> : null}
 
       {!selectedGameId ? (
         <section className="lobby-browser">
@@ -852,10 +956,20 @@ export default function PlayerApp() {
               <h1>Выбери заседание</h1>
             </div>
             <div className="toolbar-actions">
+              <button className="secondary-action" onClick={() => void handleManualRefresh()} disabled={isLoading}>Обновить</button>
+              <button className="secondary-action" onClick={() => setIsRulesOpen(true)}>Правила</button>
+              <button className="secondary-action" onClick={() => setIsTutorialOpen(true)}>Обучение</button>
               <button className="primary-action" onClick={() => setIsCreatingGame((value) => !value)}>
                 Создать новую игру
               </button>
             </div>
+          </div>
+
+          <div className="lobby-summary-grid">
+            <LobbyStat label="Ожидают" value={lobbyStats.waiting} />
+            <LobbyStat label="Идут" value={lobbyStats.active} />
+            <LobbyStat label="Завершены" value={lobbyStats.finished} />
+            <LobbyStat label="Мои" value={lobbyStats.mine} />
           </div>
 
           {isCreatingGame ? (
@@ -887,6 +1001,15 @@ export default function PlayerApp() {
               <option value="started">Идут сейчас</option>
               <option value="finished">Завершены</option>
             </select>
+            <select
+              value={lobbySort}
+              onChange={(event) => setLobbySort(event.target.value as LobbySort)}
+              aria-label="Сортировка"
+            >
+              <option value="newest">Сначала новые</option>
+              <option value="players">Больше игроков</option>
+              <option value="round">Поздний раунд</option>
+            </select>
             <label className="checkbox filter-checkbox">
               <input
                 type="checkbox"
@@ -899,19 +1022,27 @@ export default function PlayerApp() {
 
           <div className="game-card-grid">
             {filteredGameCards.map(({ game }) => (
-              <article className="room-card" key={game.id}>
+              <article className={game.is_member ? "room-card is-member" : "room-card"} key={game.id}>
                 <div>
                   <span className={`status-pill status-${game.status ?? "unknown"}`}>
                     {statusLabel(game.status)}
                   </span>
                   <h2>{game.title}</h2>
+                  <p className="room-phase">{game.status === "finished" ? winnerLabel(game.winner) : phaseLabel(game.phase)}</p>
+                </div>
+                <div className="room-players">
+                  {(game.players ?? []).slice(0, 6).map((player) => (
+                    <UserAvatar key={player.user_id} name={player.name} avatarUrl={player.avatar_url} size="small" />
+                  ))}
+                  {(game.player_count ?? 0) > 6 ? <span className="avatar-overflow">+{(game.player_count ?? 0) - 6}</span> : null}
                 </div>
                 <div className="room-meta">
                   <span>{game.player_count ?? "?"} игроков</span>
                   <span>{game.current_round ? `Раунд ${game.current_round}` : "Перед стартом"}</span>
+                  {game.is_member ? <span>Вы внутри</span> : null}
                 </div>
                 <button className="primary-action" onClick={() => void openGame(game.id)}>
-                  Войти
+                  {game.status === "finished" ? "Открыть реплей" : "Войти"}
                 </button>
               </article>
             ))}
@@ -1028,6 +1159,15 @@ function UserAvatar(props: { name: string; avatarUrl?: string; size?: "small" | 
         <span>{initial}</span>
       )}
     </span>
+  );
+}
+
+function LobbyStat(props: { label: string; value: number }) {
+  return (
+    <div className="lobby-stat">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+    </div>
   );
 }
 
@@ -1163,6 +1303,82 @@ function ProfileDialog(props: {
             </form>
           </>
         )}
+      </section>
+    </div>
+  );
+}
+
+function RulesDialog(props: { onClose: () => void }) {
+  const tabs = [
+    { id: "goal", label: "Цель", text: "Совет побеждает, если принимает три чистых решения. Крот побеждает, если через голосования проводит свои цели; диверсия стоит два очка." },
+    { id: "roles", label: "Роли", text: "Директора видят личный меморандум с подсказками. Крот знает свои цели и пытается сделать их похожими на выгодные решения." },
+    { id: "major", label: "Major vote", text: "В major vote каждый выбирает одну карточку. Голос можно менять до закрытия раунда. Принятое решение награждает поддержавших игроков." },
+    { id: "governance", label: "Governance", text: "После принятого major решения игроки предлагают маневры с долями и полномочиями, затем голосуют за предложения. В этой фазе голос тоже можно менять до финального подсчета." },
+    { id: "win", label: "Победа", text: "После финала раскрываются Крот, цели, диверсия, победители и точность major-голосов каждого игрока." },
+    { id: "faq", label: "FAQ", text: "CEO получает бонус к полномочиям и не может воздерживаться в governance. Governance-голоса публичны, major-голоса раскрываются в отчетах раунда." },
+  ];
+  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  const active = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="rules-dialog" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+        <div className="profile-dialog-header">
+          <div>
+            <p className="eyebrow">справочник</p>
+            <h2 id="rules-title">Правила игры</h2>
+          </div>
+          <button className="mini-button" onClick={props.onClose}>Закрыть</button>
+        </div>
+        <div className="rule-tabs" role="tablist">
+          {tabs.map((tab) => (
+            <button key={tab.id} className={tab.id === activeTab ? "mini-button active" : "mini-button"} onClick={() => setActiveTab(tab.id)}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="rule-body">
+          <h3>{active.label}</h3>
+          <p>{active.text}</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TutorialDialog(props: { onClose: () => void }) {
+  const steps = [
+    { title: "1. Получи роль", text: "Директор ищет безопасные решения, Крот собирает свои цели. Роль Крота скрыта до финала." },
+    { title: "2. Прочитай меморандум", text: "Меморандум не говорит истину напрямую, но помогает оценить набор решений перед первым голосованием." },
+    { title: "3. Голосуй и меняй выбор", text: "В major vote и governance можно изменить голос, пока все игроки еще не закрыли раунд." },
+    { title: "4. Используй governance", text: "Предложения меняют доли, полномочия и CEO. Сила голоса равна доле плюс полномочия." },
+    { title: "5. Читай финал", text: "После игры смотри победителей, ошибки, точность и реплей, чтобы понять, где Совет свернул не туда." },
+  ];
+  const [index, setIndex] = useState(0);
+  const step = steps[index];
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="tutorial-dialog" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+        <div className="profile-dialog-header">
+          <div>
+            <p className="eyebrow">обучение</p>
+            <h2 id="tutorial-title">Быстрый ввод в партию</h2>
+          </div>
+          <button className="mini-button" onClick={props.onClose}>Закрыть</button>
+        </div>
+        <div className="tutorial-card">
+          <span>{index + 1} / {steps.length}</span>
+          <h3>{step.title}</h3>
+          <p>{step.text}</p>
+        </div>
+        <div className="tutorial-track">
+          {steps.map((item, itemIndex) => (
+            <button key={item.title} className={itemIndex === index ? "tutorial-dot active" : "tutorial-dot"} onClick={() => setIndex(itemIndex)} aria-label={item.title} />
+          ))}
+        </div>
+        <div className="toolbar-actions centered-actions">
+          <button className="secondary-action" onClick={() => setIndex((value) => Math.max(0, value - 1))} disabled={index === 0}>Назад</button>
+          <button className="primary-action" onClick={() => setIndex((value) => Math.min(steps.length - 1, value + 1))} disabled={index === steps.length - 1}>Дальше</button>
+        </div>
       </section>
     </div>
   );
@@ -1490,10 +1706,24 @@ function FinishScreen(props: {
   onBack: () => void;
   isLoading: boolean;
 }) {
-  const [selectedReport, setSelectedReport] = useState<PublicRoundReport | null>(null);
+  const [replayOpen, setReplayOpen] = useState(false);
   const playerWon =
     props.state.winner === "mole" ? props.me?.role === "mole" : props.state.winner === "players" && props.me?.role !== "mole";
+  const summary = props.state.final_summary;
+  const playerStats = [...(summary?.player_stats ?? [])].sort((left, right) => {
+    if (left.mistakes !== right.mistakes) {
+      return left.mistakes - right.mistakes;
+    }
+    return right.accuracy_bps - left.accuracy_bps;
+  });
+  const winners = playerStats.filter((stat) => stat.won);
+  const leastMistakes = new Set(summary?.least_mistake_user_ids ?? []);
   const acceptedReports = props.roundReports.filter((report) => report.outcome === "accepted");
+  const riskyReports = props.roundReports.filter((report) => report.outcome !== "accepted");
+
+  if (replayOpen) {
+    return <ReplayPanel state={props.state} steps={props.state.replay_steps ?? []} onBack={() => setReplayOpen(false)} />;
+  }
 
   return (
     <section className="finish-screen">
@@ -1504,6 +1734,50 @@ function FinishScreen(props: {
           {roleLabel(props.me.role)}: {playerWon ? "Ты победил" : "Ты проиграл"}
         </p>
       ) : null}
+      <div className="final-score-row">
+        <span>Крот {summary?.mole_points ?? props.state.mole_victory_points ?? 0}/3</span>
+        <span>Совет {summary?.players_points ?? props.state.players_victory_points ?? 0}/3</span>
+      </div>
+      <div className="final-grid">
+        <section className="final-panel">
+          <p className="eyebrow">победители</p>
+          <div className="winner-list">
+            {winners.map((winner) => (
+              <span key={winner.user_id}>{winner.name} · {roleLabel(winner.role)}</span>
+            ))}
+            {!winners.length ? <span>{winnerLabel(props.state.winner)}</span> : null}
+          </div>
+        </section>
+        <section className="final-panel">
+          <p className="eyebrow">раскрытие</p>
+          <p>Крот: {playerStats.find((stat) => stat.user_id === summary?.mole_user_id)?.name ?? "неизвестно"}</p>
+          <p>Цели: {(summary?.mole_targets ?? []).map(decisionLabel).join(", ") || "нет данных"}</p>
+          <p>Диверсия: {summary?.mole_sabotage ? decisionLabel(summary.mole_sabotage) : "нет данных"}</p>
+        </section>
+        <section className="final-panel final-table-panel">
+          <p className="eyebrow">точность голосов</p>
+          <div className="final-stats-table">
+            {playerStats.map((stat) => (
+              <div className={leastMistakes.has(stat.user_id) ? "final-stat-row best" : "final-stat-row"} key={stat.user_id}>
+                <span>{stat.name}</span>
+                <span>{stat.mistakes} ошибок</span>
+                <strong>{formatAccuracy(stat.accuracy_bps)}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="final-panel">
+          <p className="eyebrow">ключевые решения</p>
+          <div className="final-decision-list">
+            {acceptedReports.slice(-3).map((report) => (
+              <span key={`accepted-${report.round}`}>Раунд {report.round}: {report.decision ? decisionLabel(report.decision) : "принято"}</span>
+            ))}
+            {riskyReports.slice(-2).map((report) => (
+              <span key={`risky-${report.round}`}>Спорный раунд {report.round}: {report.reason ?? "ничья"}</span>
+            ))}
+          </div>
+        </section>
+      </div>
       <ChatPanel
         messages={props.chatMessages}
         currentUserId={props.currentUserId}
@@ -1512,9 +1786,95 @@ function FinishScreen(props: {
         onSend={props.onSendChatMessage}
       />
       <div className="toolbar-actions centered-actions">
-        <button className="primary-action" onClick={props.onBack}>
+        <button className="primary-action" onClick={() => setReplayOpen(true)}>
+          Смотреть реплей
+        </button>
+        <button className="secondary-action" onClick={() => void props.onRefresh()} disabled={props.isLoading}>
+          Обновить
+        </button>
+        <button className="secondary-action" onClick={props.onBack}>
           К списку игр
         </button>
+      </div>
+    </section>
+  );
+}
+
+function ReplayPanel(props: { state: PublicGameState; steps: NonNullable<PublicGameState["replay_steps"]>; onBack: () => void }) {
+  const steps = props.steps.length
+    ? props.steps
+    : [{ id: "final", kind: "final", title: "Финал", summary: winnerLabel(props.state.winner), winner: props.state.winner }];
+  const [index, setIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1200);
+  const step = steps[Math.min(index, steps.length - 1)];
+
+  useEffect(() => {
+    if (!isPlaying) {
+      return undefined;
+    }
+    const intervalId = window.setInterval(() => {
+      setIndex((value) => {
+        if (value >= steps.length - 1) {
+          setIsPlaying(false);
+          return value;
+        }
+        return value + 1;
+      });
+    }, speed);
+    return () => window.clearInterval(intervalId);
+  }, [isPlaying, speed, steps.length]);
+
+  return (
+    <section className="replay-screen">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">реплей</p>
+          <h1>{props.state.title}</h1>
+        </div>
+        <div className="toolbar-actions">
+          <button className="secondary-action" onClick={props.onBack}>К финалу</button>
+        </div>
+      </div>
+      <div className="replay-layout">
+        <aside className="replay-timeline">
+          {steps.map((item, itemIndex) => (
+            <button key={item.id} className={itemIndex === index ? "replay-step active" : "replay-step"} onClick={() => setIndex(itemIndex)}>
+              <span>{itemIndex + 1}</span>
+              <strong>{item.title}</strong>
+            </button>
+          ))}
+        </aside>
+        <section className="replay-detail">
+          <p className="eyebrow">{step.kind}</p>
+          <h2>{step.title}</h2>
+          <p>{step.summary}</p>
+          {step.decision ? <p>Решение: {decisionLabel(step.decision)}</p> : null}
+          {step.winner ? <p>Победитель: {winnerLabel(step.winner)}</p> : null}
+          {step.votes?.length ? (
+            <div className="replay-votes">
+              {step.votes.map((vote) => (
+                <div className="round-report-row" key={`${step.id}-${vote.label}`}>
+                  <div>
+                    <span>{vote.label}</span>
+                    <small>{vote.voters.join(", ") || "без голосов"}</small>
+                  </div>
+                  <strong>{formatShare(vote.voting_power_bps ?? vote.share_bps)}</strong>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      </div>
+      <div className="replay-controls">
+        <button className="secondary-action" onClick={() => setIndex((value) => Math.max(0, value - 1))} disabled={index === 0}>Назад</button>
+        <button className="primary-action" onClick={() => setIsPlaying((value) => !value)}>{isPlaying ? "Пауза" : "Play"}</button>
+        <button className="secondary-action" onClick={() => setIndex((value) => Math.min(steps.length - 1, value + 1))} disabled={index === steps.length - 1}>Вперед</button>
+        <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))} aria-label="Скорость реплея">
+          <option value={1800}>0.75x</option>
+          <option value={1200}>1x</option>
+          <option value={700}>1.5x</option>
+        </select>
       </div>
     </section>
   );
@@ -1801,7 +2161,7 @@ function GovernanceVotingPhase(props: {
         <div>
           <p className="eyebrow">Корпоративные манёвры</p>
         </div>
-        {props.hasVoted ? <span className="wait-pill">Вы проголосовали, ждем остальных</span> : null}
+        {props.hasVoted ? <span className="wait-pill">Выбор сохранен, можно изменить</span> : null}
       </div>
 
       <div className="proposal-grid">
@@ -1812,7 +2172,7 @@ function GovernanceVotingPhase(props: {
             players={props.players}
             currentVotes={props.currentVotes}
             selected={props.myCurrentVote?.proposal_id === proposal.id}
-            disabled={!props.canVote || props.hasVoted || props.isSubmitting}
+            disabled={!props.canVote || props.isSubmitting}
             onVote={() => props.onVote(proposal.id)}
           />
         ))}
@@ -1824,7 +2184,7 @@ function GovernanceVotingPhase(props: {
         <button
           className={props.myCurrentVote?.abstain ? "secondary-action abstain-button selected-abstain" : "secondary-action abstain-button"}
           onClick={props.onAbstain}
-          disabled={!canAbstain || props.hasVoted || props.isSubmitting}
+          disabled={!canAbstain || props.isSubmitting}
         >
           Воздержаться
         </button>

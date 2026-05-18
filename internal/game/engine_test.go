@@ -1209,6 +1209,171 @@ func TestDuplicateGovernanceProposalsMergeAuthorsAndMaxAuthority(t *testing.T) {
 	}
 }
 
+func TestGovernanceRevoteOverwritesCurrentVote(t *testing.T) {
+	store := governanceVotingStore()
+	engine := NewEngine(store)
+
+	state, _, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  2,
+		Type:    ActionVote,
+		Payload: []byte(`{"proposal_id":2}`),
+	})
+	if err != nil {
+		t.Fatalf("governance revote: %v", err)
+	}
+	if state.MyCurrentVote == nil || state.MyCurrentVote.ProposalID != 2 || state.MyCurrentVote.Abstain {
+		t.Fatalf("expected proposal 2 after revote, got %+v", state.MyCurrentVote)
+	}
+}
+
+func TestGovernanceRevoteCanSwitchToAbstain(t *testing.T) {
+	store := governanceVotingStore()
+	engine := NewEngine(store)
+
+	state, _, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  2,
+		Type:    ActionVote,
+		Payload: []byte(`{"abstain":true}`),
+	})
+	if err != nil {
+		t.Fatalf("governance revote to abstain: %v", err)
+	}
+	if state.MyCurrentVote == nil || !state.MyCurrentVote.Abstain || state.MyCurrentVote.ProposalID != 0 {
+		t.Fatalf("expected abstain after revote, got %+v", state.MyCurrentVote)
+	}
+}
+
+func TestGovernanceFinalVoteResolvesOnceAfterRevotes(t *testing.T) {
+	store := governanceVotingStore()
+	engine := NewEngine(store)
+
+	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 2, Type: ActionVote, Payload: []byte(`{"proposal_id":2}`)}); err != nil {
+		t.Fatalf("revote before final vote: %v", err)
+	}
+	state, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 3, Type: ActionVote, Payload: []byte(`{"proposal_id":2}`)})
+	if err != nil {
+		t.Fatalf("final governance vote: %v", err)
+	}
+	resolved := 0
+	for _, event := range events {
+		if event.EventType == models.EventGovernanceResolved {
+			resolved++
+		}
+	}
+	if resolved != 1 {
+		t.Fatalf("expected one governance resolve event, got %d in %+v", resolved, events)
+	}
+	if len(state.GovernanceReports) != 1 || state.GovernanceReports[0].Proposal == nil || state.GovernanceReports[0].Proposal.ID != 2 {
+		t.Fatalf("expected proposal 2 to resolve, got %+v", state.GovernanceReports)
+	}
+}
+
+func TestConcurrentGovernanceRevoteSucceeds(t *testing.T) {
+	store := governanceVotingStore()
+	engine := NewEngine(store)
+
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	for _, payload := range []string{`{"proposal_id":1}`, `{"proposal_id":2}`} {
+		wg.Add(1)
+		go func(payload string) {
+			defer wg.Done()
+			_, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 2, Type: ActionVote, Payload: []byte(payload)})
+			results <- err
+		}(payload)
+	}
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	for err := range results {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 2 {
+		t.Fatalf("expected both governance revotes to succeed, got %d", successes)
+	}
+}
+
+func TestFinalSummaryAndReplayExposeWinnersAndMistakes(t *testing.T) {
+	decisionA := "A"
+	decisionE := "E"
+	events := []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventVoteSubmitted, EventValue: mustJSON(VoteSubmittedPayload{Round: 1, UserID: 1, Decision: &decisionE})},
+		{EventType: models.EventVoteSubmitted, EventValue: mustJSON(VoteSubmittedPayload{Round: 1, UserID: 2, Decision: &decisionA})},
+		{EventType: models.EventVoteSubmitted, EventValue: mustJSON(VoteSubmittedPayload{Round: 1, UserID: 3, Decision: &decisionA})},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"A"}`},
+		{EventType: models.EventGameFinished, EventValue: `{"winner":"mole","reason":"test"}`},
+	}
+	state, err := BuildState(1, "Mafia", events)
+	if err != nil {
+		t.Fatalf("build state: %v", err)
+	}
+	publicState, err := ProjectStateForViewer(state, 1)
+	if err != nil {
+		t.Fatalf("project state: %v", err)
+	}
+	if publicState.FinalSummary == nil {
+		t.Fatalf("expected final summary")
+	}
+	if len(publicState.FinalSummary.WinnerUserIDs) != 1 || publicState.FinalSummary.WinnerUserIDs[0] != 3 {
+		t.Fatalf("expected mole winner user 3, got %+v", publicState.FinalSummary.WinnerUserIDs)
+	}
+	if len(publicState.FinalSummary.LeastMistakeUserIDs) != 2 {
+		t.Fatalf("expected Alice and Carol as least mistakes, got %+v", publicState.FinalSummary.LeastMistakeUserIDs)
+	}
+	if len(publicState.ReplaySteps) < 3 {
+		t.Fatalf("expected setup, vote, final replay steps, got %+v", publicState.ReplaySteps)
+	}
+}
+
+func governanceVotingStore() *stubStore {
+	return &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+				{EventType: models.EventGameStarted, EventValue: `{}`},
+				{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+				{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+				{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"B"}`},
+				{EventType: models.EventGovernanceProposalPhaseStarted, EventValue: `{"round":1}`},
+				{EventType: models.EventGovernanceProposalSubmitted, EventValue: `{"round":1,"proposal_id":1,"proposer_user_id":1,"proposal_type":"treasury_grant","target_user_id":1,"share_bps":400}`},
+				{EventType: models.EventGovernanceProposalSubmitted, EventValue: `{"round":1,"proposal_id":2,"proposer_user_id":2,"proposal_type":"treasury_grant","target_user_id":2,"share_bps":300}`},
+				{EventType: models.EventGovernanceVotingStarted, EventValue: `{"round":1}`},
+				{EventType: models.EventGovernanceVoteSubmitted, EventValue: `{"round":1,"user_id":1,"proposal_id":1,"abstain":false}`},
+				{EventType: models.EventGovernanceVoteSubmitted, EventValue: `{"round":1,"user_id":2,"proposal_id":1,"abstain":false}`},
+			},
+		},
+	}
+}
+
 func TestAppointCEOProposalRejected(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{

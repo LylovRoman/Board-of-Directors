@@ -41,9 +41,21 @@ export interface Game {
   title: string;
   created_at: string;
   status?: GameStatus;
+  phase?: GamePhase;
+  winner?: string;
   current_round?: number;
   player_count?: number;
   player_user_ids?: number[];
+  players?: GameListPlayer[] | null;
+  is_member?: boolean;
+}
+
+export interface GameListPlayer {
+  user_id: number;
+  name: string;
+  avatar_url?: string;
+  is_host: boolean;
+  is_ceo: boolean;
 }
 
 export interface Event {
@@ -170,6 +182,49 @@ export interface PublicRoundReport {
   votes: PublicDecisionVoteReport[];
 }
 
+export interface PublicFinalSummary {
+  winner: string;
+  winner_user_ids: number[];
+  mole_user_id: number;
+  mole_targets: string[];
+  mole_sabotage: string;
+  mole_points: number;
+  players_points: number;
+  least_mistake_user_ids: number[];
+  player_stats: PublicFinalPlayerStats[];
+}
+
+export interface PublicFinalPlayerStats {
+  user_id: number;
+  name: string;
+  role: string;
+  won: boolean;
+  major_votes: number;
+  aligned_votes: number;
+  mistakes: number;
+  accuracy_bps: number;
+}
+
+export interface PublicReplayStep {
+  id: string;
+  kind: "setup" | "major_vote" | "governance" | "final" | string;
+  title: string;
+  summary: string;
+  round?: number;
+  outcome?: "accepted" | "rejected" | string;
+  decision?: string;
+  proposal?: PublicGovernanceProposal;
+  winner?: string;
+  votes?: PublicReplayVote[] | null;
+}
+
+export interface PublicReplayVote {
+  label: string;
+  share_bps?: number;
+  voting_power_bps?: number;
+  voters: string[];
+}
+
 export interface PublicGameState {
   game_id: number;
   title: string;
@@ -200,6 +255,8 @@ export interface PublicGameState {
   memorandum?: PublicMemorandum | null;
   mole_victory_points?: number;
   players_victory_points?: number;
+  final_summary?: PublicFinalSummary | null;
+  replay_steps?: PublicReplayStep[] | null;
   available_actions: ActionType[];
 }
 

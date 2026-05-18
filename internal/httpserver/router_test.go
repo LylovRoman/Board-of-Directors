@@ -7,10 +7,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	authpkg "agentbackend/internal/auth"
 	"agentbackend/internal/game"
@@ -846,6 +849,39 @@ func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 	}
 	if resp.State.Me.Role != "mole" {
 		t.Fatalf("expected viewer 2 role mole, got %q", resp.State.Me.Role)
+	}
+}
+
+func TestGameWebSocketAcceptsQueryToken(t *testing.T) {
+	secret := "test-secret"
+	store := &mockStorage{
+		users: []models.User{{ID: 1, Login: "alice", Name: "Alice"}},
+		games: []models.Game{{ID: 1, Title: "Mafia"}},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`, CreatedAt: time.Now()},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`, CreatedAt: time.Now()},
+		},
+	}
+	server := httptest.NewServer(NewRouter(store, secret))
+	defer server.Close()
+
+	token, err := authpkg.IssueToken(secret, 1, "alice", time.Hour)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/games/1/ws?token=" + url.QueryEscape(token)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	var message liveMessage
+	if err := conn.ReadJSON(&message); err != nil {
+		t.Fatalf("read live state: %v", err)
+	}
+	if message.Type != "state" || message.State == nil || message.State.GameID != 1 {
+		t.Fatalf("unexpected live message: %+v", message)
 	}
 }
 

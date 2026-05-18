@@ -442,7 +442,46 @@ components:
           type: string
         created_at:
           type: string
+        status:
+          type: string
+          enum: [lobby, started, finished]
+        phase:
+          type: string
+          enum: [mole_objective_selection, major_voting, governance_proposal, governance_voting]
+        winner:
+          type: string
+        current_round:
+          type: integer
+        player_count:
+          type: integer
+        player_user_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameListPlayer"
+        is_member:
+          type: boolean
       required: [id, title, created_at]
+
+    GameListPlayer:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        avatar_url:
+          type: string
+        is_host:
+          type: boolean
+        is_ceo:
+          type: boolean
+      required: [user_id, name, is_host, is_ceo]
 
     CreateGameRequest:
       type: object
@@ -765,6 +804,100 @@ components:
             $ref: "#/components/schemas/PublicDecisionVoteReport"
       required: [round, outcome, votes]
 
+    PublicFinalSummary:
+      type: object
+      properties:
+        winner:
+          type: string
+        winner_user_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        mole_user_id:
+          type: integer
+          format: int64
+        mole_targets:
+          type: array
+          items:
+            type: string
+        mole_sabotage:
+          type: string
+        mole_points:
+          type: integer
+        players_points:
+          type: integer
+        least_mistake_user_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        player_stats:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicFinalPlayerStats"
+
+    PublicFinalPlayerStats:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        role:
+          type: string
+        won:
+          type: boolean
+        major_votes:
+          type: integer
+        aligned_votes:
+          type: integer
+        mistakes:
+          type: integer
+        accuracy_bps:
+          type: integer
+
+    PublicReplayStep:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        round:
+          type: integer
+        outcome:
+          type: string
+        decision:
+          type: string
+        proposal:
+          $ref: "#/components/schemas/PublicGovernanceProposal"
+        winner:
+          type: string
+        votes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicReplayVote"
+
+    PublicReplayVote:
+      type: object
+      properties:
+        label:
+          type: string
+        share_bps:
+          type: integer
+        voting_power_bps:
+          type: integer
+        voters:
+          type: array
+          items:
+            type: string
+
     PublicChatMessage:
       type: object
       properties:
@@ -916,6 +1049,12 @@ components:
         players_victory_points:
           type: integer
           description: Private. Present only for the Mole.
+        final_summary:
+          $ref: "#/components/schemas/PublicFinalSummary"
+        replay_steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicReplayStep"
         available_actions:
           type: array
           items:

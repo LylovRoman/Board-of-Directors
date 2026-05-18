@@ -433,9 +433,6 @@ func (e *Engine) handleGovernanceVote(state *GameState, actor *models.User, raw 
 	if player == nil {
 		return nil, errors.New("only active players can vote")
 	}
-	if _, ok := state.GovernanceVotes[actor.ID]; ok {
-		return nil, errors.New("player already voted this round")
-	}
 
 	var payload VoteActionPayload
 	if err := decodeActionPayload(raw, &payload); err != nil {
