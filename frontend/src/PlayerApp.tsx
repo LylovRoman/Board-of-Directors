@@ -1269,81 +1269,65 @@ function StartedGameScreen(props: {
 
       <div className="play-columns">
         <aside className="side-stack">
-          <section className="identity-card">
-            <p className="eyebrow">Ты</p>
-            <div className="identity-name">
-              <UserAvatar name={props.me?.name ?? "Наблюдатель"} avatarUrl={props.me?.avatar_url} size="medium" />
-              <h2>{props.me?.name ?? "Наблюдатель"}</h2>
-            </div>
-            <div className="identity-meta">
-              <span>{formatShare(props.me?.share_bps)} доля</span>
-              <span>{formatShare(props.me?.authority_bps)} полномочия</span>
-              <span>{roleLabel(props.me?.role)}</span>
-              {props.me?.is_ceo ? <strong>CEO</strong> : null}
+
+          <section className="directors-panel">
+            <div className="director-list">
+              {props.players.map((player) => (
+                  <div
+                      key={player.user_id}
+                      className={player.user_id === props.currentUserId ? "director-row is-current" : "director-row"}
+                  >
+                    <div className="director-identity">
+                      <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
+                      <div>
+                        <strong>
+                          {player.name}
+                          {isWaitingForPlayer(player.user_id) ? (
+                              <span className="pending-vote" aria-label="ожидаем голос">
+                            ⌛
+                          </span>
+                          ) : null}
+                        </strong>
+                        <span>
+                        Доля {formatShare(player.share_bps)}
+                      </span>
+                        <span>
+                        Полномочия {formatShare(player.authority_bps)}
+                      </span>
+                      </div>
+                    </div>
+                    <div className="badge-row">
+                      {player.is_host ? <span className="badge">Host</span> : null}
+                      {player.is_ceo ? <span className="badge accent">CEO</span> : null}
+                    </div>
+                  </div>
+              ))}
             </div>
           </section>
 
           {props.me?.role === "mole" ? (
             <section className="secret-card">
-              <p className="eyebrow">Твои цели</p>
+              <p className="eyebrow">Счёт</p>
               <div className="score-row">
                 <span>Крот: {props.moleVictoryPoints ?? 0}/3</span>
                 <span>Совет: {props.playersVictoryPoints ?? 0}/3</span>
               </div>
-              <h3>Подкопы</h3>
+              <p className="eyebrow">Подкопы</p>
               <DecisionList values={props.moleTargets} emptyText="Цели еще не выбраны." />
               {props.moleSabotage ? (
+                <>
+              <p className="eyebrow">Диверсия</p>
                 <div className="sabotage-secret">
-                  <span>Диверсия</span>
                   <strong>{decisionLabel(props.moleSabotage)}</strong>
                 </div>
+                </>
               ) : null}
             </section>
           ) : null}
 
-          <section className="directors-panel">
-            <h2>Совет директоров</h2>
-            <div className="director-list">
-              {props.players.map((player) => (
-                <div
-                  key={player.user_id}
-                  className={player.user_id === props.currentUserId ? "director-row is-current" : "director-row"}
-                >
-                  <div className="director-identity">
-                    <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
-                    <div>
-                      <strong>
-                        {player.name}
-                        {isWaitingForPlayer(player.user_id) ? (
-                          <span className="pending-vote" aria-label="ожидаем голос">
-                            ⌛
-                          </span>
-                        ) : null}
-                      </strong>
-                      <span>
-                        Доля {formatShare(player.share_bps)} · Полномочия {formatShare(player.authority_bps)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="badge-row">
-                    {player.is_host ? <span className="badge">Host</span> : null}
-                    {player.is_ceo ? <span className="badge accent">CEO</span> : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
         </aside>
 
         <div className="main-stack">
-          <ChatPanel
-            messages={props.chatMessages}
-            currentUserId={props.currentUserId}
-            canSend={props.canSendChatMessage}
-            isSubmitting={props.isSubmitting}
-            onSend={props.onSendChatMessage}
-          />
 
           {props.phase === "mole_objective_selection" ? (
             <MoleObjectiveSelectionPhase
@@ -1381,7 +1365,6 @@ function StartedGameScreen(props: {
               <div className="section-heading compact-heading">
                 <div>
                   <p className="eyebrow">голосование</p>
-                  <h2>Выбери решение</h2>
                 </div>
                 {props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
               </div>
@@ -1428,6 +1411,14 @@ function StartedGameScreen(props: {
               )}
             </section>
           )}
+
+          <ChatPanel
+              messages={props.chatMessages}
+              currentUserId={props.currentUserId}
+              canSend={props.canSendChatMessage}
+              isSubmitting={props.isSubmitting}
+              onSend={props.onSendChatMessage}
+          />
 
           <section className="history-panel">
             <div>
@@ -1920,7 +1911,6 @@ function ChatPanel(props: {
       <div className="chat-heading">
         <div>
           <p className="eyebrow">чат</p>
-          <h2>Переговорная</h2>
         </div>
         <span>{props.messages.length}</span>
       </div>
