@@ -15,6 +15,8 @@ func BuildState(gameID int64, title string, events []models.Event) (*GameState, 
 		Status:                GameStatusLobby,
 		Players:               map[int64]*PlayerState{},
 		CurrentVotes:          map[int64]VoteState{},
+		MemorandumPreferences: map[int64]MemorandumType{},
+		Memorandums:           map[int64]MemorandumState{},
 		GovernanceProposals:   map[int]*GovernanceProposalState{},
 		GovernanceSubmissions: map[int64]GovernanceSubmissionState{},
 		GovernanceVotes:       map[int64]GovernanceVoteState{},
@@ -95,11 +97,18 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			userName = player.Name
 		}
 		state.ChatMessages = append(state.ChatMessages, ChatMessageState{
-			ID:        event.ID,
-			UserID:    payload.UserID,
-			UserName:  userName,
-			Message:   payload.Message,
-			CreatedAt: event.CreatedAt,
+			ID:              event.ID,
+			UserID:          payload.UserID,
+			UserName:        userName,
+			Message:         payload.Message,
+			Kind:            payload.Kind,
+			SystemEventType: payload.SystemEventType,
+			Title:           payload.Title,
+			Summary:         payload.Summary,
+			Details:         append([]string(nil), payload.Details...),
+			Tone:            payload.Tone,
+			Collapsible:     payload.Collapsible,
+			CreatedAt:       event.CreatedAt,
 		})
 	case models.EventGameStarted:
 		state.Status = GameStatusStarted
@@ -124,6 +133,28 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		state.MoleTargets = append([]string(nil), payload.Targets...)
 		state.MoleSabotage = payload.Sabotage
+	case models.EventMemorandumPreferenceSelected:
+		var payload MemorandumPreferenceSelectedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if state.MemorandumPreferences == nil {
+			state.MemorandumPreferences = map[int64]MemorandumType{}
+		}
+		state.MemorandumPreferences[payload.UserID] = payload.Type
+	case models.EventMemorandumAssigned:
+		var payload MemorandumAssignedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if state.Memorandums == nil {
+			state.Memorandums = map[int64]MemorandumState{}
+		}
+		state.Memorandums[payload.UserID] = MemorandumState{
+			UserID:    payload.UserID,
+			Type:      payload.Type,
+			Decisions: append([]string(nil), payload.Decisions...),
+		}
 	case models.EventPlayerReceivedShare:
 		var payload PlayerReceivedSharePayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -254,6 +285,16 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		var payload GovernanceVotingStartedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
 			return err
+		}
+		if len(payload.ProposalIDs) > 0 {
+			filtered := make(map[int]*GovernanceProposalState, len(payload.ProposalIDs))
+			for _, proposalID := range payload.ProposalIDs {
+				if proposal := state.GovernanceProposals[proposalID]; proposal != nil {
+					filtered[proposalID] = proposal
+				}
+			}
+			state.GovernanceProposals = filtered
+			state.GovernanceProposalOrder = append([]int(nil), payload.ProposalIDs...)
 		}
 		state.Phase = GamePhaseGovernanceVoting
 		state.GovernanceRound = payload.Round

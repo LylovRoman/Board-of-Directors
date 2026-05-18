@@ -14,6 +14,7 @@ const (
 	ActionBanPlayer                ActionType = "ban_player"
 	ActionSendChatMessage          ActionType = "send_chat_message"
 	ActionStartGame                ActionType = "start_game"
+	ActionChooseMemorandum         ActionType = "choose_memorandum"
 	ActionSelectMoleObjectives     ActionType = "select_mole_objectives"
 	ActionVote                     ActionType = "vote"
 	ActionSubmitGovernanceProposal ActionType = "submit_governance_proposal"
@@ -53,6 +54,13 @@ const (
 	DecisionTypeEmpowerment DecisionType = "empowerment"
 )
 
+type MemorandumType string
+
+const (
+	MemorandumTypeOpportunity MemorandumType = "opportunity"
+	MemorandumTypeRisk        MemorandumType = "risk"
+)
+
 const (
 	MinPlayers               = 3
 	MaxPlayers               = 8
@@ -67,6 +75,7 @@ const (
 	MinPlayerShareBPS        = 500
 	MaxChatMessageLength     = 500
 	MaxPublicChatMessages    = 80
+	MaxGovernanceProposals   = 4
 )
 
 var allDecisions = []string{"A", "B", "C", "D", "E", "F", "G", "H"}
@@ -121,6 +130,8 @@ type GameState struct {
 	MoleUserID              int64
 	MoleTargets             []string
 	MoleSabotage            string
+	MemorandumPreferences   map[int64]MemorandumType
+	Memorandums             map[int64]MemorandumState
 	CurrentRound            int
 	GovernanceRound         int
 	TreasuryShareBPS        int `json:"treasury_share_bps"`
@@ -182,12 +193,25 @@ type GovernanceVoteState struct {
 	Abstain    bool  `json:"abstain"`
 }
 
+type MemorandumState struct {
+	UserID    int64          `json:"user_id"`
+	Type      MemorandumType `json:"type"`
+	Decisions []string       `json:"decisions"`
+}
+
 type ChatMessageState struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"user_id"`
-	UserName  string    `json:"user_name"`
-	Message   string    `json:"message"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"user_id"`
+	UserName        string    `json:"user_name"`
+	Message         string    `json:"message"`
+	Kind            string    `json:"kind,omitempty"`
+	SystemEventType string    `json:"system_event_type,omitempty"`
+	Title           string    `json:"title,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
+	Details         []string  `json:"details,omitempty"`
+	Tone            string    `json:"tone,omitempty"`
+	Collapsible     bool      `json:"collapsible,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type PublicGameState struct {
@@ -216,6 +240,8 @@ type PublicGameState struct {
 	ChatMessages          []PublicChatMessage          `json:"chat_messages"`
 	MoleTargets           []string                     `json:"mole_targets,omitempty"`
 	MoleSabotage          string                       `json:"mole_sabotage,omitempty"`
+	MemorandumPreference  MemorandumType               `json:"memorandum_preference,omitempty"`
+	Memorandum            *PublicMemorandum            `json:"memorandum,omitempty"`
 	MoleVictoryPoints     *int                         `json:"mole_victory_points,omitempty"`
 	PlayersVictoryPoints  *int                         `json:"players_victory_points,omitempty"`
 	AvailableActions      []ActionType                 `json:"available_actions"`
@@ -249,12 +275,24 @@ type PublicOwnVoteState struct {
 }
 
 type PublicChatMessage struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"user_id"`
-	UserName  string    `json:"user_name"`
-	AvatarURL string    `json:"avatar_url,omitempty"`
-	Message   string    `json:"message"`
-	CreatedAt time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"user_id"`
+	UserName        string    `json:"user_name"`
+	AvatarURL       string    `json:"avatar_url,omitempty"`
+	Message         string    `json:"message"`
+	Kind            string    `json:"kind,omitempty"`
+	SystemEventType string    `json:"system_event_type,omitempty"`
+	Title           string    `json:"title,omitempty"`
+	Summary         string    `json:"summary,omitempty"`
+	Details         []string  `json:"details,omitempty"`
+	Tone            string    `json:"tone,omitempty"`
+	Collapsible     bool      `json:"collapsible,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type PublicMemorandum struct {
+	Type      MemorandumType `json:"type"`
+	Decisions []string       `json:"decisions"`
 }
 
 type PublicGovernanceProposal struct {
@@ -390,8 +428,15 @@ type PlayerLeftPayload struct {
 }
 
 type ChatMessageSentPayload struct {
-	UserID  int64  `json:"user_id"`
-	Message string `json:"message"`
+	UserID          int64    `json:"user_id"`
+	Message         string   `json:"message"`
+	Kind            string   `json:"kind,omitempty"`
+	SystemEventType string   `json:"system_event_type,omitempty"`
+	Title           string   `json:"title,omitempty"`
+	Summary         string   `json:"summary,omitempty"`
+	Details         []string `json:"details,omitempty"`
+	Tone            string   `json:"tone,omitempty"`
+	Collapsible     bool     `json:"collapsible,omitempty"`
 }
 
 type MoleSelectedPayload struct {
@@ -405,6 +450,17 @@ type MoleTargetsGeneratedPayload struct {
 type MoleObjectivesSelectedPayload struct {
 	Targets  []string `json:"targets"`
 	Sabotage string   `json:"sabotage"`
+}
+
+type MemorandumPreferenceSelectedPayload struct {
+	UserID int64          `json:"user_id"`
+	Type   MemorandumType `json:"type"`
+}
+
+type MemorandumAssignedPayload struct {
+	UserID    int64          `json:"user_id"`
+	Type      MemorandumType `json:"type"`
+	Decisions []string       `json:"decisions"`
 }
 
 type PlayerReceivedSharePayload struct {
@@ -455,7 +511,8 @@ type GovernanceProposalSkippedPayload struct {
 }
 
 type GovernanceVotingStartedPayload struct {
-	Round int `json:"round"`
+	Round       int   `json:"round"`
+	ProposalIDs []int `json:"proposal_ids,omitempty"`
 }
 
 type GovernanceVoteSubmittedPayload struct {
@@ -530,6 +587,10 @@ type SendChatMessageActionPayload struct {
 type SelectMoleObjectivesActionPayload struct {
 	Targets  []string `json:"targets"`
 	Sabotage string   `json:"sabotage"`
+}
+
+type ChooseMemorandumActionPayload struct {
+	Type MemorandumType `json:"type"`
 }
 
 type VoteActionPayload struct {

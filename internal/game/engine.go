@@ -159,6 +159,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleSendChatMessage(state, actor, action.Payload)
 	case ActionStartGame:
 		return e.handleStartGame(state, actor)
+	case ActionChooseMemorandum:
+		return e.handleChooseMemorandum(state, actor, action.Payload)
 	case ActionSelectMoleObjectives:
 		return e.handleSelectMoleObjectives(state, actor, action.Payload)
 	case ActionVote:

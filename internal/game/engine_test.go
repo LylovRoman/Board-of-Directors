@@ -237,7 +237,11 @@ func TestSelectMoleObjectivesStartsFirstVotingRound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleAction: %v", err)
 	}
-	if len(events) != 2 || events[0].EventType != models.EventMoleObjectivesSelected || events[1].EventType != models.EventVotingRoundStarted {
+	if len(events) != 4 ||
+		events[0].EventType != models.EventMoleObjectivesSelected ||
+		events[1].EventType != models.EventMemorandumAssigned ||
+		events[2].EventType != models.EventMemorandumAssigned ||
+		events[3].EventType != models.EventVotingRoundStarted {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 	if state.Phase != GamePhaseMajorVoting || state.CurrentRound != 1 {
@@ -717,8 +721,8 @@ func TestCEOCannotAbstain(t *testing.T) {
 		Type:    ActionVote,
 		Payload: []byte(`{"abstain":true}`),
 	})
-	if err == nil || err.Error() != "ceo cannot abstain" {
-		t.Fatalf("expected ceo cannot abstain error, got %v", err)
+	if err == nil || err.Error() != "major voting does not allow abstain" {
+		t.Fatalf("expected major abstain rejection, got %v", err)
 	}
 }
 

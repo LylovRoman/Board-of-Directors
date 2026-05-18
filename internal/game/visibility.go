@@ -52,6 +52,14 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 				molePoints, playersPoints := victoryPoints(state)
 				publicState.MoleVictoryPoints = &molePoints
 				publicState.PlayersVictoryPoints = &playersPoints
+			} else {
+				publicState.MemorandumPreference = state.MemorandumPreferences[player.UserID]
+				if memorandum, ok := state.Memorandums[player.UserID]; ok {
+					publicState.Memorandum = &PublicMemorandum{
+						Type:      memorandum.Type,
+						Decisions: append([]string(nil), memorandum.Decisions...),
+					}
+				}
 			}
 		}
 
@@ -243,11 +251,18 @@ func publicChatMessages(messages []ChatMessageState) []PublicChatMessage {
 	out := make([]PublicChatMessage, 0, len(messages)-start)
 	for _, message := range messages[start:] {
 		out = append(out, PublicChatMessage{
-			ID:        message.ID,
-			UserID:    message.UserID,
-			UserName:  message.UserName,
-			Message:   message.Message,
-			CreatedAt: message.CreatedAt,
+			ID:              message.ID,
+			UserID:          message.UserID,
+			UserName:        message.UserName,
+			Message:         message.Message,
+			Kind:            message.Kind,
+			SystemEventType: message.SystemEventType,
+			Title:           message.Title,
+			Summary:         message.Summary,
+			Details:         append([]string(nil), message.Details...),
+			Tone:            message.Tone,
+			Collapsible:     message.Collapsible,
+			CreatedAt:       message.CreatedAt,
 		})
 	}
 	return out
@@ -281,6 +296,9 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 		case GamePhaseMoleObjectiveSelection:
 			if player.Role == "mole" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
 				actions = append(actions, ActionSelectMoleObjectives)
+			}
+			if player.Role != "mole" && state.MemorandumPreferences[viewerUserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
+				actions = append(actions, ActionChooseMemorandum)
 			}
 		case GamePhaseMajorVoting:
 			actions = append(actions, ActionVote)

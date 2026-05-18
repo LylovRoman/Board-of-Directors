@@ -12,6 +12,7 @@ import {
   sendGameAction,
   updateMyProfile,
   API_BASE_URL,
+  WS_BASE_URL,
 } from "./api";
 import {
   AUTH_SESSION_CLEARED_EVENT,
@@ -29,6 +30,7 @@ import type {
   GamePhase,
   GameStatus,
   GovernanceProposalType,
+  MemorandumType,
   Profile,
   PublicGameState,
   PublicGovernanceProposal,
@@ -147,6 +149,16 @@ function decisionType(decision: string, decisionTypes?: Record<string, DecisionT
   return decisionTypes?.[decision] ?? DECISION_TYPE_FALLBACK[decision] ?? "growth";
 }
 
+function memorandumTitle(type?: MemorandumType): string {
+  return type === "risk" ? "Учитываю риски" : "Вижу возможности";
+}
+
+function memorandumRule(type?: MemorandumType): string {
+  return type === "risk"
+    ? "В этой тройке по крайней мере одно решение является целью крота."
+    : "В этой тройке по крайней мере одно решение не является целью крота.";
+}
+
 function percentToBps(value: string): number {
   const normalized = value.replace(",", ".").trim();
   const percent = Number.parseFloat(normalized);
@@ -184,14 +196,14 @@ function playerName(players: PublicPlayerState[], userId?: number): string {
 function describeGovernanceProposal(proposal: PublicGovernanceProposal, players: PublicPlayerState[]): string {
   switch (proposal.proposal_type) {
     case "share_transfer":
-      return `${playerName(players, proposal.from_user_id)} передает ${formatShare(proposal.share_bps)} игроку ${playerName(
+      return `${playerName(players, proposal.from_user_id)} передает долю игроку ${playerName(
         players,
         proposal.to_user_id,
       )}`;
     case "treasury_grant":
-      return `Выдать ${formatShare(proposal.share_bps)} из резерва игроку ${playerName(players, proposal.target_user_id)}`;
+      return `Выдать долю из резерва игроку ${playerName(players, proposal.target_user_id)}`;
     case "treasury_buyback":
-      return `Оштрафовать ${playerName(players, proposal.target_user_id)} на ${formatShare(proposal.share_bps)} в резерв`;
+      return `Оштрафовать ${playerName(players, proposal.target_user_id)} на долю в пользу резерва`;
     case "appoint_ceo":
       return `Назначить CEO: ${playerName(players, proposal.target_user_id)}`;
     default:
@@ -260,6 +272,7 @@ export default function PlayerApp() {
   const hasVoted = currentVotes.some((vote) => vote.user_id === currentUserId && vote.has_voted);
   const canVote = availableActions.includes("vote");
   const canSelectMoleObjectives = availableActions.includes("select_mole_objectives");
+  const canChooseMemorandum = availableActions.includes("choose_memorandum");
   const canSubmitGovernanceProposal = availableActions.includes("submit_governance_proposal");
   const canSkipGovernanceProposal = availableActions.includes("skip_governance_proposal");
   const canJoin = availableActions.includes("join_game");
@@ -416,18 +429,50 @@ export default function PlayerApp() {
       return undefined;
     }
 
-    const refreshSelectedGame = () => {
+    const token = getAuthToken();
+    if (!token) {
+      return undefined;
+    }
+
+    let socket: WebSocket | null = null;
+    let reconnectId: number | null = null;
+    let closed = false;
+
+    const connect = () => {
+      socket = new WebSocket(`${WS_BASE_URL}/games/${selectedGameId}/ws?token=${encodeURIComponent(token)}`);
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as { type?: string; state?: PublicGameState };
+          if (data.type === "state" && data.state) {
+            setGameState(data.state);
+          }
+        } catch {
+          // Ignore malformed live messages; the next state push will recover the view.
+        }
+      };
+      socket.onclose = () => {
+        if (!closed) {
+          reconnectId = window.setTimeout(connect, 1200);
+        }
+      };
+    };
+
+    connect();
+
+    const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
         void loadGameState(selectedGameId);
       }
     };
-
-    const intervalId = window.setInterval(refreshSelectedGame, 10000);
-    document.addEventListener("visibilitychange", refreshSelectedGame);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
-      window.clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", refreshSelectedGame);
+      closed = true;
+      if (reconnectId !== null) {
+        window.clearTimeout(reconnectId);
+      }
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      socket?.close();
     };
   }, [currentUserId, loadGameState, selectedGameId]);
 
@@ -807,9 +852,6 @@ export default function PlayerApp() {
               <h1>Выбери заседание</h1>
             </div>
             <div className="toolbar-actions">
-              <button className="secondary-action" onClick={() => void handleManualRefresh()} disabled={isLoading}>
-                Обновить
-              </button>
               <button className="primary-action" onClick={() => setIsCreatingGame((value) => !value)}>
                 Создать новую игру
               </button>
@@ -919,6 +961,8 @@ export default function PlayerApp() {
           decisionTypes={decisionTypes}
           moleTargets={moleTargets}
           moleSabotage={moleSabotage}
+          memorandum={gameState.memorandum ?? null}
+          memorandumPreference={gameState.memorandum_preference}
           moleVictoryPoints={gameState.mole_victory_points}
           playersVictoryPoints={gameState.players_victory_points}
           currentVotes={currentVotes}
@@ -926,11 +970,13 @@ export default function PlayerApp() {
           myCurrentVote={gameState.my_current_vote ?? null}
           canVote={canVote}
           canSelectMoleObjectives={canSelectMoleObjectives}
+          canChooseMemorandum={canChooseMemorandum}
           canSubmitGovernanceProposal={canSubmitGovernanceProposal}
           canSkipGovernanceProposal={canSkipGovernanceProposal}
           canSendChatMessage={canSendChatMessage}
           isSubmitting={isSubmitting}
           onSelectMoleObjectives={(payload) => void handleAction("select_mole_objectives", payload)}
+          onChooseMemorandum={(type) => void handleAction("choose_memorandum", { type })}
           onVote={(decision) => void handleAction("vote", { decision, abstain: false })}
           onVoteProposal={(proposalId) => void handleAction("vote", { proposal_id: proposalId, abstain: false })}
           onAbstain={() => void handleAction("vote", { abstain: true })}
@@ -1153,9 +1199,6 @@ function GameLobbyScreen(props: {
           <h1>{state?.title ?? "Загрузка комнаты"}</h1>
         </div>
         <div className="toolbar-actions">
-          <button className="secondary-action" onClick={() => void props.onRefresh()} disabled={props.isLoading}>
-            Обновить
-          </button>
           {props.canJoin && !props.hasMe ? (
             <button className="primary-action" onClick={props.onJoin} disabled={props.isSubmitting}>
               Присоединиться
@@ -1222,6 +1265,8 @@ function StartedGameScreen(props: {
   decisionTypes: Record<string, DecisionType>;
   moleTargets: string[];
   moleSabotage: string;
+  memorandum: PublicGameState["memorandum"] | null;
+  memorandumPreference?: MemorandumType;
   moleVictoryPoints?: number;
   playersVictoryPoints?: number;
   currentVotes: PublicVoteState[];
@@ -1229,11 +1274,13 @@ function StartedGameScreen(props: {
   myCurrentVote: PublicOwnVoteState | null;
   canVote: boolean;
   canSelectMoleObjectives: boolean;
+  canChooseMemorandum: boolean;
   canSubmitGovernanceProposal: boolean;
   canSkipGovernanceProposal: boolean;
   canSendChatMessage: boolean;
   isSubmitting: boolean;
   onSelectMoleObjectives: (payload: Record<string, unknown>) => void;
+  onChooseMemorandum: (type: MemorandumType) => void;
   onVote: (decision: string) => void;
   onVoteProposal: (proposalId: number) => void;
   onAbstain: () => void;
@@ -1246,7 +1293,6 @@ function StartedGameScreen(props: {
 }) {
   const [selectedReport, setSelectedReport] = useState<PublicRoundReport | null>(null);
   const acceptedReports = props.roundReports.filter((report) => report.outcome === "accepted");
-  const canAbstain = props.canVote && !props.me?.is_ceo;
   const isWaitingForPlayer = (userId: number) => {
     if (props.phase === "governance_proposal") {
       return !props.governanceSubmissions.some((item) => item.user_id === userId && item.status);
@@ -1257,21 +1303,20 @@ function StartedGameScreen(props: {
 
   return (
     <section className="game-stage">
-      <div className="game-hud">
-        <HudItem label="Раунд" value={String(props.state.current_round || 1)} />
-        <HudItem label="Фаза" value={phaseLabel(props.phase)} />
-        <HudItem label="Казначейский резерв" value={formatShare(props.state.treasury_share_bps)} />
-        <HudItem label="Принято решений" value={String(props.acceptedDecisions.length)} />
-        <button className="secondary-action" onClick={() => void props.onRefresh()} disabled={props.isLoading}>
-          Обновить
-        </button>
-      </div>
-
       <div className="play-columns">
         <aside className="side-stack">
 
           <section className="directors-panel">
             <div className="director-list">
+              <div className="director-row company-row">
+                <div className="director-identity">
+                  <UserAvatar name="Компания" size="small" />
+                  <div>
+                    <strong>Компания</strong>
+                    <span>Казначейский резерв {formatShare(props.state.treasury_share_bps)}</span>
+                  </div>
+                </div>
+              </div>
               {props.players.map((player) => (
                   <div
                       key={player.user_id}
@@ -1297,7 +1342,6 @@ function StartedGameScreen(props: {
                       </div>
                     </div>
                     <div className="badge-row">
-                      {player.is_host ? <span className="badge">Host</span> : null}
                       {player.is_ceo ? <span className="badge accent">CEO</span> : null}
                     </div>
                   </div>
@@ -1307,11 +1351,6 @@ function StartedGameScreen(props: {
 
           {props.me?.role === "mole" ? (
             <section className="secret-card">
-              <p className="eyebrow">Счёт</p>
-              <div className="score-row">
-                <span>Крот: {props.moleVictoryPoints ?? 0}/3</span>
-                <span>Совет: {props.playersVictoryPoints ?? 0}/3</span>
-              </div>
               <p className="eyebrow">Подкопы</p>
               <DecisionList values={props.moleTargets} emptyText="Цели еще не выбраны." />
               {props.moleSabotage ? (
@@ -1322,8 +1361,30 @@ function StartedGameScreen(props: {
                 </div>
                 </>
               ) : null}
+              <p className="eyebrow">Счёт</p>
+              <div className="score-row">
+                <span>Крот: {props.moleVictoryPoints ?? 0}/3</span>
+                <span>Совет: {props.playersVictoryPoints ?? 0}/3</span>
+              </div>
             </section>
-          ) : null}
+          ) : (
+            <section className="secret-card">
+              <p className="eyebrow">Меморандум</p>
+              {props.memorandum ? (
+                <>
+                  <h3>{memorandumTitle(props.memorandum.type)}</h3>
+                  <p className="quiet-text">{memorandumRule(props.memorandum.type)}</p>
+                  <DecisionList values={props.memorandum.decisions} emptyText="Меморандум еще не получен." />
+                </>
+              ) : (
+                <p className="quiet-text">
+                  {props.memorandumPreference
+                    ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}.`
+                    : "Выбери тип меморандума, пока крот формирует цели."}
+                </p>
+              )}
+            </section>
+          )}
 
         </aside>
 
@@ -1333,8 +1394,11 @@ function StartedGameScreen(props: {
             <MoleObjectiveSelectionPhase
               isMole={props.me?.role === "mole"}
               canSelect={props.canSelectMoleObjectives}
+              canChooseMemorandum={props.canChooseMemorandum}
+              memorandumPreference={props.memorandumPreference}
               isSubmitting={props.isSubmitting}
               onSubmit={props.onSelectMoleObjectives}
+              onChooseMemorandum={props.onChooseMemorandum}
             />
           ) : props.phase === "governance_proposal" ? (
             <GovernanceProposalPhase
@@ -1395,20 +1459,6 @@ function StartedGameScreen(props: {
                   );
                 })}
               </div>
-
-              {props.me?.is_ceo ? null : (
-                <button
-                  className={
-                    props.myCurrentVote?.abstain
-                      ? "secondary-action abstain-button selected-abstain"
-                      : "secondary-action abstain-button"
-                  }
-                  onClick={props.onAbstain}
-                  disabled={!canAbstain || props.isSubmitting}
-                >
-                  Воздержаться
-                </button>
-              )}
             </section>
           )}
 
@@ -1419,19 +1469,6 @@ function StartedGameScreen(props: {
               isSubmitting={props.isSubmitting}
               onSend={props.onSendChatMessage}
           />
-
-          <section className="history-panel">
-            <div>
-              <h2>Принятые решения</h2>
-              <RoundReportList
-                reports={acceptedReports}
-                emptyText="Совет еще ничего не принял."
-                onSelect={setSelectedReport}
-              />
-            </div>
-            <GovernanceReportList reports={props.governanceReports} players={props.players} />
-            <RoundReportDetails report={selectedReport} onClose={() => setSelectedReport(null)} />
-          </section>
         </div>
       </div>
     </section>
@@ -1467,14 +1504,6 @@ function FinishScreen(props: {
           {roleLabel(props.me.role)}: {playerWon ? "Ты победил" : "Ты проиграл"}
         </p>
       ) : null}
-      <section className="history-panel final-history">
-        <div>
-          <h2>Финальные принятые решения</h2>
-          <RoundReportList reports={acceptedReports} emptyText="Решений нет." onSelect={setSelectedReport} />
-        </div>
-        <GovernanceReportList reports={props.governanceReports} players={props.state.players} />
-        <RoundReportDetails report={selectedReport} onClose={() => setSelectedReport(null)} />
-      </section>
       <ChatPanel
         messages={props.chatMessages}
         currentUserId={props.currentUserId}
@@ -1483,9 +1512,6 @@ function FinishScreen(props: {
         onSend={props.onSendChatMessage}
       />
       <div className="toolbar-actions centered-actions">
-        <button className="secondary-action" onClick={() => void props.onRefresh()} disabled={props.isLoading}>
-          Обновить
-        </button>
         <button className="primary-action" onClick={props.onBack}>
           К списку игр
         </button>
@@ -1497,8 +1523,11 @@ function FinishScreen(props: {
 function MoleObjectiveSelectionPhase(props: {
   isMole: boolean;
   canSelect: boolean;
+  canChooseMemorandum: boolean;
+  memorandumPreference?: MemorandumType;
   isSubmitting: boolean;
   onSubmit: (payload: Record<string, unknown>) => void;
+  onChooseMemorandum: (type: MemorandumType) => void;
 }) {
   const [targets, setTargets] = useState<string[]>([]);
   const [sabotage, setSabotage] = useState("");
@@ -1535,6 +1564,33 @@ function MoleObjectiveSelectionPhase(props: {
       <section className="objective-selection waiting-selection">
         <p className="eyebrow">подготовка</p>
         <h2>Крот выбирает цели</h2>
+        {props.memorandumPreference ? (
+          <div className="memorandum-choice selected">
+            <strong>{memorandumTitle(props.memorandumPreference)}</strong>
+            <span>{memorandumRule(props.memorandumPreference)}</span>
+          </div>
+        ) : (
+          <div className="memorandum-choice-grid">
+            <button
+              type="button"
+              className="memorandum-choice"
+              disabled={!props.canChooseMemorandum || props.isSubmitting}
+              onClick={() => props.onChooseMemorandum("opportunity")}
+            >
+              <strong>Принимая решения, я часто вижу возможности</strong>
+              <span>{memorandumRule("opportunity")}</span>
+            </button>
+            <button
+              type="button"
+              className="memorandum-choice"
+              disabled={!props.canChooseMemorandum || props.isSubmitting}
+              onClick={() => props.onChooseMemorandum("risk")}
+            >
+              <strong>Принимая решения, я часто учитываю риски</strong>
+              <span>{memorandumRule("risk")}</span>
+            </button>
+          </div>
+        )}
         <p className="quiet-text">Первое голосование начнется, когда тайный Крот выберет три Подкопа и одну Диверсию.</p>
       </section>
     );
@@ -1647,7 +1703,6 @@ function GovernanceProposalPhase(props: {
       <div className="section-heading compact-heading">
         <div>
           <p className="eyebrow">Корпоративные манёвры</p>
-          <h2>Подай предложение или пропусти</h2>
         </div>
         {!canAct ? <span className="wait-pill">Ждем остальных</span> : null}
       </div>
@@ -1793,7 +1848,24 @@ function GovernanceProposalCard(props: {
   const proposalVotes = props.currentVotes.filter((vote) => vote.has_voted && vote.proposal_id === props.proposal.id);
 
   return (
-    <article className={props.selected ? "proposal-card selected-vote" : "proposal-card"}>
+    <article
+      className={["proposal-card", "proposal-card-button", props.selected ? "selected-vote" : "", props.disabled ? "is-disabled" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      role="button"
+      tabIndex={props.disabled ? -1 : 0}
+      onClick={() => {
+        if (!props.disabled) {
+          props.onVote();
+        }
+      }}
+      onKeyDown={(event) => {
+        if (!props.disabled && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          props.onVote();
+        }
+      }}
+    >
       <span>Предложение #{props.proposal.id}</span>
       <strong>{describeGovernanceProposal(props.proposal, props.players)}</strong>
       <small>Сила: {formatShare(props.proposal.share_bps)}</small>
@@ -1816,9 +1888,6 @@ function GovernanceProposalCard(props: {
           ))}
         </div>
       ) : null}
-      <button className="primary-action" onClick={props.onVote} disabled={props.disabled}>
-        Голосовать
-      </button>
     </article>
   );
 }
@@ -1895,6 +1964,45 @@ function ChatPanel(props: {
   onSend: (message: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState("");
+  const [historyMode, setHistoryMode] = useState(false);
+  const [expandedSystemIds, setExpandedSystemIds] = useState<Record<number, boolean>>({});
+
+  const visibleMessages = useMemo(() => {
+    if (!historyMode) {
+      return props.messages;
+    }
+    const historyTypes = new Set([
+      "major_vote_accepted",
+      "major_vote_rejected",
+      "governance_accepted",
+      "governance_rejected",
+      "sabotage_accepted",
+      "mole_revealed",
+    ]);
+    return props.messages.filter((message) => message.kind === "system" && historyTypes.has(message.system_event_type ?? ""));
+  }, [historyMode, props.messages]);
+
+  const groupedMessages = useMemo(() => {
+    type ChatGroup = { id: string; messages: PublicChatMessage[]; isSystem: boolean };
+    const groups: ChatGroup[] = [];
+    for (const message of visibleMessages) {
+      const isSystem = message.kind === "system" || message.user_id === 0;
+      const lastGroup = groups[groups.length - 1];
+      const lastMessage = lastGroup?.messages[lastGroup.messages.length - 1];
+      const canMerge =
+        !isSystem &&
+        lastGroup &&
+        !lastGroup.isSystem &&
+        lastMessage?.user_id === message.user_id &&
+        Math.abs(new Date(message.created_at).getTime() - new Date(lastMessage.created_at).getTime()) <= 180000;
+      if (canMerge && lastGroup) {
+        lastGroup.messages.push(message);
+      } else {
+        groups.push({ id: `${message.id}-${message.created_at}`, messages: [message], isSystem });
+      }
+    }
+    return groups;
+  }, [visibleMessages]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -1911,29 +2019,53 @@ function ChatPanel(props: {
       <div className="chat-heading">
         <div>
           <p className="eyebrow">чат</p>
+          <h2>{historyMode ? "История решений" : "Переговорная"}</h2>
         </div>
-        <span>{props.messages.length}</span>
+        <div className="chat-heading-actions">
+          <button
+            type="button"
+            className={historyMode ? "mini-button active" : "mini-button"}
+            onClick={() => setHistoryMode((value) => !value)}
+          >
+            История
+          </button>
+          <span>{visibleMessages.length}</span>
+        </div>
       </div>
 
       <div className="chat-messages">
-        {props.messages.map((message) => {
-          const isMine = message.user_id === props.currentUserId;
+        {groupedMessages.map((group) => {
+          const firstMessage = group.messages[0];
+          const isMine = firstMessage.user_id === props.currentUserId;
+          if (group.isSystem) {
+            return (
+              <SystemChatMessage
+                key={group.id}
+                message={firstMessage}
+                expanded={expandedSystemIds[firstMessage.id] ?? false}
+                onToggle={() => setExpandedSystemIds((current) => ({ ...current, [firstMessage.id]: !current[firstMessage.id] }))}
+              />
+            );
+          }
           return (
-            <article className={isMine ? "chat-message is-mine" : "chat-message"} key={`${message.id}-${message.created_at}`}>
+            <article className={isMine ? "chat-message is-mine" : "chat-message"} key={group.id}>
               <div className="chat-message-head">
                 <span className="chat-author">
-                  <UserAvatar name={message.user_name} avatarUrl={message.avatar_url} size="small" />
-                  <strong>{isMine ? "Ты" : message.user_name}</strong>
+                  <UserAvatar name={firstMessage.user_name} avatarUrl={firstMessage.avatar_url} size="small" />
+                  <strong>{isMine ? "Ты" : firstMessage.user_name}</strong>
                 </span>
-                <small>{formatChatTime(message.created_at)}</small>
+                <small>{formatChatTime(firstMessage.created_at)}</small>
               </div>
-              <p>{message.message}</p>
+              {group.messages.map((message) => (
+                <p key={`${message.id}-${message.created_at}`}>{message.message}</p>
+              ))}
             </article>
           );
         })}
-        {!props.messages.length ? <p className="quiet-text">В переговорной пока тихо.</p> : null}
+        {!visibleMessages.length ? <p className="quiet-text">{historyMode ? "В истории пока нет системных итогов." : "В переговорной пока тихо."}</p> : null}
       </div>
 
+      {historyMode ? null : (
       <form className="chat-form" onSubmit={submit}>
         <input
           value={draft}
@@ -1946,7 +2078,40 @@ function ChatPanel(props: {
           Отправить
         </button>
       </form>
+      )}
     </section>
+  );
+}
+
+function SystemChatMessage(props: { message: PublicChatMessage; expanded: boolean; onToggle: () => void }) {
+  const details = props.message.details ?? [];
+  const hasDetails = details.length > 0;
+  const title = props.message.title || "Системное сообщение";
+  const summary = props.message.summary || props.message.message;
+  return (
+    <article className={["chat-message", "system-message", props.message.tone ? `tone-${props.message.tone}` : ""].filter(Boolean).join(" ")}>
+      <div className="chat-message-head">
+        <span className="chat-author">
+          <strong>{title}</strong>
+        </span>
+        <small>{formatChatTime(props.message.created_at)}</small>
+      </div>
+      <p>{summary}</p>
+      {hasDetails ? (
+        <>
+          {props.expanded ? (
+            <div className="system-details">
+              {details.map((detail, index) => (
+                <span key={`${props.message.id}-${index}`}>{detail}</span>
+              ))}
+            </div>
+          ) : null}
+          <button type="button" className="mini-button system-toggle" onClick={props.onToggle}>
+            {props.expanded ? "Скрыть" : "Показать полностью"}
+          </button>
+        </>
+      ) : null}
+    </article>
   );
 }
 
@@ -2112,7 +2277,7 @@ function DecisionTypeTag({ type }: { type: DecisionType }) {
   return (
     <span
       className={isEmpowerment ? "decision-type-tag empowerment" : "decision-type-tag growth"}
-      title={isEmpowerment ? "Победители получают +1% к Полномочиям" : "Победители получают +1% к доле"}
+      title={isEmpowerment ? "Победители получают +1% к полномочиям" : "Победители получают +1% к доле"}
     >
       +1%
     </span>

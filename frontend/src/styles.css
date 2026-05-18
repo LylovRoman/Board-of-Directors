@@ -345,7 +345,6 @@ code {
   justify-content: space-between;
   gap: 18px;
   align-items: flex-end;
-  margin-bottom: 18px;
 }
 
 .section-heading h1 {
@@ -721,7 +720,7 @@ code {
 .sabotage-secret {
   display: grid;
   gap: 5px;
-  margin-top: 12px;
+  margin: 10px 0;
   padding: 12px;
   border: 1px solid rgba(255, 48, 64, 0.55);
   border-radius: 8px;
@@ -753,9 +752,15 @@ code {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
-  padding: 0 10px;
+  padding: 5px 10px;
   border-radius: 8px;
   background: rgba(246, 241, 232, 0.06);
+}
+
+.company-row {
+  padding: 10px;
+  border: 1px solid rgba(217, 164, 65, 0.24);
+  background: rgba(0, 6, 255, 0.08);
 }
 
 .director-identity > div {
@@ -799,6 +804,36 @@ code {
   box-shadow: var(--shadow);
 }
 
+.memorandum-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.memorandum-choice {
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  padding: 12px;
+  border: 1px solid rgba(246, 241, 232, 0.14);
+  border-radius: 8px;
+  background: rgba(246, 241, 232, 0.06);
+  color: var(--ink);
+  text-align: left;
+}
+
+.memorandum-choice:hover:not(:disabled),
+.memorandum-choice.selected {
+  border-color: rgba(217, 164, 65, 0.62);
+  background: rgba(217, 164, 65, 0.12);
+}
+
+.memorandum-choice span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
 .waiting-selection {
   min-height: 220px;
   align-content: center;
@@ -822,11 +857,18 @@ code {
   background: rgba(18, 18, 17, 0.74);
 }
 
-.objective-card.empowerment:not(.is-target):not(.is-sabotage) {
+.objective-card.growth:not(.is-target):not(.is-sabotage) {
   border-color: rgba(154, 111, 224, 0.42);
   background:
     linear-gradient(160deg, rgba(154, 111, 224, 0.14), transparent 62%),
     rgba(22, 18, 31, 0.8);
+}
+
+.objective-card.empowerment:not(.is-target):not(.is-sabotage) {
+  border-color: rgba(255, 202, 92, 0.60);
+  background:
+          linear-gradient(160deg, rgba(255, 202, 92, 0.60), transparent 66%),
+          rgba(18, 18, 17, 0.74);
 }
 
 .objective-card.is-target {
@@ -889,6 +931,7 @@ code {
 }
 
 .proposal-card {
+  gap: 10px;
   grid-template-rows: auto 1fr auto auto;
 }
 
@@ -900,9 +943,18 @@ button.decision-card {
   cursor: pointer;
 }
 
-button.decision-card:disabled {
+button.decision-card:disabled,
+.proposal-card-button.is-disabled {
   cursor: wait;
   opacity: 0.74;
+}
+
+.proposal-card-button {
+  cursor: pointer;
+}
+
+.proposal-card-button:hover:not(.is-disabled) {
+  border-color: rgba(217, 164, 65, 0.58);
 }
 
 .decision-card.empowerment {
@@ -945,7 +997,6 @@ button.decision-card:disabled {
 }
 
 .decision-card > span {
-  min-height: 20px;
   font-size: 0.76rem;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -1004,7 +1055,7 @@ button.decision-card:disabled {
 .decision-card strong {
   align-self: start;
   max-width: 100%;
-  font-size: 1rem;
+  font-size: 0.9rem;
   line-height: 1.24;
   overflow-wrap: anywhere;
 }
@@ -1090,7 +1141,6 @@ button.decision-card:disabled {
 
 .governance-board {
   display: grid;
-  gap: 12px;
 }
 
 .governance-form {
@@ -1263,6 +1313,12 @@ button.decision-card:disabled {
   align-items: start;
 }
 
+.chat-heading-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .chat-heading h2 {
   margin: 4px 0 0;
   font-size: 1.05rem;
@@ -1279,10 +1335,16 @@ button.decision-card:disabled {
   text-align: center;
 }
 
+.mini-button.active {
+  border-color: rgba(217, 164, 65, 0.56);
+  background: rgba(217, 164, 65, 0.14);
+  color: #f2cf85;
+}
+
 .chat-messages {
   display: grid;
   gap: 8px;
-  max-height: 280px;
+  max-height: min(58vh, 620px);
   overflow: auto;
   padding-right: 2px;
 }
@@ -1300,6 +1362,42 @@ button.decision-card:disabled {
 .chat-message.is-mine {
   border-color: rgba(77, 159, 114, 0.45);
   background: rgba(77, 159, 114, 0.12);
+}
+
+.system-message {
+  border-color: rgba(217, 164, 65, 0.32);
+  background: rgba(217, 164, 65, 0.09);
+}
+
+.system-message.tone-success {
+  border-color: rgba(77, 159, 114, 0.42);
+  background: rgba(77, 159, 114, 0.1);
+}
+
+.system-message.tone-warning {
+  border-color: rgba(217, 164, 65, 0.46);
+}
+
+.system-message.tone-danger {
+  border-color: rgba(255, 96, 96, 0.5);
+  background: rgba(105, 28, 32, 0.2);
+}
+
+.system-details {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(246, 241, 232, 0.1);
+}
+
+.system-details span {
+  color: var(--muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.system-toggle {
+  justify-self: start;
 }
 
 .chat-message-head {
@@ -1361,7 +1459,7 @@ button.decision-card:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin: 10px 0;
 }
 
 .decision-list span {

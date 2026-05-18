@@ -347,6 +347,26 @@ paths:
                   state:
                     $ref: "#/components/schemas/PublicGameState"
 
+  /games/{id}/ws:
+    get:
+      summary: Open live game state WebSocket
+      description: Authenticated WebSocket endpoint. Pass the JWT as `?token=...`. The server sends personalized `{ "type": "state", "state": PublicGameState }` messages after game actions.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - in: query
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: WebSocket protocol switch
+
   /games/{id}/actions:
     post:
       summary: Send player action
@@ -468,17 +488,28 @@ components:
             - ban_player
             - send_chat_message
             - start_game
+            - choose_memorandum
             - select_mole_objectives
             - vote
             - submit_governance_proposal
             - skip_governance_proposal
         payload:
           oneOf:
+            - $ref: "#/components/schemas/ChooseMemorandumPayload"
             - $ref: "#/components/schemas/SelectMoleObjectivesPayload"
             - $ref: "#/components/schemas/VotePayload"
             - $ref: "#/components/schemas/SubmitGovernanceProposalPayload"
             - type: object
               additionalProperties: true
+      required: [type]
+
+    ChooseMemorandumPayload:
+      type: object
+      description: Private director choice during mole_objective_selection. The Mole cannot use it. If a director does not choose before objectives are selected, opportunity is used.
+      properties:
+        type:
+          type: string
+          enum: [opportunity, risk]
       required: [type]
 
     SelectMoleObjectivesPayload:
@@ -500,7 +531,7 @@ components:
 
     VotePayload:
       type: object
-      description: Used for major voting and governance voting. During major voting, decision must be one of current major_vote_options.
+      description: Used for major voting and governance voting. During major voting, abstain is not allowed and decision must be one of current major_vote_options.
       properties:
         decision:
           type: string
@@ -749,9 +780,44 @@ components:
           type: string
         message:
           type: string
+        kind:
+          type: string
+          enum: [user, system]
+        system_event_type:
+          type: string
+          description: Present for structured system messages, for example major_vote_accepted, governance_accepted, sabotage_accepted, mole_revealed.
+        title:
+          type: string
+        summary:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+        tone:
+          type: string
+          enum: [success, warning, danger]
+        collapsible:
+          type: boolean
         created_at:
           type: string
       required: [id, user_id, user_name, message, created_at]
+
+    PublicMemorandum:
+      type: object
+      description: Private director hint. Present only for non-Mole directors after the Mole has selected objectives.
+      properties:
+        type:
+          type: string
+          enum: [opportunity, risk]
+        decisions:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            type: string
+            enum: [A, B, C, D, E, F, G, H]
+      required: [type, decisions]
 
     PublicGameState:
       type: object
@@ -838,6 +904,12 @@ components:
         mole_sabotage:
           type: string
           description: Private. Present only for the Mole; this is the 2-point Sabotage objective.
+        memorandum_preference:
+          type: string
+          enum: [opportunity, risk]
+          description: Private. Present only for the viewing director during setup if they chose a memorandum type.
+        memorandum:
+          $ref: "#/components/schemas/PublicMemorandum"
         mole_victory_points:
           type: integer
           description: Private. Present only for the Mole.

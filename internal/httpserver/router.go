@@ -21,6 +21,7 @@ import (
 type Server struct {
 	store     storage.Storage
 	engine    *game.Engine
+	live      *liveHub
 	jwtSecret string
 	tokenTTL  time.Duration
 }
@@ -37,6 +38,7 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 	s := &Server{
 		store:     store,
 		engine:    game.NewEngine(store),
+		live:      newLiveHub(),
 		jwtSecret: secret,
 		tokenTTL:  7 * 24 * time.Hour,
 	}
@@ -74,6 +76,7 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 		r.Get("/", s.handleListGames)
 		r.Get("/{id}", s.handleGetGame)
 		r.Get("/{id}/state", s.handleGetGameState)
+		r.Get("/{id}/ws", s.handleGameWebSocket)
 		r.Post("/{id}/actions", s.handleGameAction)
 		r.Put("/{id}", s.handleUpdateGame)
 		r.Delete("/{id}", s.handleDeleteGame)
@@ -448,6 +451,9 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		}
 		deleted = true
 	}
+	if !deleted {
+		s.broadcastGameState(r.Context(), gameID)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events":       publicActionEvents(events),
@@ -472,6 +478,8 @@ func isPrivateActionEvent(eventType string) bool {
 	case models.EventMoleSelected,
 		models.EventMoleTargetsGenerated,
 		models.EventMoleObjectivesSelected,
+		models.EventMemorandumPreferenceSelected,
+		models.EventMemorandumAssigned,
 		models.EventVoteSubmitted,
 		models.EventGovernanceVoteSubmitted:
 		return true

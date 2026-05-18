@@ -5,6 +5,7 @@ export type ActionType =
   | "ban_player"
   | "send_chat_message"
   | "start_game"
+  | "choose_memorandum"
   | "select_mole_objectives"
   | "vote"
   | "submit_governance_proposal"
@@ -13,6 +14,7 @@ export type GameStatus = "lobby" | "started" | "finished";
 export type GamePhase = "mole_objective_selection" | "major_voting" | "governance_proposal" | "governance_voting";
 export type GovernanceProposalType = "share_transfer" | "treasury_grant" | "treasury_buyback" | "appoint_ceo";
 export type DecisionType = "growth" | "empowerment";
+export type MemorandumType = "opportunity" | "risk";
 
 export interface User {
   id: number;
@@ -87,7 +89,19 @@ export interface PublicChatMessage {
   user_name: string;
   avatar_url?: string;
   message: string;
+  kind?: "user" | "system" | string;
+  system_event_type?: string;
+  title?: string;
+  summary?: string;
+  details?: string[] | null;
+  tone?: "success" | "warning" | "danger" | string;
+  collapsible?: boolean;
   created_at: string;
+}
+
+export interface PublicMemorandum {
+  type: MemorandumType;
+  decisions: string[];
 }
 
 export interface PublicGovernanceProposal {
@@ -182,6 +196,8 @@ export interface PublicGameState {
   chat_messages?: PublicChatMessage[] | null;
   mole_targets?: string[];
   mole_sabotage?: string;
+  memorandum_preference?: MemorandumType;
+  memorandum?: PublicMemorandum | null;
   mole_victory_points?: number;
   players_victory_points?: number;
   available_actions: ActionType[];
