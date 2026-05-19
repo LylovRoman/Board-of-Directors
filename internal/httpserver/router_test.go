@@ -70,8 +70,9 @@ func (m *mockStorage) GetUserByLogin(ctx context.Context, login string) (*models
 func (m *mockStorage) UpdateUser(ctx context.Context, user *models.User) error {
 	for i := range m.users {
 		if m.users[i].ID == user.ID {
-			user.CreatedAt = m.users[i].CreatedAt
-			m.users[i] = *user
+			m.users[i].Name = user.Name
+			m.users[i].UpdatedAt = timePtr(time.Now())
+			*user = m.users[i]
 			return nil
 		}
 	}
@@ -83,6 +84,7 @@ func (m *mockStorage) UpdateUserProfile(ctx context.Context, user *models.User) 
 		if m.users[i].ID == user.ID {
 			m.users[i].Name = user.Name
 			m.users[i].AvatarURL = user.AvatarURL
+			m.users[i].Position = user.Position
 			m.users[i].UpdatedAt = timePtr(time.Now())
 			*user = m.users[i]
 			return nil
@@ -315,6 +317,34 @@ func TestProtectedRouteRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestUpdateMyProfileStoresCompanyPosition(t *testing.T) {
+	user := models.User{ID: 1, Login: "alice", Name: "Alice"}
+	store := &mockStorage{users: []models.User{user}}
+	router := NewRouter(store, "test-secret")
+
+	body := []byte(`{"name":"Alice","avatar_url":"https://example.com/a.png","company_position":"Финансовый директор"}`)
+	req := httptest.NewRequest(http.MethodPut, "/users/me/profile", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, user)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		User authUserResponse `json:"user"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.User.Position != "Финансовый директор" || store.users[0].Position != "Финансовый директор" {
+		t.Fatalf("expected profile position to be saved, resp=%+v store=%+v", resp.User, store.users[0])
+	}
+}
+
 func TestCreateUser(t *testing.T) {
 	admin := models.User{ID: 1, Login: "admin", Name: "Admin"}
 	store := &mockStorage{users: []models.User{admin}}
@@ -409,8 +439,8 @@ func TestCreateGame(t *testing.T) {
 	if resp.Game.Title != "Mafia" {
 		t.Fatalf("expected title Mafia, got %s", resp.Game.Title)
 	}
-	if len(store.events) != 2 {
-		t.Fatalf("expected 2 bootstrap events, got %d", len(store.events))
+	if len(store.events) != 3 {
+		t.Fatalf("expected 3 bootstrap events, got %d", len(store.events))
 	}
 	if store.events[0].EventType != models.EventGameCreated {
 		t.Fatalf("expected first event %s, got %s", models.EventGameCreated, store.events[0].EventType)
@@ -418,8 +448,14 @@ func TestCreateGame(t *testing.T) {
 	if !strings.Contains(store.events[0].EventValue, `"host_user_id":1`) {
 		t.Fatalf("expected authenticated user to be host, got event payload %s", store.events[0].EventValue)
 	}
+	if !strings.Contains(store.events[0].EventValue, `"company_name"`) || !strings.Contains(store.events[0].EventValue, `"company_situation"`) {
+		t.Fatalf("expected generated company scenario, got event payload %s", store.events[0].EventValue)
+	}
 	if store.events[1].EventType != models.EventPlayerJoined {
 		t.Fatalf("expected second event %s, got %s", models.EventPlayerJoined, store.events[1].EventType)
+	}
+	if store.events[2].EventType != models.EventChatMessageSent {
+		t.Fatalf("expected third event %s, got %s", models.EventChatMessageSent, store.events[2].EventType)
 	}
 }
 
@@ -882,6 +918,84 @@ func TestGameWebSocketAcceptsQueryToken(t *testing.T) {
 	}
 	if message.Type != "state" || message.State == nil || message.State.GameID != 1 {
 		t.Fatalf("unexpected live message: %+v", message)
+	}
+}
+
+func TestGamesWebSocketPushesLobbyListUpdates(t *testing.T) {
+	secret := "test-secret"
+	store := &mockStorage{
+		users: []models.User{{ID: 1, Login: "alice", Name: "Alice"}},
+	}
+	router := NewRouter(store, secret)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	token, err := authpkg.IssueToken(secret, 1, "alice", time.Hour)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/games/ws?token=" + url.QueryEscape(token)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial games websocket: %v", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var initial liveMessage
+	if err := conn.ReadJSON(&initial); err != nil {
+		t.Fatalf("read initial lobby list: %v", err)
+	}
+	if initial.Type != "games" || len(initial.Games) != 0 {
+		t.Fatalf("unexpected initial lobby message: %+v", initial)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/games/", strings.NewReader(`{"title":"Mafia"}`))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("create game: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, resp.StatusCode)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var pushed liveMessage
+	if err := conn.ReadJSON(&pushed); err != nil {
+		t.Fatalf("read pushed lobby list: %v", err)
+	}
+	if pushed.Type != "games" || len(pushed.Games) != 1 || pushed.Games[0].Title != "Mafia" {
+		t.Fatalf("unexpected pushed lobby message: %+v", pushed)
+	}
+}
+
+func TestSwaggerRoutesServeUIAndSpec(t *testing.T) {
+	router := NewRouter(&mockStorage{}, "test-secret")
+
+	specReq := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	specRec := httptest.NewRecorder()
+	router.ServeHTTP(specRec, specReq)
+	if specRec.Code != http.StatusOK || !strings.Contains(specRec.Body.String(), "openapi: 3.0.3") {
+		t.Fatalf("expected openapi yaml, got status=%d body=%s", specRec.Code, specRec.Body.String())
+	}
+
+	uiReq := httptest.NewRequest(http.MethodGet, "/swagger/", nil)
+	uiRec := httptest.NewRecorder()
+	router.ServeHTTP(uiRec, uiReq)
+	if uiRec.Code != http.StatusOK || !strings.Contains(uiRec.Body.String(), "SwaggerUIBundle") {
+		t.Fatalf("expected swagger ui html, got status=%d body=%s", uiRec.Code, uiRec.Body.String())
+	}
+
+	assetReq := httptest.NewRequest(http.MethodGet, "/swagger/swagger-ui.css", nil)
+	assetRec := httptest.NewRecorder()
+	router.ServeHTTP(assetRec, assetReq)
+	if assetRec.Code != http.StatusOK {
+		t.Fatalf("expected swagger asset, got status=%d", assetRec.Code)
 	}
 }
 

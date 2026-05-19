@@ -46,7 +46,7 @@ type Postgres struct {
 	db *sql.DB
 }
 
-const userColumns = `id, login, name, password_hash, avatar_url, last_seen_at, created_at, updated_at`
+const userColumns = `id, login, name, password_hash, avatar_url, company_position, last_seen_at, created_at, updated_at`
 
 func NewPostgres(dsn string) (*Postgres, error) {
 	db, err := sql.Open("pgx", dsn)
@@ -87,12 +87,12 @@ func (p *Postgres) CreateUser(ctx context.Context, user *models.User) error {
 	}
 
 	query := fmt.Sprintf(`
-		INSERT INTO users (login, name, password_hash, avatar_url, last_seen_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5)
+		INSERT INTO users (login, name, password_hash, avatar_url, company_position, last_seen_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6)
 		RETURNING %s
 	`, userColumns)
 
-	return scanUserRow(p.db.QueryRowContext(ctx, query, user.Login, user.Name, user.PasswordHash, user.AvatarURL, user.LastSeenAt), user)
+	return scanUserRow(p.db.QueryRowContext(ctx, query, user.Login, user.Name, user.PasswordHash, user.AvatarURL, user.Position, user.LastSeenAt), user)
 }
 
 func (p *Postgres) ListUsers(ctx context.Context) ([]models.User, error) {
@@ -201,12 +201,13 @@ func (p *Postgres) UpdateUserProfile(ctx context.Context, user *models.User) err
 		UPDATE users
 		SET name = $1,
 			avatar_url = NULLIF($2, ''),
+			company_position = NULLIF($3, ''),
 			updated_at = NOW()
-		WHERE id = $3
+		WHERE id = $4
 		RETURNING %s
 	`, userColumns)
 
-	err := scanUserRow(p.db.QueryRowContext(ctx, query, user.Name, user.AvatarURL, user.ID), user)
+	err := scanUserRow(p.db.QueryRowContext(ctx, query, user.Name, user.AvatarURL, user.Position, user.ID), user)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("user not found")
@@ -604,6 +605,7 @@ func scanUser(row rowScanner, user *models.User) error {
 	var login sql.NullString
 	var passwordHash sql.NullString
 	var avatarURL sql.NullString
+	var position sql.NullString
 	var lastSeenAt sql.NullTime
 	var updatedAt sql.NullTime
 
@@ -613,6 +615,7 @@ func scanUser(row rowScanner, user *models.User) error {
 		&user.Name,
 		&passwordHash,
 		&avatarURL,
+		&position,
 		&lastSeenAt,
 		&user.CreatedAt,
 		&updatedAt,
@@ -632,6 +635,10 @@ func scanUser(row rowScanner, user *models.User) error {
 	user.AvatarURL = ""
 	if avatarURL.Valid {
 		user.AvatarURL = avatarURL.String
+	}
+	user.Position = ""
+	if position.Valid {
+		user.Position = position.String
 	}
 	user.LastSeenAt = nil
 	if lastSeenAt.Valid {

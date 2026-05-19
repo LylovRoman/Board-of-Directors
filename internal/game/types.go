@@ -118,12 +118,14 @@ type Action struct {
 }
 
 type GameState struct {
-	GameID     int64      `json:"game_id"`
-	Title      string     `json:"title"`
-	Status     GameStatus `json:"status"`
-	Phase      GamePhase  `json:"phase"`
-	IsFinished bool       `json:"is_finished"`
-	Winner     string     `json:"winner,omitempty"`
+	GameID           int64      `json:"game_id"`
+	Title            string     `json:"title"`
+	CompanyName      string     `json:"company_name"`
+	CompanySituation string     `json:"company_situation"`
+	Status           GameStatus `json:"status"`
+	Phase            GamePhase  `json:"phase"`
+	IsFinished       bool       `json:"is_finished"`
+	Winner           string     `json:"winner,omitempty"`
 
 	HostUserID              int64
 	CEOUserID               int64
@@ -154,6 +156,7 @@ type GameState struct {
 type PlayerState struct {
 	UserID       int64  `json:"user_id"`
 	Name         string `json:"name"`
+	Position     string `json:"company_position,omitempty"`
 	ShareBPS     int    `json:"share_bps"`
 	AuthorityBPS int    `json:"authority_bps"`
 	IsHost       bool   `json:"is_host"`
@@ -203,6 +206,7 @@ type ChatMessageState struct {
 	ID              int64     `json:"id"`
 	UserID          int64     `json:"user_id"`
 	UserName        string    `json:"user_name"`
+	UserPosition    string    `json:"company_position,omitempty"`
 	Message         string    `json:"message"`
 	Kind            string    `json:"kind,omitempty"`
 	SystemEventType string    `json:"system_event_type,omitempty"`
@@ -217,6 +221,8 @@ type ChatMessageState struct {
 type PublicGameState struct {
 	GameID                int64                        `json:"game_id"`
 	Title                 string                       `json:"title"`
+	CompanyName           string                       `json:"company_name"`
+	CompanySituation      string                       `json:"company_situation"`
 	Status                GameStatus                   `json:"status"`
 	Phase                 GamePhase                    `json:"phase"`
 	IsFinished            bool                         `json:"is_finished"`
@@ -253,6 +259,7 @@ type PublicPlayerState struct {
 	UserID       int64  `json:"user_id"`
 	Name         string `json:"name"`
 	AvatarURL    string `json:"avatar_url,omitempty"`
+	Position     string `json:"company_position,omitempty"`
 	ShareBPS     int    `json:"share_bps"`
 	AuthorityBPS int    `json:"authority_bps"`
 	IsHost       bool   `json:"is_host"`
@@ -281,6 +288,7 @@ type PublicChatMessage struct {
 	UserID          int64     `json:"user_id"`
 	UserName        string    `json:"user_name"`
 	AvatarURL       string    `json:"avatar_url,omitempty"`
+	UserPosition    string    `json:"company_position,omitempty"`
 	Message         string    `json:"message"`
 	Kind            string    `json:"kind,omitempty"`
 	SystemEventType string    `json:"system_event_type,omitempty"`
@@ -333,6 +341,8 @@ type PublicGovernanceReport struct {
 
 type GovernanceVoteReport struct {
 	ProposalID     int
+	Proposal       *GovernanceProposalState
+	ProposalTitle  string
 	Abstain        bool
 	ShareBPS       int
 	AuthorityBPS   int
@@ -351,6 +361,8 @@ type GovernanceVoterReport struct {
 
 type PublicGovernanceVoteReport struct {
 	ProposalID     int                           `json:"proposal_id,omitempty"`
+	Proposal       *PublicGovernanceProposal     `json:"proposal,omitempty"`
+	ProposalTitle  string                        `json:"proposal_title,omitempty"`
 	Abstain        bool                          `json:"abstain"`
 	ShareBPS       int                           `json:"share_bps"`
 	AuthorityBPS   int                           `json:"authority_bps"`
@@ -455,13 +467,16 @@ type PublicReplayVote struct {
 }
 
 type GameCreatedPayload struct {
-	HostUserID int64  `json:"host_user_id"`
-	Title      string `json:"title"`
+	HostUserID       int64  `json:"host_user_id"`
+	Title            string `json:"title"`
+	CompanyName      string `json:"company_name,omitempty"`
+	CompanySituation string `json:"company_situation,omitempty"`
 }
 
 type PlayerJoinedPayload struct {
-	UserID int64  `json:"user_id"`
-	Name   string `json:"name"`
+	UserID   int64  `json:"user_id"`
+	Name     string `json:"name"`
+	Position string `json:"company_position,omitempty"`
 }
 
 type PlayerKickedPayload struct {

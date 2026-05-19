@@ -96,6 +96,21 @@ paths:
       summary: Update current user profile
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                avatar_url:
+                  type: string
+                company_position:
+                  type: string
+                  description: Player's display position inside the fictional company. Cosmetic only.
+              required: [name, avatar_url]
       responses:
         "200":
           description: Updated profile
@@ -347,6 +362,20 @@ paths:
                   state:
                     $ref: "#/components/schemas/PublicGameState"
 
+  /games/ws:
+    get:
+      summary: Open live games list WebSocket
+      description: Authenticated WebSocket endpoint. Pass the JWT as `?token=...`. The server sends `{ "type": "games", "games": Game[] }` messages with the current lobby list after game list changes.
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: WebSocket protocol switch
+
   /games/{id}/ws:
     get:
       summary: Open live game state WebSocket
@@ -422,6 +451,8 @@ components:
           type: string
         avatar_url:
           type: string
+        company_position:
+          type: string
         last_seen_at:
           type: string
           nullable: true
@@ -439,6 +470,10 @@ components:
           type: integer
           format: int64
         title:
+          type: string
+        company_name:
+          type: string
+        company_situation:
           type: string
         created_at:
           type: string
@@ -477,6 +512,8 @@ components:
           type: string
         avatar_url:
           type: string
+        company_position:
+          type: string
         is_host:
           type: boolean
         is_ceo:
@@ -485,6 +522,7 @@ components:
 
     CreateGameRequest:
       type: object
+      description: Creates a room and generates a persistent company scenario for the game.
       properties:
         title:
           type: string
@@ -581,7 +619,7 @@ components:
 
     SubmitGovernanceProposalPayload:
       type: object
-      description: Governance proposal submission. Backend ignores client share_bps and uses the proposer's effective authority as proposal strength.
+      description: Governance proposal submission. Backend ignores client share_bps and stores the actual applicable share_bps after clamping the proposer's effective authority to available treasury or the 5% player minimum.
       properties:
         proposal_type:
           type: string
@@ -606,6 +644,8 @@ components:
         name:
           type: string
         avatar_url:
+          type: string
+        company_position:
           type: string
         share_bps:
           type: integer
@@ -724,6 +764,11 @@ components:
       properties:
         proposal_id:
           type: integer
+        proposal:
+          $ref: "#/components/schemas/PublicGovernanceProposal"
+        proposal_title:
+          type: string
+          description: Human-readable snapshot of the proposal this vote bucket supported. Present for non-abstain buckets so historical reports do not need to render proposal numbers.
         abstain:
           type: boolean
         share_bps:
@@ -911,6 +956,8 @@ components:
           type: string
         avatar_url:
           type: string
+        company_position:
+          type: string
         message:
           type: string
         kind:
@@ -960,6 +1007,12 @@ components:
           format: int64
         title:
           type: string
+        company_name:
+          type: string
+          description: Generated fictional company name for this game.
+        company_situation:
+          type: string
+          description: Generated current company situation for this game.
         status:
           type: string
         phase:

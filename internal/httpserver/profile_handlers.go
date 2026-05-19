@@ -30,6 +30,7 @@ type profileResponse struct {
 	Login      string            `json:"login,omitempty"`
 	Name       string            `json:"name"`
 	AvatarURL  string            `json:"avatar_url,omitempty"`
+	Position   string            `json:"company_position,omitempty"`
 	LastSeenAt *time.Time        `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`
 	UpdatedAt  *time.Time        `json:"updated_at,omitempty"`
@@ -172,6 +173,7 @@ func profileFromUser(user *models.User, stats userStatsResponse) profileResponse
 		Login:      user.Login,
 		Name:       user.Name,
 		AvatarURL:  user.AvatarURL,
+		Position:   user.Position,
 		LastSeenAt: user.LastSeenAt,
 		CreatedAt:  user.CreatedAt,
 		UpdatedAt:  user.UpdatedAt,
@@ -292,17 +294,22 @@ func (s *Server) decoratePublicState(ctx context.Context, state *game.PublicGame
 		return
 	}
 	avatars := map[int64]string{}
+	positions := map[int64]string{}
 	for _, user := range users {
 		avatars[user.ID] = user.AvatarURL
+		positions[user.ID] = user.Position
 	}
 	for i := range state.Players {
 		state.Players[i].AvatarURL = avatars[state.Players[i].UserID]
+		state.Players[i].Position = positions[state.Players[i].UserID]
 		if state.Me.UserID == state.Players[i].UserID {
 			state.Me.AvatarURL = state.Players[i].AvatarURL
+			state.Me.Position = state.Players[i].Position
 		}
 	}
 	for i := range state.ChatMessages {
 		state.ChatMessages[i].AvatarURL = avatars[state.ChatMessages[i].UserID]
+		state.ChatMessages[i].UserPosition = positions[state.ChatMessages[i].UserID]
 	}
 }
 

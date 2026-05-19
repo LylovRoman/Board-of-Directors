@@ -8,6 +8,7 @@ type User struct {
 	Name         string     `json:"name"`
 	PasswordHash string     `json:"-"`
 	AvatarURL    string     `json:"avatar_url,omitempty"`
+	Position     string     `json:"company_position,omitempty"`
 	LastSeenAt   *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`

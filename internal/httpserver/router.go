@@ -71,6 +71,7 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 	})
 
 	r.Route("/games", func(r chi.Router) {
+		r.Get("/ws", s.handleGamesWebSocket)
 		r.Get("/{id}/ws", s.handleGameWebSocket)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
@@ -89,7 +90,7 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(openAPISpecYAML)
 	})
-	r.Mount("/", swaggerUI())
+	r.Mount("/swagger", swaggerUI())
 
 	return r
 }
@@ -289,19 +290,29 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.decoratePublicState(r.Context(), state)
+	s.broadcastGames(r.Context())
 
 	writeJSON(w, http.StatusCreated, map[string]any{"game": createdGame, "state": state})
 }
 
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
-	games, err := s.store.ListGames(r.Context())
+	items, err := s.listGameItems(r.Context(), currentUserID(r))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
+	writeJSON(w, http.StatusOK, map[string]any{"games": items})
+}
+
+func (s *Server) listGameItems(ctx context.Context, viewerID int64) ([]gameListItem, error) {
+	games, err := s.store.ListGames(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	usersByID := map[int64]models.User{}
-	users, err := s.store.ListUsers(r.Context())
+	users, err := s.store.ListUsers(ctx)
 	if err == nil {
 		for _, user := range users {
 			usersByID[user.ID] = user
@@ -316,19 +327,19 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: gameModel.CreatedAt,
 		}
 
-		events, err := s.store.ListEventsByGameID(r.Context(), gameModel.ID)
+		events, err := s.store.ListEventsByGameID(ctx, gameModel.ID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
-			return
+			return nil, err
 		}
 
 		state, err := game.BuildState(gameModel.ID, gameModel.Title, events)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
-			return
+			return nil, err
 		}
 
 		item.Title = state.Title
+		item.CompanyName = state.CompanyName
+		item.CompanySituation = state.CompanySituation
 		item.Status = state.Status
 		item.Phase = state.Phase
 		item.Winner = state.Winner
@@ -340,6 +351,7 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 					UserID:    userID,
 					Name:      player.Name,
 					AvatarURL: usersByID[userID].AvatarURL,
+					Position:  usersByID[userID].Position,
 					IsHost:    player.IsHost,
 					IsCEO:     player.IsCEO,
 				})
@@ -347,7 +359,7 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 		}
 		item.PlayerCount = len(item.PlayerUserIDs)
 		for _, userID := range item.PlayerUserIDs {
-			if userID == currentUserID(r) {
+			if userID == viewerID {
 				item.IsMember = true
 				break
 			}
@@ -355,27 +367,30 @@ func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"games": items})
+	return items, nil
 }
 
 type gameListItem struct {
-	ID            int64            `json:"id"`
-	Title         string           `json:"title"`
-	CreatedAt     time.Time        `json:"created_at"`
-	Status        game.GameStatus  `json:"status"`
-	Phase         game.GamePhase   `json:"phase,omitempty"`
-	Winner        string           `json:"winner,omitempty"`
-	CurrentRound  int              `json:"current_round"`
-	PlayerCount   int              `json:"player_count"`
-	PlayerUserIDs []int64          `json:"player_user_ids"`
-	Players       []gameListPlayer `json:"players"`
-	IsMember      bool             `json:"is_member"`
+	ID               int64            `json:"id"`
+	Title            string           `json:"title"`
+	CompanyName      string           `json:"company_name,omitempty"`
+	CompanySituation string           `json:"company_situation,omitempty"`
+	CreatedAt        time.Time        `json:"created_at"`
+	Status           game.GameStatus  `json:"status"`
+	Phase            game.GamePhase   `json:"phase,omitempty"`
+	Winner           string           `json:"winner,omitempty"`
+	CurrentRound     int              `json:"current_round"`
+	PlayerCount      int              `json:"player_count"`
+	PlayerUserIDs    []int64          `json:"player_user_ids"`
+	Players          []gameListPlayer `json:"players"`
+	IsMember         bool             `json:"is_member"`
 }
 
 type gameListPlayer struct {
 	UserID    int64  `json:"user_id"`
 	Name      string `json:"name"`
 	AvatarURL string `json:"avatar_url,omitempty"`
+	Position  string `json:"company_position,omitempty"`
 	IsHost    bool   `json:"is_host"`
 	IsCEO     bool   `json:"is_ceo"`
 }
@@ -428,6 +443,7 @@ func (s *Server) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.broadcastGames(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"game": game})
 }
 
@@ -443,6 +459,7 @@ func (s *Server) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.broadcastGames(r.Context())
 	writeJSON(w, http.StatusOK, statusResponse{Status: "deleted"})
 }
 
@@ -491,6 +508,7 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 	if !deleted {
 		s.broadcastGameState(r.Context(), gameID)
 	}
+	s.broadcastGames(r.Context())
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events":       publicActionEvents(events),

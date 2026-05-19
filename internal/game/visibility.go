@@ -9,6 +9,8 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 	publicState := &PublicGameState{
 		GameID:                state.GameID,
 		Title:                 state.Title,
+		CompanyName:           state.CompanyName,
+		CompanySituation:      state.CompanySituation,
 		Status:                state.Status,
 		Phase:                 state.Phase,
 		IsFinished:            state.IsFinished,
@@ -40,6 +42,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		publicPlayer := PublicPlayerState{
 			UserID:       player.UserID,
 			Name:         player.Name,
+			Position:     player.Position,
 			ShareBPS:     player.ShareBPS,
 			AuthorityBPS: effectiveAuthorityBPS(player),
 			IsHost:       player.IsHost,
@@ -189,12 +192,17 @@ func publicGovernanceVoteReports(reports []GovernanceVoteReport) []PublicGoverna
 	for _, report := range reports {
 		publicReport := PublicGovernanceVoteReport{
 			ProposalID:     report.ProposalID,
+			ProposalTitle:  report.ProposalTitle,
 			Abstain:        report.Abstain,
 			ShareBPS:       report.ShareBPS,
 			AuthorityBPS:   report.AuthorityBPS,
 			VotingPowerBPS: report.VotingPowerBPS,
 			VoterCount:     report.VoterCount,
 			Voters:         publicGovernanceVoters(report.Voters),
+		}
+		if report.Proposal != nil {
+			proposal := publicGovernanceProposal(report.Proposal)
+			publicReport.Proposal = &proposal
 		}
 		out = append(out, publicReport)
 	}
@@ -262,6 +270,7 @@ func publicChatMessages(messages []ChatMessageState) []PublicChatMessage {
 			ID:              message.ID,
 			UserID:          message.UserID,
 			UserName:        message.UserName,
+			UserPosition:    message.UserPosition,
 			Message:         message.Message,
 			Kind:            message.Kind,
 			SystemEventType: message.SystemEventType,
@@ -514,7 +523,13 @@ func replayStepForGovernanceReport(state *GameState, report GovernanceReport) Pu
 func replayVotesForGovernanceReport(report GovernanceReport) []PublicReplayVote {
 	out := make([]PublicReplayVote, 0, len(report.Votes))
 	for _, vote := range report.Votes {
-		label := fmt.Sprintf("Предложение #%d", vote.ProposalID)
+		label := vote.ProposalTitle
+		if label == "" && vote.Proposal != nil {
+			label = describeGovernanceProposalForChat(nil, vote.Proposal)
+		}
+		if label == "" {
+			label = "Предложение"
+		}
 		if vote.Abstain {
 			label = "Воздержались"
 		}

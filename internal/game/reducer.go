@@ -12,6 +12,8 @@ func BuildState(gameID int64, title string, events []models.Event) (*GameState, 
 	state := &GameState{
 		GameID:                gameID,
 		Title:                 title,
+		CompanyName:           title,
+		CompanySituation:      "Совет директоров собрался на внеочередное заседание.",
 		Status:                GameStatusLobby,
 		Players:               map[int64]*PlayerState{},
 		CurrentVotes:          map[int64]VoteState{},
@@ -45,6 +47,14 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		state.Title = payload.Title
 		state.HostUserID = payload.HostUserID
+		state.CompanyName = payload.CompanyName
+		if state.CompanyName == "" {
+			state.CompanyName = payload.Title
+		}
+		state.CompanySituation = payload.CompanySituation
+		if state.CompanySituation == "" {
+			state.CompanySituation = "Совет директоров собрался на внеочередное заседание."
+		}
 	case models.EventPlayerJoined:
 		var payload PlayerJoinedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -60,6 +70,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			player.AuthorityBPS = InitialAuthorityBPS
 		}
 		player.Name = payload.Name
+		player.Position = payload.Position
 		player.IsKicked = false
 		player.IsLeft = false
 		if activePlayerByID(state, state.HostUserID) == nil {
@@ -96,10 +107,15 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if player := state.Players[payload.UserID]; player != nil && player.Name != "" {
 			userName = player.Name
 		}
+		userPosition := ""
+		if player := state.Players[payload.UserID]; player != nil {
+			userPosition = player.Position
+		}
 		state.ChatMessages = append(state.ChatMessages, ChatMessageState{
 			ID:              event.ID,
 			UserID:          payload.UserID,
 			UserName:        userName,
+			UserPosition:    userPosition,
 			Message:         payload.Message,
 			Kind:            payload.Kind,
 			SystemEventType: payload.SystemEventType,
@@ -473,6 +489,8 @@ func buildGovernanceReport(state *GameState, round int, outcome string, proposal
 func buildGovernanceVoteReports(state *GameState) []GovernanceVoteReport {
 	type bucket struct {
 		proposalID     int
+		proposal       *GovernanceProposalState
+		proposalTitle  string
 		abstain        bool
 		shareBPS       int
 		authorityBPS   int
@@ -495,14 +513,23 @@ func buildGovernanceVoteReports(state *GameState) []GovernanceVoteReport {
 		key := "abstain"
 		proposalID := 0
 		abstain := true
+		var proposal *GovernanceProposalState
+		proposalTitle := ""
 		if !vote.Abstain && vote.ProposalID != nil && state.GovernanceProposals[*vote.ProposalID] != nil {
 			proposalID = *vote.ProposalID
 			key = fmt.Sprintf("proposal:%d", proposalID)
 			abstain = false
+			proposal = cloneGovernanceProposal(state.GovernanceProposals[proposalID])
+			proposalTitle = describeGovernanceProposalForChat(state, proposal)
 		}
 
 		if buckets[key] == nil {
-			buckets[key] = &bucket{proposalID: proposalID, abstain: abstain}
+			buckets[key] = &bucket{
+				proposalID:    proposalID,
+				proposal:      proposal,
+				proposalTitle: proposalTitle,
+				abstain:       abstain,
+			}
 		}
 		authorityBPS := effectiveAuthorityBPS(player)
 		votingPowerBPS := player.ShareBPS + authorityBPS
@@ -538,6 +565,8 @@ func buildGovernanceVoteReports(state *GameState) []GovernanceVoteReport {
 		bucket := buckets[key]
 		out = append(out, GovernanceVoteReport{
 			ProposalID:     bucket.proposalID,
+			Proposal:       cloneGovernanceProposal(bucket.proposal),
+			ProposalTitle:  bucket.proposalTitle,
 			Abstain:        bucket.abstain,
 			ShareBPS:       bucket.shareBPS,
 			AuthorityBPS:   bucket.authorityBPS,
@@ -581,6 +610,15 @@ func mergeAuthorIDs(existing []int64, incoming ...int64) []int64 {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+func cloneGovernanceProposal(proposal *GovernanceProposalState) *GovernanceProposalState {
+	if proposal == nil {
+		return nil
+	}
+	cp := *proposal
+	cp.AuthorUserIDs = append([]int64(nil), proposal.AuthorUserIDs...)
+	return &cp
 }
 
 func decodeEventValue(value string, dst any) error {

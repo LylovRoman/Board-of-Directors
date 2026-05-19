@@ -36,6 +36,7 @@ func newTestPostgres(t *testing.T) *Postgres {
 			name VARCHAR(255) NOT NULL,
 			password_hash TEXT,
 			avatar_url TEXT,
+			company_position TEXT,
 			last_seen_at TIMESTAMP,
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -135,6 +136,7 @@ func TestUserAuthProfileFields(t *testing.T) {
 		Name:         "Alice",
 		PasswordHash: "hash",
 		AvatarURL:    "https://example.com/a.png",
+		Position:     "CFO",
 		LastSeenAt:   &now,
 	}
 	if err := store.CreateUser(ctx, user); err != nil {
@@ -145,12 +147,13 @@ func TestUserAuthProfileFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByLogin: %v", err)
 	}
-	if got.PasswordHash != "hash" || got.AvatarURL != "https://example.com/a.png" || got.LastSeenAt == nil {
+	if got.PasswordHash != "hash" || got.AvatarURL != "https://example.com/a.png" || got.Position != "CFO" || got.LastSeenAt == nil {
 		t.Fatalf("expected auth/profile fields, got %+v", got)
 	}
 
 	got.Name = "Alice Updated"
 	got.AvatarURL = "https://example.com/new.png"
+	got.Position = "Chief Strategy Officer"
 	if err := store.UpdateUserProfile(ctx, got); err != nil {
 		t.Fatalf("UpdateUserProfile: %v", err)
 	}
@@ -165,7 +168,7 @@ func TestUserAuthProfileFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByID: %v", err)
 	}
-	if got.Name != "Alice Updated" || got.AvatarURL != "https://example.com/new.png" || got.PasswordHash != "new-hash" {
+	if got.Name != "Alice Updated" || got.AvatarURL != "https://example.com/new.png" || got.Position != "Chief Strategy Officer" || got.PasswordHash != "new-hash" {
 		t.Fatalf("expected updated fields, got %+v", got)
 	}
 }

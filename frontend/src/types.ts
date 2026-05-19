@@ -21,6 +21,7 @@ export interface User {
   login?: string;
   name: string;
   avatar_url?: string;
+  company_position?: string;
   last_seen_at?: string | null;
   created_at: string;
   updated_at?: string | null;
@@ -31,6 +32,7 @@ export interface AuthUser {
   login: string;
   name: string;
   avatar_url?: string;
+  company_position?: string;
   last_seen_at?: string | null;
   created_at: string;
   updated_at?: string | null;
@@ -39,6 +41,8 @@ export interface AuthUser {
 export interface Game {
   id: number;
   title: string;
+  company_name?: string;
+  company_situation?: string;
   created_at: string;
   status?: GameStatus;
   phase?: GamePhase;
@@ -54,6 +58,7 @@ export interface GameListPlayer {
   user_id: number;
   name: string;
   avatar_url?: string;
+  company_position?: string;
   is_host: boolean;
   is_ceo: boolean;
 }
@@ -72,6 +77,7 @@ export interface PublicPlayerState {
   user_id: number;
   name: string;
   avatar_url?: string;
+  company_position?: string;
   share_bps: number;
   authority_bps: number;
   is_host: boolean;
@@ -100,6 +106,7 @@ export interface PublicChatMessage {
   user_id: number;
   user_name: string;
   avatar_url?: string;
+  company_position?: string;
   message: string;
   kind?: "user" | "system" | string;
   system_event_type?: string;
@@ -144,6 +151,8 @@ export interface PublicGovernanceReport {
 
 export interface PublicGovernanceVoteReport {
   proposal_id?: number;
+  proposal?: PublicGovernanceProposal;
+  proposal_title?: string;
   abstain: boolean;
   share_bps: number;
   authority_bps: number;
@@ -228,6 +237,8 @@ export interface PublicReplayVote {
 export interface PublicGameState {
   game_id: number;
   title: string;
+  company_name?: string;
+  company_situation?: string;
   status: GameStatus;
   phase?: GamePhase;
   is_finished: boolean;
@@ -309,6 +320,7 @@ export interface ProfileResponse {
 export interface UpdateProfileRequest {
   name: string;
   avatar_url: string;
+  company_position: string;
 }
 
 export interface UpdateProfileResponse {

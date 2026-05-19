@@ -10,6 +10,6 @@ func swaggerUI() http.Handler {
 	return swgui.New(
 		"BoardOfDirectors API",
 		"/openapi.yaml",
-		"/",
+		"/swagger/",
 	)
 }

@@ -2,6 +2,8 @@ package game
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -70,6 +72,46 @@ type stubError string
 func (e stubError) Error() string { return string(e) }
 
 func errStub(s string) error { return stubError(s) }
+
+func TestCreateGameGeneratesCompanyScenarioAndProfilePosition(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice", Position: "Финансовый директор"},
+		},
+		games:  map[int64]models.Game{},
+		events: map[int64][]models.Event{},
+	}
+	engine := NewEngine(store)
+
+	_, state, events, err := engine.CreateGame(context.Background(), "Mafia", 1)
+	if err != nil {
+		t.Fatalf("CreateGame: %v", err)
+	}
+	if state.CompanyName == "" || state.CompanySituation == "" {
+		t.Fatalf("expected generated company scenario, got %+v", state)
+	}
+	if len(events) != 3 || events[2].EventType != models.EventChatMessageSent {
+		t.Fatalf("expected company briefing chat event, got %+v", events)
+	}
+	if len(state.Players) != 1 || state.Players[0].Position != "Финансовый директор" {
+		t.Fatalf("expected host position in public player state, got %+v", state.Players)
+	}
+	if len(state.ChatMessages) != 1 || state.ChatMessages[0].SystemEventType != "company_briefing" {
+		t.Fatalf("expected company briefing chat message, got %+v", state.ChatMessages)
+	}
+}
+
+func TestBuildStateUsesCompanyFallbackForOldGameCreatedEvents(t *testing.T) {
+	state, err := BuildState(1, "Legacy Room", []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Legacy Room"}`},
+	})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if state.CompanyName != "Legacy Room" || state.CompanySituation == "" {
+		t.Fatalf("expected fallback company metadata, got name=%q situation=%q", state.CompanyName, state.CompanySituation)
+	}
+}
 
 func TestBuildStateProjectsRolesAndDecisions(t *testing.T) {
 	events := []models.Event{
@@ -770,6 +812,9 @@ func TestAcceptedMajorDecisionStartsGovernanceAndAppliesProposal(t *testing.T) {
 	if state.TreasuryShareBPS != 1700 {
 		t.Fatalf("expected treasury 1700 after major rewards, got %d", state.TreasuryShareBPS)
 	}
+	if len(state.ChatMessages) == 0 || !chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Бонус +1% к доле за принятое решение получили: Alice, Bob, Carol") {
+		t.Fatalf("expected share reward detail in system chat, got %+v", state.ChatMessages)
+	}
 
 	state, _, err = engine.HandleAction(context.Background(), 1, Action{
 		UserID: 1,
@@ -898,6 +943,64 @@ func TestGovernanceBuybackMovesShareToTreasury(t *testing.T) {
 	}
 	if bobShare != 2100 {
 		t.Fatalf("expected Bob share 2100, got %d", bobShare)
+	}
+}
+
+func TestGovernanceProposalClampsTreasuryGrantToZeroReserve(t *testing.T) {
+	store := governanceProposalStoreWithShares(200, map[int64]int{1: 3500, 2: 2500, 3: 2000})
+	engine := NewEngine(store)
+
+	state, _, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  1,
+		Type:    ActionSubmitGovernanceProposal,
+		Payload: []byte(`{"proposal_type":"treasury_grant","target_user_id":2}`),
+	})
+	if err != nil {
+		t.Fatalf("submit governance grant: %v", err)
+	}
+	if got := state.GovernanceProposals[0].ShareBPS; got != 200 {
+		t.Fatalf("expected grant to clamp to remaining treasury 200, got %d", got)
+	}
+}
+
+func TestGovernanceProposalClampsPlayerDebitsToMinimumShare(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{
+		{name: "transfer", payload: `{"proposal_type":"share_transfer","from_user_id":2,"to_user_id":1}`},
+		{name: "buyback", payload: `{"proposal_type":"treasury_buyback","target_user_id":2}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := governanceProposalStoreWithShares(2000, map[int64]int{1: 3500, 2: 700, 3: 3800})
+			engine := NewEngine(store)
+
+			state, _, err := engine.HandleAction(context.Background(), 1, Action{
+				UserID:  1,
+				Type:    ActionSubmitGovernanceProposal,
+				Payload: []byte(tc.payload),
+			})
+			if err != nil {
+				t.Fatalf("submit governance %s: %v", tc.name, err)
+			}
+			if got := state.GovernanceProposals[0].ShareBPS; got != 200 {
+				t.Fatalf("expected proposal to clamp to 200 bps above player minimum, got %d", got)
+			}
+		})
+	}
+}
+
+func TestGovernanceProposalRejectsZeroEffectiveShare(t *testing.T) {
+	store := governanceProposalStoreWithShares(2000, map[int64]int{1: 3500, 2: 500, 3: 4000})
+	engine := NewEngine(store)
+
+	_, _, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  1,
+		Type:    ActionSubmitGovernanceProposal,
+		Payload: []byte(`{"proposal_type":"treasury_buyback","target_user_id":2}`),
+	})
+	if err == nil || err.Error() != "share_bps must be positive" {
+		t.Fatalf("expected zero effective share rejection, got %v", err)
 	}
 }
 
@@ -1075,6 +1178,9 @@ func TestEmpowermentDecisionRewardsAuthority(t *testing.T) {
 	if len(state.ChatMessages) == 0 || state.ChatMessages[len(state.ChatMessages)-1].UserName != "Система" {
 		t.Fatalf("expected system chat summary, got %+v", state.ChatMessages)
 	}
+	if !chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Бонус +1% к полномочиям за принятое решение получили: Alice, Bob, Carol") {
+		t.Fatalf("expected authority reward detail in system chat, got %+v", state.ChatMessages[len(state.ChatMessages)-1])
+	}
 }
 
 func TestPublicAuthorityIncludesCEOBonus(t *testing.T) {
@@ -1150,6 +1256,19 @@ func TestGovernanceVotingUsesSharePlusAuthority(t *testing.T) {
 	}
 	if len(state.GovernanceReports[0].Votes) == 0 {
 		t.Fatalf("expected governance vote math in report")
+	}
+	titles := map[string]bool{}
+	for _, vote := range state.GovernanceReports[0].Votes {
+		if vote.Abstain {
+			continue
+		}
+		if vote.Proposal == nil || vote.ProposalTitle == "" {
+			t.Fatalf("expected proposal snapshot and title in vote report, got %+v", vote)
+		}
+		titles[vote.ProposalTitle] = true
+	}
+	if len(titles) != 2 {
+		t.Fatalf("expected distinct proposal titles in vote buckets, got %+v", titles)
 	}
 }
 
@@ -1411,4 +1530,48 @@ func TestAppointCEOProposalRejected(t *testing.T) {
 	if err == nil || err.Error() != "appoint_ceo proposals are no longer supported" {
 		t.Fatalf("expected appoint_ceo rejection, got %v", err)
 	}
+}
+
+func governanceProposalStoreWithShares(treasuryBPS int, shares map[int64]int) *stubStore {
+	events := []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"B"}`},
+		{EventType: models.EventGovernanceProposalPhaseStarted, EventValue: `{"round":1}`},
+	}
+	for _, userID := range []int64{1, 2, 3} {
+		events = append(events, models.Event{
+			EventType:  models.EventPlayerReceivedShare,
+			EventValue: `{"user_id":` + strconv.FormatInt(userID, 10) + `,"share_bps":` + strconv.Itoa(shares[userID]) + `}`,
+		})
+	}
+	if treasuryBPS < InitialTreasurySharesBPS {
+		events = append(events, models.Event{
+			EventType:  models.EventTreasuryShareGranted,
+			EventValue: `{"target_user_id":1,"share_bps":` + strconv.Itoa(InitialTreasurySharesBPS-treasuryBPS) + `}`,
+		})
+	}
+	return &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games:  map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: events},
+	}
+}
+
+func chatDetailsContain(message PublicChatMessage, expected string) bool {
+	for _, detail := range message.Details {
+		if strings.Contains(detail, expected) {
+			return true
+		}
+	}
+	return false
 }

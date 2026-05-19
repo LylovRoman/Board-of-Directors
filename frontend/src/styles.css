@@ -237,7 +237,7 @@ code {
   z-index: 1;
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 14px;
+  gap: 7px;
   align-items: center;
   max-width: 1320px;
   margin: 0 auto 26px;
@@ -392,7 +392,7 @@ code {
 
 .profile-title {
   display: flex;
-  gap: 14px;
+  gap: 7px;
   align-items: center;
   min-width: 0;
 }
@@ -405,6 +405,12 @@ code {
 
 .profile-title span {
   color: var(--muted);
+  font-weight: 800;
+}
+
+.profile-title small {
+  display: block;
+  color: #f2cf85;
   font-weight: 800;
 }
 
@@ -499,7 +505,7 @@ code {
 .players-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 14px;
+  gap: 7px;
 }
 
 .room-card,
@@ -523,7 +529,7 @@ code {
 .directors-panel,
 .voting-board,
 .empty-state {
-  padding: 9px;
+  padding: 7px;
 }
 
 .room-card {
@@ -612,9 +618,17 @@ code {
 .player-card-heading > div,
 .identity-name > h2,
 .director-identity > div,
-.chat-author > strong,
+.chat-author-text,
 .proposal-author {
   min-width: 0;
+}
+
+.chat-author-text small,
+.player-card-heading small,
+.room-company {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .identity-name h2 {
@@ -681,14 +695,14 @@ code {
 .play-columns {
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-  gap: 14px;
+  gap: 7px;
   align-items: start;
 }
 
 .side-stack,
 .main-stack {
   display: grid;
-  gap: 14px;
+  gap: 7px;
 }
 
 .secret-card {
@@ -766,6 +780,7 @@ code {
 
 .director-identity > div {
   display: grid;
+  gap: 2px;
 }
 
 .director-row strong {
@@ -797,7 +812,7 @@ code {
 
 .objective-selection {
   display: grid;
-  gap: 14px;
+  gap: 7px;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -859,17 +874,17 @@ code {
 }
 
 .objective-card.growth:not(.is-target):not(.is-sabotage) {
+  border-color: rgba(255, 202, 92, 0.60);
+  background:
+    linear-gradient(160deg, rgba(255, 202, 92, 0.60), transparent 66%),
+    rgba(18, 18, 17, 0.74);
+}
+
+.objective-card.empowerment:not(.is-target):not(.is-sabotage) {
   border-color: rgba(154, 111, 224, 0.42);
   background:
     linear-gradient(160deg, rgba(154, 111, 224, 0.14), transparent 62%),
     rgba(22, 18, 31, 0.8);
-}
-
-.objective-card.empowerment:not(.is-target):not(.is-sabotage) {
-  border-color: rgba(255, 202, 92, 0.60);
-  background:
-          linear-gradient(160deg, rgba(255, 202, 92, 0.60), transparent 66%),
-          rgba(18, 18, 17, 0.74);
 }
 
 .objective-card.is-target {
@@ -1084,31 +1099,6 @@ button.decision-card:disabled,
   background: rgba(246, 241, 232, 0.06);
 }
 
-.vote-math-panel,
-.vote-math-list {
-  display: grid;
-  gap: 6px;
-}
-
-.vote-math-panel {
-  padding: 10px;
-  border: 1px solid rgba(246, 241, 232, 0.1);
-  border-radius: 8px;
-  background: rgba(246, 241, 232, 0.05);
-}
-
-.vote-math-panel > span {
-  color: var(--muted);
-  font-weight: 900;
-}
-
-.vote-math-line {
-  display: block;
-  color: var(--muted);
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
-
 .proposal-card .primary-action {
   align-self: end;
   width: 100%;
@@ -1169,6 +1159,7 @@ button.decision-card:disabled,
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
   padding: 10px 12px;
   border: 1px solid rgba(246, 241, 232, 0.12);
   border-radius: 8px;
@@ -1178,6 +1169,12 @@ button.decision-card:disabled,
 .governance-proposal-summary span {
   color: var(--muted);
   font-weight: 800;
+}
+
+.governance-warning {
+  color: #f2cf85;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .governance-pick-grid {
@@ -1355,7 +1352,7 @@ button.decision-card:disabled,
   display: grid;
   gap: 5px;
   min-width: 0;
-  padding: 10px;
+  padding: 5px;
   border: 1px solid rgba(246, 241, 232, 0.08);
   border-radius: 8px;
   background: rgba(246, 241, 232, 0.055);
@@ -1432,12 +1429,51 @@ button.decision-card:disabled,
 
 .chat-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
 }
 
 .chat-form button {
   min-width: 112px;
+}
+
+.emoji-picker-wrap {
+  position: relative;
+}
+
+.emoji-toggle {
+  font-size: 30px;
+  min-width: 42px !important;
+  border: 1px solid rgba(246, 241, 232, 0.14);
+  border-radius: 8px;
+  background: rgba(246, 241, 232, 0.06);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.emoji-picker {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 8;
+  display: grid;
+  grid-template-columns: repeat(4, 34px);
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(18, 18, 17, 0.96);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.34);
+}
+
+.emoji-picker button {
+  min-width: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(246, 241, 232, 0.12);
+  border-radius: 8px;
+  background: rgba(246, 241, 232, 0.07);
+  cursor: pointer;
 }
 
 .finish-screen > .chat-panel {
@@ -1453,7 +1489,7 @@ button.decision-card:disabled,
 .history-panel {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
+  gap: 7px;
   padding: 18px;
 }
 
@@ -1704,6 +1740,10 @@ button.decision-card:disabled,
   margin: -4px 0 0;
 }
 
+.room-company {
+  margin: -3px 0 0;
+}
+
 .room-players {
   display: flex;
   min-height: 34px;
@@ -1800,7 +1840,7 @@ button.decision-card:disabled,
 .final-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 7px;
   width: min(1120px, 100%);
 }
 
@@ -1844,7 +1884,7 @@ button.decision-card:disabled,
 .replay-layout {
   display: grid;
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-  gap: 14px;
+  gap: 7px;
 }
 
 .replay-timeline,

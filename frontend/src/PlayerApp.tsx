@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   changePassword,
@@ -236,6 +236,22 @@ function describeGovernanceProposal(proposal: PublicGovernanceProposal, players:
   }
 }
 
+function governanceVoteTitle(
+  vote: { abstain?: boolean; proposal_title?: string; proposal?: PublicGovernanceProposal; proposal_id?: number },
+  players: PublicPlayerState[],
+): string {
+  if (vote.abstain) {
+    return "Воздержались";
+  }
+  if (vote.proposal_title) {
+    return vote.proposal_title;
+  }
+  if (vote.proposal) {
+    return describeGovernanceProposal(vote.proposal, players);
+  }
+  return "Корпоративный маневр";
+}
+
 function governanceReportText(report: PublicGovernanceReport, players: PublicPlayerState[]): string {
   if (report.outcome === "accepted" && report.proposal) {
     return `Принято: ${describeGovernanceProposal(report.proposal, players)}`;
@@ -298,6 +314,7 @@ export default function PlayerApp() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileName, setProfileName] = useState("");
   const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
+  const [profilePosition, setProfilePosition] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -347,7 +364,8 @@ export default function PlayerApp() {
     const normalizedFilter = lobbyFilter.trim().toLowerCase();
     const filtered = gameCards.filter(({ game }) => {
       const title = game.title.toLowerCase();
-      const matchesText = !normalizedFilter || title.includes(normalizedFilter);
+      const companyName = game.company_name?.toLowerCase() ?? "";
+      const matchesText = !normalizedFilter || title.includes(normalizedFilter) || companyName.includes(normalizedFilter);
       const matchesStatus = lobbyStatusFilter === "all" || game.status === lobbyStatusFilter;
       const matchesOwner =
         !onlyMyGames ||
@@ -580,6 +598,67 @@ export default function PlayerApp() {
   }, [currentUserId, loadGameState, selectedGameId, soundEnabled]);
 
   useEffect(() => {
+    if (!currentUserId || selectedGameId) {
+      return undefined;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      setLiveStatus("fallback");
+      return undefined;
+    }
+
+    let socket: WebSocket | null = null;
+    let reconnectId: number | null = null;
+    let closed = false;
+    let reconnectAttempts = 0;
+
+    const connect = () => {
+      setLiveStatus(reconnectAttempts === 0 ? "connecting" : "reconnecting");
+      socket = new WebSocket(`${WS_BASE_URL}/games/ws?token=${encodeURIComponent(token)}`);
+      socket.onopen = () => {
+        reconnectAttempts = 0;
+        setLiveStatus("connected");
+      };
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as { type?: string; games?: Game[] };
+          if (data.type === "games" && Array.isArray(data.games)) {
+            setGames(data.games);
+            setGameCards(data.games.map((game) => ({ game })));
+          }
+        } catch {
+          // Ignore malformed live messages; fallback polling will recover if needed.
+        }
+      };
+      socket.onclose = () => {
+        if (!closed) {
+          reconnectAttempts += 1;
+          if (reconnectAttempts > 5) {
+            setLiveStatus("fallback");
+            void loadGames();
+            return;
+          }
+          reconnectId = window.setTimeout(connect, Math.min(8000, 900 * reconnectAttempts));
+        }
+      };
+      socket.onerror = () => {
+        socket?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectId !== null) {
+        window.clearTimeout(reconnectId);
+      }
+      socket?.close();
+    };
+  }, [currentUserId, loadGames, selectedGameId]);
+
+  useEffect(() => {
     if (!selectedGameId || liveStatus !== "fallback") {
       return undefined;
     }
@@ -590,6 +669,16 @@ export default function PlayerApp() {
     }, 5000);
     return () => window.clearInterval(intervalId);
   }, [liveStatus, loadGameState, selectedGameId]);
+
+  useEffect(() => {
+    if (selectedGameId || liveStatus !== "fallback") {
+      return undefined;
+    }
+    const intervalId = window.setInterval(() => {
+      void loadGames();
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [liveStatus, loadGames, selectedGameId]);
 
   async function handleWelcomeSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -716,6 +805,7 @@ export default function PlayerApp() {
       setProfile(nextProfile);
       setProfileName(nextProfile.name);
       setProfileAvatarUrl(nextProfile.avatar_url ?? "");
+      setProfilePosition(nextProfile.company_position ?? "");
     } catch (error) {
       showError(error);
     } finally {
@@ -727,6 +817,7 @@ export default function PlayerApp() {
     event.preventDefault();
     const name = profileName.trim();
     const avatarUrl = profileAvatarUrl.trim();
+    const position = profilePosition.trim();
     if (!name) {
       setErrorMessage("Введите имя.");
       setSuccessMessage(null);
@@ -737,13 +828,14 @@ export default function PlayerApp() {
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const user = await updateMyProfile({ name, avatar_url: avatarUrl });
+      const user = await updateMyProfile({ name, avatar_url: avatarUrl, company_position: position });
       saveAuthUser(user);
       setAuthSession((session) => (session ? { ...session, user } : null));
       const nextProfile = await getMyProfile();
       setProfile(nextProfile);
       setProfileName(nextProfile.name);
       setProfileAvatarUrl(nextProfile.avatar_url ?? "");
+      setProfilePosition(nextProfile.company_position ?? "");
       if (selectedGameId) {
         await loadGameState(selectedGameId);
       }
@@ -932,12 +1024,14 @@ export default function PlayerApp() {
           currentUser={currentUser}
           profileName={profileName}
           profileAvatarUrl={profileAvatarUrl}
+          profilePosition={profilePosition}
           currentPassword={currentPassword}
           newPassword={newPassword}
           isLoading={isLoading}
           isSubmitting={isSubmitting}
           onProfileNameChange={setProfileName}
           onProfileAvatarUrlChange={setProfileAvatarUrl}
+          onProfilePositionChange={setProfilePosition}
           onCurrentPasswordChange={setCurrentPassword}
           onNewPasswordChange={setNewPassword}
           onSubmitProfile={handleProfileSubmit}
@@ -956,9 +1050,6 @@ export default function PlayerApp() {
               <h1>Выбери заседание</h1>
             </div>
             <div className="toolbar-actions">
-              <button className="secondary-action" onClick={() => void handleManualRefresh()} disabled={isLoading}>Обновить</button>
-              <button className="secondary-action" onClick={() => setIsRulesOpen(true)}>Правила</button>
-              <button className="secondary-action" onClick={() => setIsTutorialOpen(true)}>Обучение</button>
               <button className="primary-action" onClick={() => setIsCreatingGame((value) => !value)}>
                 Создать новую игру
               </button>
@@ -1190,12 +1281,14 @@ function ProfileDialog(props: {
   currentUser: AuthUser;
   profileName: string;
   profileAvatarUrl: string;
+  profilePosition: string;
   currentPassword: string;
   newPassword: string;
   isLoading: boolean;
   isSubmitting: boolean;
   onProfileNameChange: (value: string) => void;
   onProfileAvatarUrlChange: (value: string) => void;
+  onProfilePositionChange: (value: string) => void;
   onCurrentPasswordChange: (value: string) => void;
   onNewPasswordChange: (value: string) => void;
   onSubmitProfile: (event: React.FormEvent) => void;
@@ -1204,6 +1297,7 @@ function ProfileDialog(props: {
 }) {
   const shownName = props.profileName || props.currentUser.name;
   const shownAvatar = props.profileAvatarUrl || props.currentUser.avatar_url;
+  const shownPosition = props.profilePosition || props.currentUser.company_position;
   const stats = props.profile?.stats;
 
   return (
@@ -1215,6 +1309,7 @@ function ProfileDialog(props: {
             <div>
               <p className="eyebrow">профиль</p>
               <h2 id="profile-title">{shownName}</h2>
+              {shownPosition ? <small>{shownPosition}</small> : null}
               <span>@{props.currentUser.login}</span>
             </div>
           </div>
@@ -1260,6 +1355,16 @@ function ProfileDialog(props: {
                   onChange={(event) => props.onProfileNameChange(event.target.value)}
                   maxLength={64}
                   autoComplete="name"
+                />
+              </label>
+              <label>
+                Должность в компании
+                <input
+                  value={props.profilePosition}
+                  onChange={(event) => props.onProfilePositionChange(event.target.value)}
+                  maxLength={64}
+                  placeholder="Например, финансовый директор"
+                  autoComplete="organization-title"
                 />
               </label>
               <label>
@@ -1413,6 +1518,7 @@ function GameLobbyScreen(props: {
         <div>
           <p className="eyebrow">комната</p>
           <h1>{state?.title ?? "Загрузка комнаты"}</h1>
+          {state?.company_name ? <p className="quiet-text">{state.company_name}: {state.company_situation}</p> : null}
         </div>
         <div className="toolbar-actions">
           {props.canJoin && !props.hasMe ? (
@@ -1509,6 +1615,41 @@ function StartedGameScreen(props: {
 }) {
   const [selectedReport, setSelectedReport] = useState<PublicRoundReport | null>(null);
   const acceptedReports = props.roundReports.filter((report) => report.outcome === "accepted");
+  const directorRowRefs = useRef(new Map<number, HTMLDivElement>());
+  const previousDirectorRects = useRef(new Map<number, DOMRect>());
+  const sortedPlayers = useMemo(
+    () =>
+      [...props.players].sort((left, right) => {
+        if (right.share_bps !== left.share_bps) {
+          return right.share_bps - left.share_bps;
+        }
+        const byName = left.name.localeCompare(right.name);
+        return byName !== 0 ? byName : left.user_id - right.user_id;
+      }),
+    [props.players],
+  );
+  const playerSortSignature = sortedPlayers.map((player) => `${player.user_id}:${player.share_bps}`).join("|");
+  useLayoutEffect(() => {
+    const nextRects = new Map<number, DOMRect>();
+    directorRowRefs.current.forEach((node, userId) => {
+      nextRects.set(userId, node.getBoundingClientRect());
+    });
+    nextRects.forEach((nextRect, userId) => {
+      const previousRect = previousDirectorRects.current.get(userId);
+      const node = directorRowRefs.current.get(userId);
+      if (!previousRect || !node) {
+        return;
+      }
+      const deltaY = previousRect.top - nextRect.top;
+      if (Math.abs(deltaY) > 1) {
+        node.animate(
+          [{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }],
+          { duration: 240, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+        );
+      }
+    });
+    previousDirectorRects.current = nextRects;
+  }, [playerSortSignature]);
   const isWaitingForPlayer = (userId: number) => {
     if (props.phase === "governance_proposal") {
       return !props.governanceSubmissions.some((item) => item.user_id === userId && item.status);
@@ -1528,14 +1669,21 @@ function StartedGameScreen(props: {
                 <div className="director-identity">
                   <UserAvatar name="Компания" size="small" />
                   <div>
-                    <strong>Компания</strong>
+                    <strong>{props.state.company_name || "Компания"}</strong>
                     <span>Казначейский резерв {formatShare(props.state.treasury_share_bps)}</span>
                   </div>
                 </div>
               </div>
-              {props.players.map((player) => (
+              {sortedPlayers.map((player) => (
                   <div
                       key={player.user_id}
+                      ref={(node) => {
+                        if (node) {
+                          directorRowRefs.current.set(player.user_id, node);
+                        } else {
+                          directorRowRefs.current.delete(player.user_id);
+                        }
+                      }}
                       className={player.user_id === props.currentUserId ? "director-row is-current" : "director-row"}
                   >
                     <div className="director-identity">
@@ -1549,6 +1697,7 @@ function StartedGameScreen(props: {
                           </span>
                           ) : null}
                         </strong>
+                        {player.company_position ? <span>{player.company_position}</span> : null}
                         <span>
                         Доля {formatShare(player.share_bps)}
                       </span>
@@ -1620,6 +1769,7 @@ function StartedGameScreen(props: {
             <GovernanceProposalPhase
               players={props.players}
               submissions={props.governanceSubmissions}
+              treasuryShareBPS={props.state.treasury_share_bps}
               currentUserId={props.currentUserId}
               canSubmit={props.canSubmitGovernanceProposal}
               canSkip={props.canSkipGovernanceProposal}
@@ -1729,6 +1879,7 @@ function FinishScreen(props: {
     <section className="finish-screen">
       <p className="eyebrow">финал</p>
       <h1>{winnerLabel(props.state.winner)}</h1>
+      {props.state.company_name ? <p className="quiet-text">{props.state.company_name}: {props.state.company_situation}</p> : null}
       {props.me?.role ? (
         <p className="personal-result">
           {roleLabel(props.me.role)}: {playerWon ? "Ты победил" : "Ты проиграл"}
@@ -1751,7 +1902,9 @@ function FinishScreen(props: {
         <section className="final-panel">
           <p className="eyebrow">раскрытие</p>
           <p>Крот: {playerStats.find((stat) => stat.user_id === summary?.mole_user_id)?.name ?? "неизвестно"}</p>
-          <p>Цели: {(summary?.mole_targets ?? []).map(decisionLabel).join(", ") || "нет данных"}</p>
+          <p style={{ whiteSpace: 'pre-line' }}>
+            Цели: {(summary?.mole_targets ?? []).map(decisionLabel).join("\n") || "нет данных"}
+          </p>
           <p>Диверсия: {summary?.mole_sabotage ? decisionLabel(summary.mole_sabotage) : "нет данных"}</p>
         </section>
         <section className="final-panel final-table-panel">
@@ -1769,11 +1922,11 @@ function FinishScreen(props: {
         <section className="final-panel">
           <p className="eyebrow">ключевые решения</p>
           <div className="final-decision-list">
-            {acceptedReports.slice(-3).map((report) => (
-              <span key={`accepted-${report.round}`}>Раунд {report.round}: {report.decision ? decisionLabel(report.decision) : "принято"}</span>
+            {acceptedReports.slice(-5).map((report, index) => (
+              <span key={`accepted-${report.round}`}>Решение {index + 1}: {report.decision ? decisionLabel(report.decision) : "принято"}</span>
             ))}
-            {riskyReports.slice(-2).map((report) => (
-              <span key={`risky-${report.round}`}>Спорный раунд {report.round}: {report.reason ?? "ничья"}</span>
+            {riskyReports.slice(-2).map((report, index) => (
+              <span key={`risky-${report.round}`}>Спорное решение {index + 1}: {report.reason ?? "ничья"}</span>
             ))}
           </div>
         </section>
@@ -1831,6 +1984,7 @@ function ReplayPanel(props: { state: PublicGameState; steps: NonNullable<PublicG
         <div>
           <p className="eyebrow">реплей</p>
           <h1>{props.state.title}</h1>
+          {props.state.company_name ? <p className="quiet-text">{props.state.company_name}</p> : null}
         </div>
         <div className="toolbar-actions">
           <button className="secondary-action" onClick={props.onBack}>К финалу</button>
@@ -2005,6 +2159,7 @@ function MoleObjectiveSelectionPhase(props: {
 function GovernanceProposalPhase(props: {
   players: PublicPlayerState[];
   submissions: PublicGovernanceSubmission[];
+  treasuryShareBPS: number;
   currentUserId: number;
   canSubmit: boolean;
   canSkip: boolean;
@@ -2018,7 +2173,26 @@ function GovernanceProposalPhase(props: {
   const mySubmission = props.submissions.find((submission) => submission.user_id === props.currentUserId);
   const canAct = props.canSubmit || props.canSkip;
   const currentPlayer = props.players.find((player) => player.user_id === props.currentUserId);
-  const canSubmitForm = props.canSubmit && (Boolean(plusUserId) || Boolean(minusUserId)) && plusUserId !== minusUserId;
+  const proposalStrengthBPS = currentPlayer?.authority_bps ?? 0;
+  const effectiveShareBPS = useMemo(() => {
+    if (!proposalStrengthBPS || plusUserId === minusUserId) {
+      return 0;
+    }
+    if (plusUserId && minusUserId) {
+      const from = props.players.find((player) => player.user_id === minusUserId);
+      return Math.min(proposalStrengthBPS, Math.max(0, (from?.share_bps ?? 0) - 500));
+    }
+    if (plusUserId) {
+      return Math.min(proposalStrengthBPS, Math.max(0, props.treasuryShareBPS));
+    }
+    if (minusUserId) {
+      const target = props.players.find((player) => player.user_id === minusUserId);
+      return Math.min(proposalStrengthBPS, Math.max(0, (target?.share_bps ?? 0) - 500));
+    }
+    return 0;
+  }, [minusUserId, plusUserId, proposalStrengthBPS, props.players, props.treasuryShareBPS]);
+  const isPartialProposal = effectiveShareBPS > 0 && effectiveShareBPS < proposalStrengthBPS;
+  const canSubmitForm = props.canSubmit && (Boolean(plusUserId) || Boolean(minusUserId)) && plusUserId !== minusUserId && effectiveShareBPS > 0;
 
   function togglePlus(userId: number) {
     setPlusUserId((current) => (current === userId ? null : userId));
@@ -2074,6 +2248,14 @@ function GovernanceProposalPhase(props: {
           <div className="governance-proposal-summary">
             <span>Сила предложения</span>
             <strong>{formatShare(currentPlayer?.authority_bps)} полномочия</strong>
+            {plusUserId || minusUserId ? (
+              <span>
+                Применится: <strong>{formatShare(effectiveShareBPS)}</strong>
+              </span>
+            ) : null}
+            {isPartialProposal ? (
+              <small className="governance-warning">Будет передана не вся доля: останется минимум 5% у игрока или 0% в резерве.</small>
+            ) : null}
           </div>
 
           <div className="governance-pick-grid">
@@ -2178,8 +2360,6 @@ function GovernanceVotingPhase(props: {
         ))}
       </div>
 
-      <GovernanceLiveVoteMath votes={props.currentVotes} players={props.players} />
-
       {props.isCEO ? null : (
         <button
           className={props.myCurrentVote?.abstain ? "secondary-action abstain-button selected-abstain" : "secondary-action abstain-button"}
@@ -2233,77 +2413,13 @@ function GovernanceProposalCard(props: {
           const name = author?.name ?? playerName(props.players, authorId);
           return (
             <span className="proposal-author" key={authorId}>
-              <UserAvatar name={name} avatarUrl={author?.avatar_url ?? proposer?.avatar_url} size="small" />
+              <UserAvatar name={name} avatarUrl={author?.avatar_url} size="small" />
               {name}
             </span>
           );
         })}
       </div>
     </article>
-  );
-}
-
-function GovernanceLiveVoteMath(props: { votes: PublicVoteState[]; players: PublicPlayerState[] }) {
-  const abstainers = props.votes.filter((vote) => vote.has_voted && vote.abstain);
-  if (!abstainers.length) {
-    return null;
-  }
-  return (
-    <div className="vote-math-panel">
-      <span>Воздержались</span>
-      <div className="vote-math-list">
-        {abstainers.map((vote) => (
-          <VoteMathLine key={vote.user_id} vote={vote} players={props.players} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function VoteMathLine(props: { vote: PublicVoteState; players: PublicPlayerState[] }) {
-  const player = props.players.find((item) => item.user_id === props.vote.user_id);
-  const name = player?.name ?? playerName(props.players, props.vote.user_id);
-  return (
-    <small className="vote-math-line">
-      {name}: {formatShare(props.vote.share_bps)} + {formatShare(props.vote.authority_bps)} = {formatShare(props.vote.voting_power_bps)}
-    </small>
-  );
-}
-
-function GovernanceReportList(props: { reports: PublicGovernanceReport[]; players: PublicPlayerState[] }) {
-  if (!props.reports.length) {
-    return null;
-  }
-
-  return (
-    <div className="governance-report-list">
-      <h2>Корпоративные манёвры</h2>
-      {props.reports.slice(-3).map((report) => (
-        <div className={report.outcome === "accepted" ? "governance-report accepted" : "governance-report"} key={report.round}>
-          <div>
-            <span>Раунд {report.round}</span>
-            <strong>{governanceReportText(report, props.players)}</strong>
-          </div>
-          {report.votes?.length ? (
-            <div className="governance-report-votes">
-              {report.votes.map((vote) => (
-                <div className="governance-report-vote" key={`${report.round}-${vote.abstain ? "abstain" : vote.proposal_id}`}>
-                  <span>{vote.abstain ? "Воздержались" : `Предложение #${vote.proposal_id}`}</span>
-                  <strong>{formatShare(vote.voting_power_bps)}</strong>
-                  <div className="vote-math-list">
-                    {(vote.voters ?? []).map((voter) => (
-                      <small className="vote-math-line" key={voter.user_id}>
-                        {voter.name}: {formatShare(voter.share_bps)} + {formatShare(voter.authority_bps)} = {formatShare(voter.voting_power_bps)}
-                      </small>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -2316,7 +2432,10 @@ function ChatPanel(props: {
 }) {
   const [draft, setDraft] = useState("");
   const [historyMode, setHistoryMode] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [expandedSystemIds, setExpandedSystemIds] = useState<Record<number, boolean>>({});
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const emojiChoices = ["👍", "🤝", "💼", "📈", "⚠️", "🕵️", "✅", "🔥"];
 
   const visibleMessages = useMemo(() => {
     if (!historyMode) {
@@ -2363,6 +2482,21 @@ function ChatPanel(props: {
     }
     await props.onSend(message);
     setDraft("");
+    setEmojiOpen(false);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function insertEmoji(emoji: string) {
+    const input = inputRef.current;
+    const start = input?.selectionStart ?? draft.length;
+    const end = input?.selectionEnd ?? draft.length;
+    const nextDraft = `${draft.slice(0, start)}${emoji}${draft.slice(end)}`.slice(0, 500);
+    setDraft(nextDraft);
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      const cursor = Math.min(start + emoji.length, nextDraft.length);
+      inputRef.current?.setSelectionRange(cursor, cursor);
+    });
   }
 
   return (
@@ -2402,7 +2536,10 @@ function ChatPanel(props: {
               <div className="chat-message-head">
                 <span className="chat-author">
                   <UserAvatar name={firstMessage.user_name} avatarUrl={firstMessage.avatar_url} size="small" />
-                  <strong>{isMine ? "Ты" : firstMessage.user_name}</strong>
+                  <span className="chat-author-text">
+                    <strong>{firstMessage.user_name}</strong>
+                    {firstMessage.company_position ? <small> · {firstMessage.company_position}</small> : null}
+                  </span>
                 </span>
                 <small>{formatChatTime(firstMessage.created_at)}</small>
               </div>
@@ -2418,12 +2555,34 @@ function ChatPanel(props: {
       {historyMode ? null : (
       <form className="chat-form" onSubmit={submit}>
         <input
+          ref={inputRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder={props.canSend ? "Сообщение совету" : "Чат доступен участникам комнаты"}
           maxLength={500}
           disabled={!props.canSend || props.isSubmitting}
         />
+        <div className="emoji-picker-wrap">
+          <button
+            className="emoji-toggle"
+            type="button"
+            onClick={() => setEmojiOpen((value) => !value)}
+            disabled={!props.canSend || props.isSubmitting}
+            aria-label="Emoji"
+            title="Emoji"
+          >
+            🤠
+          </button>
+          {emojiOpen ? (
+            <div className="emoji-picker">
+              {emojiChoices.map((emoji) => (
+                <button key={emoji} type="button" onClick={() => insertEmoji(emoji)}>
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <button className="primary-action" type="submit" disabled={!draft.trim() || !props.canSend || props.isSubmitting}>
           Отправить
         </button>
@@ -2515,6 +2674,7 @@ function PlayerCard(props: {
         <UserAvatar name={props.player.name} avatarUrl={props.player.avatar_url} size="medium" />
         <div>
           <h2>{props.player.name}</h2>
+          {props.player.company_position ? <small>{props.player.company_position}</small> : null}
           <p>Доля {formatShare(props.player.share_bps)} · Полномочия {formatShare(props.player.authority_bps)}</p>
         </div>
       </div>

@@ -17,6 +17,7 @@ type authUserResponse struct {
 	Login      string     `json:"login"`
 	Name       string     `json:"name"`
 	AvatarURL  string     `json:"avatar_url,omitempty"`
+	Position   string     `json:"company_position,omitempty"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
@@ -133,6 +134,7 @@ func (s *Server) handleUpdateMyProfile(w http.ResponseWriter, r *http.Request) {
 	type req struct {
 		Name      string `json:"name"`
 		AvatarURL string `json:"avatar_url"`
+		Position  string `json:"company_position"`
 	}
 
 	var in req
@@ -144,12 +146,17 @@ func (s *Server) handleUpdateMyProfile(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	user.Name = strings.TrimSpace(in.Name)
 	user.AvatarURL = strings.TrimSpace(in.AvatarURL)
+	user.Position = strings.TrimSpace(in.Position)
 
 	if err := validateDisplayName(user.Name); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
 	if err := validateAvatarURL(user.AvatarURL); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+	if err := validateCompanyPosition(user.Position); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
@@ -209,6 +216,7 @@ func publicAuthUser(user *models.User) authUserResponse {
 		Login:      user.Login,
 		Name:       user.Name,
 		AvatarURL:  user.AvatarURL,
+		Position:   user.Position,
 		LastSeenAt: user.LastSeenAt,
 		CreatedAt:  user.CreatedAt,
 		UpdatedAt:  user.UpdatedAt,
@@ -221,6 +229,13 @@ func validateDisplayName(name string) error {
 	}
 	if len([]rune(name)) > 64 {
 		return errors.New("name cannot exceed 64 characters")
+	}
+	return nil
+}
+
+func validateCompanyPosition(position string) error {
+	if len([]rune(position)) > 64 {
+		return errors.New("company_position cannot exceed 64 characters")
 	}
 	return nil
 }

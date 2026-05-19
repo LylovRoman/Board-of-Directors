@@ -48,13 +48,17 @@ func (e *Engine) CreateGame(ctx context.Context, title string, hostUserID int64)
 	}
 
 	gameModel := &models.Game{Title: title}
+	company := e.randomCompanyScenario()
 	gameCreatedPayload := mustJSON(GameCreatedPayload{
-		HostUserID: hostUserID,
-		Title:      title,
+		HostUserID:       hostUserID,
+		Title:            title,
+		CompanyName:      company.Name,
+		CompanySituation: company.Situation,
 	})
 	playerJoinedPayload := mustJSON(PlayerJoinedPayload{
-		UserID: host.ID,
-		Name:   host.Name,
+		UserID:   host.ID,
+		Name:     host.Name,
+		Position: host.Position,
 	})
 
 	events := []models.Event{
@@ -69,6 +73,24 @@ func (e *Engine) CreateGame(ctx context.Context, title string, hostUserID int64)
 			ActorName:  host.Name,
 			EventType:  models.EventPlayerJoined,
 			EventValue: playerJoinedPayload,
+		},
+		{
+			ActorName: "Система",
+			EventType: models.EventChatMessageSent,
+			EventValue: mustJSON(ChatMessageSentPayload{
+				UserID:          0,
+				Kind:            "system",
+				SystemEventType: "company_briefing",
+				Title:           fmt.Sprintf("Компания: %s", company.Name),
+				Summary:         company.Situation,
+				Message:         fmt.Sprintf("%s. %s", company.Name, company.Situation),
+				Details: []string{
+					fmt.Sprintf("Компания: %s", company.Name),
+					fmt.Sprintf("Ситуация: %s", company.Situation),
+				},
+				Tone:        "warning",
+				Collapsible: true,
+			}),
 		},
 	}
 
@@ -87,6 +109,28 @@ func (e *Engine) CreateGame(ctx context.Context, title string, hostUserID int64)
 	}
 
 	return gameModel, publicState, events, nil
+}
+
+type companyScenario struct {
+	Name      string
+	Situation string
+}
+
+var companyScenarios = []companyScenario{
+	{Name: "AsterPay", Situation: "Финтех-сервис пережил неудачный релиз платежного ядра, и совет решает, сохранять ли темп экспансии."},
+	{Name: "NordClinic", Situation: "Сеть клиник готовится к слиянию, пока регулятор проверяет качество внутренних процессов."},
+	{Name: "SkyForge Robotics", Situation: "Производитель автономных дронов получил крупный контракт, но поставщики задерживают критические компоненты."},
+	{Name: "PixelHarbor", Situation: "Игровая студия стоит за месяц до глобального запуска, а бюджет маркетинга уже трещит по швам."},
+	{Name: "VectorRail", Situation: "Логистическая компания восстанавливает маршруты после сбоя цепочек поставок и давления ключевых клиентов."},
+	{Name: "HelioFoods", Situation: "Производитель растительного питания выходит в федеральные сети, но маржинальность новых SKU под вопросом."},
+	{Name: "DeepSignal Labs", Situation: "AI-компания получила внимание инвесторов, пока команда спорит о рисках публичной демонстрации продукта."},
+	{Name: "TerraVolt Energy", Situation: "Энергетический оператор запускает пилот накопителей, а финансовый департамент требует сократить капитальные расходы."},
+}
+
+func (e *Engine) randomCompanyScenario() companyScenario {
+	e.rngMu.Lock()
+	defer e.rngMu.Unlock()
+	return companyScenarios[e.rng.Intn(len(companyScenarios))]
 }
 
 func (e *Engine) HandleAction(ctx context.Context, gameID int64, action Action) (*PublicGameState, []models.Event, error) {
