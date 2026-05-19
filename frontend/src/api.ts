@@ -7,6 +7,8 @@ import type {
   GameActionResponse,
   GamesResponse,
   GameStateResponse,
+  LeaderboardPeriod,
+  LeaderboardResponse,
   LoginRequest,
   MeResponse,
   ProfileResponse,
@@ -129,6 +131,10 @@ export async function listUsers(): Promise<User[]> {
 export async function listGames(): Promise<GamesResponse["games"]> {
   const data = await request<GamesResponse>("/games/");
   return data.games;
+}
+
+export async function getLeaderboard(period: LeaderboardPeriod = "week"): Promise<LeaderboardResponse> {
+  return request<LeaderboardResponse>(`/leaderboard?period=${encodeURIComponent(period)}`);
 }
 
 export async function createGame(input: CreateGameRequest): Promise<CreateGameResponse> {

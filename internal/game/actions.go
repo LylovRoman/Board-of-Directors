@@ -1267,17 +1267,19 @@ func formatMajorVoteSystemMessage(state *GameState, outcome string, decision str
 	summary = fmt.Sprintf("Раунд %d: решение не принято (%s). Совет уходит на повторное обсуждение.", state.CurrentRound, reason)
 	systemEventType := "major_vote_rejected"
 	tone := "warning"
+	titleValue := "не принято"
 	if outcome == "accepted" {
 		summary = fmt.Sprintf("%s, раунд %d: принято %s.", companyName, state.CurrentRound, decisionLabelForChat(decision))
 		summary = majorVoteNarrative(state, decision)
 		systemEventType = "major_vote_accepted"
 		tone = "success"
+		titleValue = decision
 		if rewardDetail := majorDecisionRewardDetail(state, decision); rewardDetail != "" {
 			details = append(details, rewardDetail)
 		}
 	}
 	return ChatMessageSentPayload{
-		Title:           fmt.Sprintf("Итоги major vote: %s", companyName),
+		Title:           fmt.Sprintf("Итоги major vote: %s", titleValue),
 		Summary:         summary,
 		Message:         summary,
 		Details:         details,

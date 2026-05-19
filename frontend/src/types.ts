@@ -331,6 +331,23 @@ export interface ProfileResponse {
   profile: Profile;
 }
 
+export type LeaderboardPeriod = "week" | "month" | "all";
+
+export interface LeaderboardEntry {
+  rank: number;
+  user: Profile;
+  games: number;
+  wins: number;
+  losses: number;
+  winrate: number;
+  rating_points: number;
+}
+
+export interface LeaderboardResponse {
+  period: LeaderboardPeriod;
+  entries: LeaderboardEntry[];
+}
+
 export interface UpdateProfileRequest {
   name: string;
   avatar_url: string;

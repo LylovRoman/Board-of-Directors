@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import {
   changePassword,
   createGame,
+  getLeaderboard,
   getMe,
   getGameState,
   getMyProfile,
@@ -31,6 +32,7 @@ import type {
   GamePhase,
   GameStatus,
   GovernanceProposalType,
+  LeaderboardEntry,
   MemorandumType,
   Profile,
   PublicGameState,
@@ -307,6 +309,7 @@ export default function PlayerApp() {
   const [isAuthChecking, setIsAuthChecking] = useState(() => Boolean(getAuthToken()));
   const [games, setGames] = useState<Game[]>([]);
   const [gameCards, setGameCards] = useState<GameCard[]>([]);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(() =>
     readStoredNumber(SELECTED_GAME_STORAGE_KEY),
   );
@@ -417,6 +420,17 @@ export default function PlayerApp() {
     }
   }, [showError]);
 
+  const loadLeaderboard = useCallback(async () => {
+    try {
+      const response = await getLeaderboard("week");
+      setLeaderboardEntries(response.entries ?? []);
+      return response.entries ?? [];
+    } catch (error) {
+      showError(error);
+      return [];
+    }
+  }, [showError]);
+
   const loadGameState = useCallback(
     async (gameId: number) => {
       try {
@@ -438,11 +452,11 @@ export default function PlayerApp() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      await loadGames();
+      await Promise.all([loadGames(), loadLeaderboard()]);
     } finally {
       setIsLoading(false);
     }
-  }, [currentUserId, loadGames]);
+  }, [currentUserId, loadGames, loadLeaderboard]);
 
   const refreshSelectedGame = useCallback(async () => {
     if (!currentUserId || !selectedGameId) {
@@ -508,6 +522,7 @@ export default function PlayerApp() {
       setGameState(null);
       setGames([]);
       setGameCards([]);
+      setLeaderboardEntries([]);
       window.localStorage.removeItem(SELECTED_GAME_STORAGE_KEY);
     };
 
@@ -653,7 +668,7 @@ export default function PlayerApp() {
           reconnectAttempts += 1;
           if (reconnectAttempts > 5) {
             setLiveStatus("fallback");
-            void loadGames();
+            void Promise.all([loadGames(), loadLeaderboard()]);
             return;
           }
           reconnectId = window.setTimeout(connect, Math.min(8000, 900 * reconnectAttempts));
@@ -673,7 +688,7 @@ export default function PlayerApp() {
       }
       socket?.close();
     };
-  }, [currentUserId, loadGames, selectedGameId]);
+  }, [currentUserId, loadGames, loadLeaderboard, selectedGameId]);
 
   useEffect(() => {
     if (!selectedGameId || liveStatus !== "fallback") {
@@ -692,10 +707,10 @@ export default function PlayerApp() {
       return undefined;
     }
     const intervalId = window.setInterval(() => {
-      void loadGames();
+      void Promise.all([loadGames(), loadLeaderboard()]);
     }, 5000);
     return () => window.clearInterval(intervalId);
-  }, [liveStatus, loadGames, selectedGameId]);
+  }, [liveStatus, loadGames, loadLeaderboard, selectedGameId]);
 
   async function handleWelcomeSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -728,7 +743,7 @@ export default function PlayerApp() {
       if (authMode === "register") {
         setAuthName("");
       }
-      await loadGames();
+      await Promise.all([loadGames(), loadLeaderboard()]);
     } catch (error) {
       showError(error);
     } finally {
@@ -947,6 +962,7 @@ export default function PlayerApp() {
     setProfile(null);
     setGames([]);
     setGameCards([]);
+    setLeaderboardEntries([]);
     setAuthPassword("");
     setCurrentPassword("");
     setNewPassword("");
@@ -1109,6 +1125,8 @@ export default function PlayerApp() {
             <LobbyStat label="Завершены" value={lobbyStats.finished} />
             <LobbyStat label="Мои" value={lobbyStats.mine} />
           </div>
+
+          <LeaderboardTable entries={leaderboardEntries} onOpenProfile={(userId) => void openProfile(userId)} />
 
           {isCreatingGame ? (
             <form className="create-game-strip" onSubmit={handleCreateGame}>
@@ -1314,6 +1332,60 @@ function LobbyStat(props: { label: string; value: number }) {
       <span>{props.label}</span>
       <strong>{props.value}</strong>
     </div>
+  );
+}
+
+function LeaderboardTable(props: { entries: LeaderboardEntry[]; onOpenProfile: (userId: number) => void }) {
+  return (
+    <section className="leaderboard-panel">
+      <div className="compact-heading">
+        <div>
+          <p className="eyebrow">рейтинг недели</p>
+
+        </div>
+      </div>
+      {props.entries.length ? (
+        <div className="leaderboard-table-wrap">
+          <table className="leaderboard-table">
+            <thead>
+              <tr>
+                <th>Место</th>
+                <th>Игрок</th>
+                <th>Игры</th>
+                <th>Победы</th>
+                <th>Winrate</th>
+                <th>Очки</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.entries.slice(0, 8).map((entry) => (
+                <tr key={entry.user.id}>
+                  <td>#{entry.rank}</td>
+                  <td>
+                    <button className="leaderboard-player profile-link" type="button" onClick={() => props.onOpenProfile(entry.user.id)}>
+                      <UserAvatar name={entry.user.name} avatarUrl={entry.user.avatar_url} size="small" />
+                      <span>
+                        <strong>{entry.user.name}</strong>
+                        {entry.user.company_position ? <small>{entry.user.company_position}</small> : null}
+                      </span>
+                    </button>
+                  </td>
+                  <td>{entry.games}</td>
+                  <td>{entry.wins}</td>
+                  <td>{formatWinRate(entry.winrate)}</td>
+                  <td>{entry.rating_points}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="leaderboard-empty">
+          <strong>Рейтинг пока пуст</strong>
+          <span>В таблицу попадают игроки с тремя завершенными партиями за неделю.</span>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1753,6 +1825,8 @@ function StartedGameScreen(props: {
   const majorVoteLocked = props.phase === "major_voting" && majorUnlockMs > nowMs;
   const majorVoteSecondsLeft = Math.max(0, Math.ceil((majorUnlockMs - nowMs) / 1000));
   const canSubmitMajorVote = props.canVote && !majorVoteLocked;
+  const scoreRevealed =
+    typeof props.moleVictoryPoints === "number" && typeof props.playersVictoryPoints === "number";
 
   return (
     <section className="game-stage">
@@ -1845,6 +1919,15 @@ function StartedGameScreen(props: {
                     : "Выбери тип меморандума, пока крот формирует цели."}
                 </p>
               )}
+              {scoreRevealed ? (
+                <>
+                  <p className="eyebrow">Счёт</p>
+                  <div className="score-row">
+                    <span>Крот: {props.moleVictoryPoints}/3</span>
+                    <span>Совет: {props.playersVictoryPoints}/3</span>
+                  </div>
+                </>
+              ) : null}
             </section>
           )}
 
@@ -2538,6 +2621,7 @@ function ChatPanel(props: {
   const [draft, setDraft] = useState("");
   const [historyMode, setHistoryMode] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [openReactionMessageId, setOpenReactionMessageId] = useState<number | null>(null);
   const [expandedSystemIds, setExpandedSystemIds] = useState<Record<number, boolean>>({});
   const inputRef = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
@@ -2597,6 +2681,7 @@ function ChatPanel(props: {
     await props.onSend(message);
     setDraft("");
     setEmojiOpen(false);
+    setOpenReactionMessageId(null);
     window.requestAnimationFrame(() => inputRef.current?.focus());
     scrollToBottom();
   }
@@ -2660,8 +2745,29 @@ function ChatPanel(props: {
               </div>
               {group.messages.map((message) => (
                 <div className={message.kind === "official" ? "chat-message-line official-line" : "chat-message-line"} key={`${message.id}-${message.created_at}`}>
-                  <p>{message.message}</p>
-                  <ChatReactions message={message} choices={emojiChoices} disabled={props.isSubmitting} onReact={props.onReact} />
+                  <div className="chat-line-main">
+                    <p>{message.message}</p>
+                    <button
+                      type="button"
+                      className={openReactionMessageId === message.id ? "reaction-toggle active" : "reaction-toggle"}
+                      disabled={props.isSubmitting}
+                      onClick={() => setOpenReactionMessageId((current) => (current === message.id ? null : message.id))}
+                      aria-label="Добавить реакцию"
+                      title="Добавить реакцию"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <ChatReactions
+                    message={message}
+                    choices={emojiChoices}
+                    pickerOpen={openReactionMessageId === message.id}
+                    disabled={props.isSubmitting}
+                    onReact={async (messageId, emoji) => {
+                      await props.onReact(messageId, emoji);
+                      setOpenReactionMessageId(null);
+                    }}
+                  />
                 </div>
               ))}
             </article>
@@ -2714,29 +2820,53 @@ function ChatPanel(props: {
 function ChatReactions(props: {
   message: PublicChatMessage;
   choices: string[];
+  pickerOpen: boolean;
   disabled: boolean;
   onReact: (messageId: number, emoji: string) => Promise<void>;
 }) {
   const reactions = props.message.reactions ?? [];
+  const visibleReactions = reactions.filter((reaction) => reaction.count > 0);
+  if (!visibleReactions.length && !props.pickerOpen) {
+    return null;
+  }
   return (
     <div className="chat-reactions">
-      {props.choices.map((emoji) => {
-        const reaction = reactions.find((item) => item.emoji === emoji);
-        const count = reaction?.count ?? 0;
-        return (
-          <button
-            key={emoji}
-            type="button"
-            className={reaction?.reacted_by_me ? "reaction-button active" : "reaction-button"}
-            disabled={props.disabled}
-            onClick={() => props.onReact(props.message.id, emoji)}
-            title={emoji}
-          >
-            <span>{emoji}</span>
-            {count > 0 ? <strong>{count}</strong> : null}
-          </button>
-        );
-      })}
+      {visibleReactions.length ? (
+        <div className="reaction-summary">
+          {visibleReactions.map((reaction) => (
+            <button
+              key={reaction.emoji}
+              type="button"
+              className={reaction.reacted_by_me ? "reaction-button active" : "reaction-button"}
+              disabled={props.disabled}
+              onClick={() => props.onReact(props.message.id, reaction.emoji)}
+              title={reaction.emoji}
+            >
+              <span>{reaction.emoji}</span>
+              <strong>{reaction.count}</strong>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {props.pickerOpen ? (
+        <div className="reaction-picker">
+          {props.choices.map((emoji) => {
+            const reaction = reactions.find((item) => item.emoji === emoji);
+            return (
+              <button
+                key={emoji}
+                type="button"
+                className={reaction?.reacted_by_me ? "reaction-choice active" : "reaction-choice"}
+                disabled={props.disabled}
+                onClick={() => props.onReact(props.message.id, emoji)}
+                title={emoji}
+              >
+                {emoji}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -206,6 +206,9 @@ func TestHandleVoteRejectsTieWithoutCEOResolution(t *testing.T) {
 	if events[2].EventType != models.EventDecisionRejected {
 		t.Fatalf("expected %s, got %s", models.EventDecisionRejected, events[2].EventType)
 	}
+	if len(state.ChatMessages) == 0 || state.ChatMessages[len(state.ChatMessages)-1].Title != "Итоги major vote: не принято" {
+		t.Fatalf("expected rejected major vote title, got %+v", state.ChatMessages)
+	}
 	if state.CurrentRound != 2 {
 		t.Fatalf("expected next round 2, got %d", state.CurrentRound)
 	}
@@ -981,6 +984,9 @@ func TestAcceptedMajorDecisionStartsGovernanceAndAppliesProposal(t *testing.T) {
 	}
 	if state.TreasuryShareBPS != 1700 {
 		t.Fatalf("expected treasury 1700 after major rewards, got %d", state.TreasuryShareBPS)
+	}
+	if len(state.ChatMessages) == 0 || state.ChatMessages[len(state.ChatMessages)-1].Title != "Итоги major vote: B" {
+		t.Fatalf("expected accepted major vote title with decision letter, got %+v", state.ChatMessages)
 	}
 	if len(state.ChatMessages) == 0 || !chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Бонус +1% к доле за принятое решение получили: Alice, Bob, Carol") {
 		t.Fatalf("expected share reward detail in system chat, got %+v", state.ChatMessages)

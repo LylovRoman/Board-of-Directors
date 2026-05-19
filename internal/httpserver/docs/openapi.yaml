@@ -83,6 +83,10 @@ paths:
       responses:
         "200":
           description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
 
   /users/me/profile:
     get:
@@ -503,6 +507,76 @@ components:
           type: string
           nullable: true
       required: [id, name, created_at]
+
+    RoleStats:
+      type: object
+      properties:
+        games:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        winrate:
+          type: number
+          format: double
+      required: [games, wins, losses, winrate]
+
+    UserStats:
+      type: object
+      properties:
+        total:
+          $ref: "#/components/schemas/RoleStats"
+        mole:
+          $ref: "#/components/schemas/RoleStats"
+        director:
+          $ref: "#/components/schemas/RoleStats"
+      required: [total, mole, director]
+
+    Profile:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            stats:
+              $ref: "#/components/schemas/UserStats"
+            respect_count:
+              type: integer
+            respected_by_me:
+              type: boolean
+          required: [stats, respect_count, respected_by_me]
+
+    LeaderboardEntry:
+      type: object
+      properties:
+        rank:
+          type: integer
+        user:
+          $ref: "#/components/schemas/Profile"
+        games:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        winrate:
+          type: number
+          format: double
+        rating_points:
+          type: integer
+      required: [rank, user, games, wins, losses, winrate, rating_points]
+
+    LeaderboardResponse:
+      type: object
+      properties:
+        period:
+          type: string
+          enum: [week, month, all]
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+      required: [period, entries]
 
     Game:
       type: object
