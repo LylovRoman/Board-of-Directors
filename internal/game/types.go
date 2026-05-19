@@ -13,6 +13,7 @@ const (
 	ActionKickPlayer               ActionType = "kick_player"
 	ActionBanPlayer                ActionType = "ban_player"
 	ActionSendChatMessage          ActionType = "send_chat_message"
+	ActionReactChatMessage         ActionType = "react_chat_message"
 	ActionStartGame                ActionType = "start_game"
 	ActionChooseMemorandum         ActionType = "choose_memorandum"
 	ActionSelectMoleObjectives     ActionType = "select_mole_objectives"
@@ -76,6 +77,7 @@ const (
 	MaxChatMessageLength     = 500
 	MaxPublicChatMessages    = 80
 	MaxGovernanceProposals   = 4
+	FirstMajorVoteLock       = time.Minute
 )
 
 var allDecisions = []string{"A", "B", "C", "D", "E", "F", "G", "H"}
@@ -100,6 +102,16 @@ var decisionTitles = map[string]string{
 	"F": "Оптимизация неэффективного персонала",
 	"G": "Агрессивная налоговая стратегия",
 	"H": "Обратный выкуп акций",
+}
+
+var generatedPositions = []string{
+	"Финансовый директор",
+	"Директор по безопасности",
+	"HR-директор",
+	"Директор по инновациям",
+	"Юрист компании",
+	"Антикризисный менеджер",
+	"Директор по связям с инвесторами",
 }
 
 var sharePresets = map[int][]int{
@@ -150,7 +162,9 @@ type GameState struct {
 	GovernanceReports       []GovernanceReport
 	Available               map[string]bool
 	MajorVoteOptions        []string
+	MajorVoteUnlockedAt     *time.Time
 	ChatMessages            []ChatMessageState
+	ChatReactions           map[int64]map[string]map[int64]bool
 }
 
 type PlayerState struct {
@@ -218,6 +232,12 @@ type ChatMessageState struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type PublicChatReaction struct {
+	Emoji       string `json:"emoji"`
+	Count       int    `json:"count"`
+	ReactedByMe bool   `json:"reacted_by_me"`
+}
+
 type PublicGameState struct {
 	GameID                int64                        `json:"game_id"`
 	Title                 string                       `json:"title"`
@@ -232,6 +252,7 @@ type PublicGameState struct {
 	TreasuryShareBPS      int                          `json:"treasury_share_bps"`
 	AvailableDecisions    []string                     `json:"available_decisions"`
 	MajorVoteOptions      []string                     `json:"major_vote_options"`
+	MajorVoteUnlockedAt   *time.Time                   `json:"major_vote_unlocked_at,omitempty"`
 	DecisionTypes         map[string]DecisionType      `json:"decision_types"`
 	AcceptedDecisions     []string                     `json:"accepted_decisions"`
 	RejectedDecisions     []string                     `json:"rejected_decisions"`
@@ -284,20 +305,21 @@ type PublicOwnVoteState struct {
 }
 
 type PublicChatMessage struct {
-	ID              int64     `json:"id"`
-	UserID          int64     `json:"user_id"`
-	UserName        string    `json:"user_name"`
-	AvatarURL       string    `json:"avatar_url,omitempty"`
-	UserPosition    string    `json:"company_position,omitempty"`
-	Message         string    `json:"message"`
-	Kind            string    `json:"kind,omitempty"`
-	SystemEventType string    `json:"system_event_type,omitempty"`
-	Title           string    `json:"title,omitempty"`
-	Summary         string    `json:"summary,omitempty"`
-	Details         []string  `json:"details,omitempty"`
-	Tone            string    `json:"tone,omitempty"`
-	Collapsible     bool      `json:"collapsible,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              int64                `json:"id"`
+	UserID          int64                `json:"user_id"`
+	UserName        string               `json:"user_name"`
+	AvatarURL       string               `json:"avatar_url,omitempty"`
+	UserPosition    string               `json:"company_position,omitempty"`
+	Message         string               `json:"message"`
+	Kind            string               `json:"kind,omitempty"`
+	SystemEventType string               `json:"system_event_type,omitempty"`
+	Title           string               `json:"title,omitempty"`
+	Summary         string               `json:"summary,omitempty"`
+	Details         []string             `json:"details,omitempty"`
+	Tone            string               `json:"tone,omitempty"`
+	Collapsible     bool                 `json:"collapsible,omitempty"`
+	Reactions       []PublicChatReaction `json:"reactions,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
 }
 
 type PublicMemorandum struct {
@@ -533,13 +555,19 @@ type PlayerAuthorityGrantedPayload struct {
 	AuthorityBPS int   `json:"authority_bps"`
 }
 
+type PlayerPositionAssignedPayload struct {
+	UserID   int64  `json:"user_id"`
+	Position string `json:"company_position"`
+}
+
 type CEOSelectedPayload struct {
 	UserID int64 `json:"user_id"`
 }
 
 type VotingRoundStartedPayload struct {
-	Round             int      `json:"round"`
-	ShowcaseDecisions []string `json:"showcase_decisions,omitempty"`
+	Round             int        `json:"round"`
+	ShowcaseDecisions []string   `json:"showcase_decisions,omitempty"`
+	UnlockedAt        *time.Time `json:"unlocked_at,omitempty"`
 }
 
 type VoteSubmittedPayload struct {
@@ -642,6 +670,17 @@ type BanPlayerActionPayload struct {
 
 type SendChatMessageActionPayload struct {
 	Message string `json:"message"`
+}
+
+type ReactChatMessageActionPayload struct {
+	MessageID int64  `json:"message_id"`
+	Emoji     string `json:"emoji"`
+}
+
+type ChatReactionToggledPayload struct {
+	MessageID int64  `json:"message_id"`
+	UserID    int64  `json:"user_id"`
+	Emoji     string `json:"emoji"`
 }
 
 type SelectMoleObjectivesActionPayload struct {

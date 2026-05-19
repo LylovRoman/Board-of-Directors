@@ -23,6 +23,7 @@ func BuildState(gameID int64, title string, events []models.Event) (*GameState, 
 		GovernanceSubmissions: map[int64]GovernanceSubmissionState{},
 		GovernanceVotes:       map[int64]GovernanceVoteState{},
 		Available:             map[string]bool{},
+		ChatReactions:         map[int64]map[string]map[int64]bool{},
 	}
 
 	for _, decision := range allDecisions {
@@ -109,7 +110,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		userPosition := ""
 		if player := state.Players[payload.UserID]; player != nil {
-			userPosition = player.Position
+			userPosition = effectivePlayerPosition(player)
 		}
 		state.ChatMessages = append(state.ChatMessages, ChatMessageState{
 			ID:              event.ID,
@@ -187,6 +188,14 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if player := state.Players[payload.UserID]; player != nil {
 			player.AuthorityBPS += payload.AuthorityBPS
 		}
+	case models.EventPlayerPositionAssigned:
+		var payload PlayerPositionAssignedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if player := state.Players[payload.UserID]; player != nil {
+			player.Position = payload.Position
+		}
 	case models.EventCEOSelected:
 		var payload CEOSelectedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -209,6 +218,12 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			state.MajorVoteOptions = append([]string(nil), payload.ShowcaseDecisions...)
 		} else {
 			state.MajorVoteOptions = sortedAvailableDecisions(state.Available)
+		}
+		if payload.UnlockedAt != nil {
+			unlockedAt := payload.UnlockedAt.UTC()
+			state.MajorVoteUnlockedAt = &unlockedAt
+		} else {
+			state.MajorVoteUnlockedAt = nil
 		}
 	case models.EventVoteSubmitted:
 		var payload VoteSubmittedPayload
@@ -380,6 +395,25 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.Status = GameStatusFinished
 		state.IsFinished = true
 		state.Winner = payload.Winner
+	case models.EventChatReactionToggled:
+		var payload ChatReactionToggledPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if state.ChatReactions == nil {
+			state.ChatReactions = map[int64]map[string]map[int64]bool{}
+		}
+		if state.ChatReactions[payload.MessageID] == nil {
+			state.ChatReactions[payload.MessageID] = map[string]map[int64]bool{}
+		}
+		if state.ChatReactions[payload.MessageID][payload.Emoji] == nil {
+			state.ChatReactions[payload.MessageID][payload.Emoji] = map[int64]bool{}
+		}
+		if state.ChatReactions[payload.MessageID][payload.Emoji][payload.UserID] {
+			delete(state.ChatReactions[payload.MessageID][payload.Emoji], payload.UserID)
+		} else {
+			state.ChatReactions[payload.MessageID][payload.Emoji][payload.UserID] = true
+		}
 	}
 
 	for _, player := range state.Players {

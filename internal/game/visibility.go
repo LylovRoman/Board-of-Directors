@@ -3,6 +3,7 @@ package game
 import (
 	"fmt"
 	"sort"
+	"time"
 )
 
 func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameState, error) {
@@ -21,12 +22,13 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		AcceptedDecisions:     append([]string(nil), state.AcceptedOrder...),
 		RejectedDecisions:     append([]string(nil), state.RejectedOrder...),
 		MajorVoteOptions:      append([]string(nil), state.MajorVoteOptions...),
+		MajorVoteUnlockedAt:   cloneTimePtr(state.MajorVoteUnlockedAt),
 		DecisionTypes:         publicDecisionTypes(),
 		GovernanceProposals:   publicGovernanceProposals(state),
 		GovernanceSubmissions: publicGovernanceSubmissions(state),
 		GovernanceReports:     publicGovernanceReports(state.GovernanceReports),
 		RoundReports:          publicRoundReports(state.RoundReports),
-		ChatMessages:          publicChatMessages(state.ChatMessages),
+		ChatMessages:          publicChatMessages(state, viewerUserID),
 		AvailableActions:      availableActionsForViewer(state, viewerUserID),
 	}
 	if state.Status != GameStatusLobby {
@@ -42,7 +44,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		publicPlayer := PublicPlayerState{
 			UserID:       player.UserID,
 			Name:         player.Name,
-			Position:     player.Position,
+			Position:     effectivePlayerPosition(player),
 			ShareBPS:     player.ShareBPS,
 			AuthorityBPS: effectiveAuthorityBPS(player),
 			IsHost:       player.IsHost,
@@ -76,6 +78,11 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 	if state.IsFinished {
 		publicState.FinalSummary = publicFinalSummary(state)
 		publicState.ReplaySteps = publicReplaySteps(state)
+	}
+	if state.MoleSabotage != "" && decisionAccepted(state, state.MoleSabotage) && publicState.MoleVictoryPoints == nil {
+		molePoints, playersPoints := victoryPoints(state)
+		publicState.MoleVictoryPoints = &molePoints
+		publicState.PlayersVictoryPoints = &playersPoints
 	}
 
 	if state.Phase == GamePhaseGovernanceVoting {
@@ -259,7 +266,8 @@ func publicDecisionVoters(voters []DecisionVoterReport) []PublicDecisionVoterRep
 	return out
 }
 
-func publicChatMessages(messages []ChatMessageState) []PublicChatMessage {
+func publicChatMessages(state *GameState, viewerUserID int64) []PublicChatMessage {
+	messages := state.ChatMessages
 	start := 0
 	if len(messages) > MaxPublicChatMessages {
 		start = len(messages) - MaxPublicChatMessages
@@ -279,7 +287,35 @@ func publicChatMessages(messages []ChatMessageState) []PublicChatMessage {
 			Details:         append([]string(nil), message.Details...),
 			Tone:            message.Tone,
 			Collapsible:     message.Collapsible,
+			Reactions:       publicChatReactions(state, message.ID, viewerUserID),
 			CreatedAt:       message.CreatedAt,
+		})
+	}
+	return out
+}
+
+func publicChatReactions(state *GameState, messageID int64, viewerUserID int64) []PublicChatReaction {
+	if state == nil || state.ChatReactions == nil {
+		return nil
+	}
+	reactions := state.ChatReactions[messageID]
+	if len(reactions) == 0 {
+		return nil
+	}
+	emojis := make([]string, 0, len(reactions))
+	for emoji, users := range reactions {
+		if len(users) > 0 {
+			emojis = append(emojis, emoji)
+		}
+	}
+	sort.Strings(emojis)
+	out := make([]PublicChatReaction, 0, len(emojis))
+	for _, emoji := range emojis {
+		users := reactions[emoji]
+		out = append(out, PublicChatReaction{
+			Emoji:       emoji,
+			Count:       len(users),
+			ReactedByMe: users[viewerUserID],
 		})
 	}
 	return out
@@ -290,6 +326,7 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 	actions := []ActionType{}
 	if player != nil && !player.IsKicked && !player.IsLeft {
 		actions = append(actions, ActionSendChatMessage)
+		actions = append(actions, ActionReactChatMessage)
 	}
 	if state.IsFinished {
 		return actions
@@ -557,4 +594,21 @@ func governanceVoterNames(voters []GovernanceVoterReport) []string {
 		out = append(out, voter.Name)
 	}
 	return out
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cp := *value
+	return &cp
+}
+
+func decisionAccepted(state *GameState, decision string) bool {
+	for _, accepted := range state.AcceptedOrder {
+		if accepted == decision {
+			return true
+		}
+	}
+	return false
 }

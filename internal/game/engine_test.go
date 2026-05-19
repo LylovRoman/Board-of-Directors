@@ -520,6 +520,61 @@ func TestSendChatMessageAddsPublicMessage(t *testing.T) {
 	}
 }
 
+func TestOfficialStatementUsesEffectivePosition(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{1: {ID: 1, Name: "Alice"}},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: {
+			{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice","company_position":"CFO"}`},
+			{EventType: models.EventGameStarted, EventValue: `{}`},
+			{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+		}},
+	}
+
+	state, _, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  1,
+		Type:    ActionSendChatMessage,
+		Payload: []byte(`{"message":"/me проверяет риски"}`),
+	})
+	if err != nil {
+		t.Fatalf("send official statement: %v", err)
+	}
+	message := state.ChatMessages[len(state.ChatMessages)-1]
+	if message.Kind != "official" || message.Message != "Официальное заявление CEO: проверяет риски" {
+		t.Fatalf("unexpected official statement: %+v", message)
+	}
+}
+
+func TestChatReactionToggleIsPublicForViewer(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: {
+			{ID: 1, EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{ID: 2, EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{ID: 4, EventType: models.EventChatMessageSent, ActorName: "Alice", EventValue: `{"user_id":1,"message":"hello","kind":"user"}`},
+		}},
+	}
+
+	state, _, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  2,
+		Type:    ActionReactChatMessage,
+		Payload: []byte(`{"message_id":4,"emoji":"👍"}`),
+	})
+	if err != nil {
+		t.Fatalf("react: %v", err)
+	}
+	reactions := state.ChatMessages[0].Reactions
+	if len(reactions) != 1 || reactions[0].Emoji != "👍" || reactions[0].Count != 1 || !reactions[0].ReactedByMe {
+		t.Fatalf("unexpected reactions: %+v", reactions)
+	}
+}
+
 func TestKickedPlayerCannotRejoin(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{
@@ -1055,6 +1110,11 @@ func TestMajorShowcaseHasTwoMoleAndTwoCleanOptions(t *testing.T) {
 	if moleCount != 2 || cleanCount != 2 {
 		t.Fatalf("expected 2 mole and 2 clean options, got mole=%d clean=%d options=%v", moleCount, cleanCount, state.MajorVoteOptions)
 	}
+	for i := range store.events[1] {
+		if store.events[1][i].EventType == models.EventVotingRoundStarted {
+			store.events[1][i].EventValue = mustJSON(VotingRoundStartedPayload{Round: 1, ShowcaseDecisions: state.MajorVoteOptions})
+		}
+	}
 
 	outside := ""
 	for _, decision := range allDecisions {
@@ -1080,6 +1140,76 @@ func TestMajorShowcaseHasTwoMoleAndTwoCleanOptions(t *testing.T) {
 	})
 	if err == nil || err.Error() != "decision is not in the current showcase" {
 		t.Fatalf("expected showcase rejection, got %v", err)
+	}
+}
+
+func TestFirstMajorVoteLockedAfterMoleObjectives(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: {
+			{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+			{EventType: models.EventGameStarted, EventValue: `{}`},
+			{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+			{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+		}},
+	}
+	engine := NewEngine(store)
+	state, _, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionSelectMoleObjectives,
+		Payload: []byte(`{"targets":["A","D","F"],"sabotage":"H"}`),
+	})
+	if err != nil {
+		t.Fatalf("select objectives: %v", err)
+	}
+	if state.MajorVoteUnlockedAt == nil {
+		t.Fatalf("expected unlock timestamp")
+	}
+	_, _, err = engine.HandleAction(context.Background(), 1, Action{
+		UserID:  1,
+		Type:    ActionVote,
+		Payload: []byte(`{"decision":"` + state.MajorVoteOptions[0] + `"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "major voting is locked") {
+		t.Fatalf("expected locked vote error, got %v", err)
+	}
+}
+
+func TestSabotageAcceptedRevealsScoreToDirectors(t *testing.T) {
+	state, err := BuildState(1, "Mafia", []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"D"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"D"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":3,"decision":"D"}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"D"}`},
+	})
+	if err != nil {
+		t.Fatalf("build state: %v", err)
+	}
+	publicState, err := ProjectStateForViewer(state, 1)
+	if err != nil {
+		t.Fatalf("project state: %v", err)
+	}
+	if publicState.MoleVictoryPoints == nil || *publicState.MoleVictoryPoints != 2 || publicState.PlayersVictoryPoints == nil || *publicState.PlayersVictoryPoints != 0 {
+		t.Fatalf("expected revealed score after sabotage, got mole=%v players=%v", publicState.MoleVictoryPoints, publicState.PlayersVictoryPoints)
 	}
 }
 
@@ -1569,7 +1699,8 @@ func governanceProposalStoreWithShares(treasuryBPS int, shares map[int64]int) *s
 
 func chatDetailsContain(message PublicChatMessage, expected string) bool {
 	for _, detail := range message.Details {
-		if strings.Contains(detail, expected) {
+		normalized := strings.ReplaceAll(detail, ", CEO", "")
+		if strings.Contains(normalized, expected) {
 			return true
 		}
 	}

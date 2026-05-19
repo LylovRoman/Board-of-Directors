@@ -93,6 +93,19 @@ export async function getMyProfile(): Promise<ProfileResponse["profile"]> {
   return data.profile;
 }
 
+export async function getUserProfile(userId: number): Promise<ProfileResponse["profile"]> {
+  const data = await request<ProfileResponse>(`/users/${userId}/profile`);
+  return data.profile;
+}
+
+export async function respectUser(userId: number): Promise<ProfileResponse["profile"]> {
+  const data = await request<ProfileResponse>(`/users/${userId}/respect`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return data.profile;
+}
+
 export async function updateMyProfile(input: UpdateProfileRequest): Promise<AuthResponse["user"]> {
   const data = await request<UpdateProfileResponse>("/users/me/profile", {
     method: "PUT",

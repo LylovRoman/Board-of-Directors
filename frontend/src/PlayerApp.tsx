@@ -6,9 +6,11 @@ import {
   getMe,
   getGameState,
   getMyProfile,
+  getUserProfile,
   listGames,
   login,
   register,
+  respectUser,
   sendGameAction,
   updateMyProfile,
   WS_BASE_URL,
@@ -174,6 +176,19 @@ function decisionType(decision: string, decisionTypes?: Record<string, DecisionT
   return decisionTypes?.[decision] ?? DECISION_TYPE_FALLBACK[decision] ?? "growth";
 }
 
+function finalDecisionClass(decision?: string, summary?: PublicGameState["final_summary"]): string {
+  if (!decision || !summary) {
+    return "final-decision-clean";
+  }
+  if (decision === summary.mole_sabotage) {
+    return "final-decision-sabotage";
+  }
+  if (summary.mole_targets.includes(decision)) {
+    return "final-decision-podkop";
+  }
+  return "final-decision-clean";
+}
+
 function memorandumTitle(type?: MemorandumType): string {
   return type === "risk" ? "Учитываю риски" : "Вижу возможности";
 }
@@ -312,6 +327,7 @@ export default function PlayerApp() {
   const [isCreatingGame, setIsCreatingGame] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileUserId, setProfileUserId] = useState<number | null>(null);
   const [profileName, setProfileName] = useState("");
   const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
   const [profilePosition, setProfilePosition] = useState("");
@@ -793,15 +809,21 @@ export default function PlayerApp() {
     await refreshCurrentView();
   }
 
-  async function openProfile() {
-    if (!currentUserId) {
+  async function handleChatReaction(messageId: number, emoji: string) {
+    await handleAction("react_chat_message", { message_id: messageId, emoji });
+  }
+
+  async function openProfile(userId?: number) {
+    const targetUserId = userId ?? currentUserId;
+    if (!targetUserId) {
       return;
     }
+    setProfileUserId(targetUserId);
     setIsProfileOpen(true);
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const nextProfile = await getMyProfile();
+      const nextProfile = targetUserId === currentUserId ? await getMyProfile() : await getUserProfile(targetUserId);
       setProfile(nextProfile);
       setProfileName(nextProfile.name);
       setProfileAvatarUrl(nextProfile.avatar_url ?? "");
@@ -810,6 +832,23 @@ export default function PlayerApp() {
       showError(error);
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleRespectProfile() {
+    if (!profileUserId || profileUserId === currentUserId) {
+      return;
+    }
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const nextProfile = await respectUser(profileUserId);
+      setProfile(nextProfile);
+      setSuccessMessage("+ respect");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -1029,6 +1068,9 @@ export default function PlayerApp() {
           newPassword={newPassword}
           isLoading={isLoading}
           isSubmitting={isSubmitting}
+          canEdit={profileUserId === currentUserId}
+          canRespect={Boolean(profileUserId && profileUserId !== currentUserId && !profile?.respected_by_me)}
+          onRespect={() => void handleRespectProfile()}
           onProfileNameChange={setProfileName}
           onProfileAvatarUrlChange={setProfileAvatarUrl}
           onProfilePositionChange={setProfilePosition}
@@ -1036,7 +1078,11 @@ export default function PlayerApp() {
           onNewPasswordChange={setNewPassword}
           onSubmitProfile={handleProfileSubmit}
           onSubmitPassword={handlePasswordSubmit}
-          onClose={() => setIsProfileOpen(false)}
+          onClose={() => {
+            setIsProfileOpen(false);
+            setProfileUserId(null);
+            setProfile(null);
+          }}
         />
       ) : null}
       {isRulesOpen ? <RulesDialog onClose={() => setIsRulesOpen(false)} /> : null}
@@ -1162,6 +1208,8 @@ export default function PlayerApp() {
           currentUserId={currentUserId}
           isSubmitting={isSubmitting}
           onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
+          onReactChatMessage={(messageId, emoji) => handleChatReaction(messageId, emoji)}
+          onOpenProfile={(userId) => void openProfile(userId)}
           onRefresh={handleManualRefresh}
           onBack={handleBackToGames}
           isLoading={isLoading}
@@ -1205,6 +1253,8 @@ export default function PlayerApp() {
           onSubmitGovernanceProposal={(payload) => void handleAction("submit_governance_proposal", payload)}
           onSkipGovernanceProposal={() => void handleAction("skip_governance_proposal")}
           onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
+          onReactChatMessage={(messageId, emoji) => handleChatReaction(messageId, emoji)}
+          onOpenProfile={(userId) => void openProfile(userId)}
           onRefresh={handleManualRefresh}
           isLoading={isLoading}
           currentUserId={currentUserId}
@@ -1229,6 +1279,8 @@ export default function PlayerApp() {
           onKick={(userId) => void handleAction("kick_player", { user_id: userId })}
           onBan={(userId) => void handleAction("ban_player", { user_id: userId })}
           onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
+          onReactChatMessage={(messageId, emoji) => handleChatReaction(messageId, emoji)}
+          onOpenProfile={(userId) => void openProfile(userId)}
           onRefresh={handleManualRefresh}
         />
       )}
@@ -1286,6 +1338,8 @@ function ProfileDialog(props: {
   newPassword: string;
   isLoading: boolean;
   isSubmitting: boolean;
+  canEdit: boolean;
+  canRespect: boolean;
   onProfileNameChange: (value: string) => void;
   onProfileAvatarUrlChange: (value: string) => void;
   onProfilePositionChange: (value: string) => void;
@@ -1293,6 +1347,7 @@ function ProfileDialog(props: {
   onNewPasswordChange: (value: string) => void;
   onSubmitProfile: (event: React.FormEvent) => void;
   onSubmitPassword: (event: React.FormEvent) => void;
+  onRespect: () => void;
   onClose: () => void;
 }) {
   const shownName = props.profileName || props.currentUser.name;
@@ -1310,7 +1365,7 @@ function ProfileDialog(props: {
               <p className="eyebrow">профиль</p>
               <h2 id="profile-title">{shownName}</h2>
               {shownPosition ? <small>{shownPosition}</small> : null}
-              <span>@{props.currentUser.login}</span>
+              {props.profile?.login || props.canEdit ? <span>@{props.profile?.login || props.currentUser.login}</span> : null}
             </div>
           </div>
           <button className="mini-button" onClick={props.onClose}>
@@ -1344,8 +1399,20 @@ function ProfileDialog(props: {
                 losses={stats?.director.losses ?? 0}
                 winrate={stats?.director.winrate ?? 0}
               />
+              <div className="profile-stat">
+                <span>Respect</span>
+                <strong>{props.profile?.respect_count ?? 0}</strong>
+                <small>{props.profile?.respected_by_me ? "Уже выражен" : "Уважение"}</small>
+              </div>
             </div>
 
+            {!props.canEdit ? (
+              <button className="primary-action" type="button" onClick={props.onRespect} disabled={!props.canRespect || props.isSubmitting}>
+                + respect
+              </button>
+            ) : null}
+
+            {props.canEdit ? (
             <form className="profile-form" onSubmit={props.onSubmitProfile}>
               <h3>Внешний вид</h3>
               <label>
@@ -1380,7 +1447,9 @@ function ProfileDialog(props: {
                 Сохранить профиль
               </button>
             </form>
+            ) : null}
 
+            {props.canEdit ? (
             <form className="profile-form" onSubmit={props.onSubmitPassword}>
               <h3>Пароль</h3>
               <label>
@@ -1406,6 +1475,7 @@ function ProfileDialog(props: {
                 Сменить пароль
               </button>
             </form>
+            ) : null}
           </>
         )}
       </section>
@@ -1508,6 +1578,8 @@ function GameLobbyScreen(props: {
   onKick: (userId: number) => void;
   onBan: (userId: number) => void;
   onSendChatMessage: (message: string) => Promise<void>;
+  onReactChatMessage: (messageId: number, emoji: string) => Promise<void>;
+  onOpenProfile: (userId: number) => void;
   onRefresh: () => Promise<void>;
 }) {
   const state = props.state;
@@ -1549,6 +1621,7 @@ function GameLobbyScreen(props: {
             canBan={props.canBan && player.user_id !== props.currentUserId}
             onKick={() => props.onKick(player.user_id)}
             onBan={() => props.onBan(player.user_id)}
+            onOpenProfile={() => props.onOpenProfile(player.user_id)}
             isSubmitting={props.isSubmitting}
           />
         ))}
@@ -1566,6 +1639,8 @@ function GameLobbyScreen(props: {
         canSend={props.canSendChatMessage}
         isSubmitting={props.isSubmitting}
         onSend={props.onSendChatMessage}
+        onReact={props.onReactChatMessage}
+        onOpenProfile={props.onOpenProfile}
       />
     </section>
   );
@@ -1609,6 +1684,8 @@ function StartedGameScreen(props: {
   onSubmitGovernanceProposal: (payload: Record<string, unknown>) => void;
   onSkipGovernanceProposal: () => void;
   onSendChatMessage: (message: string) => Promise<void>;
+  onReactChatMessage: (messageId: number, emoji: string) => Promise<void>;
+  onOpenProfile: (userId: number) => void;
   onRefresh: () => Promise<void>;
   isLoading: boolean;
   currentUserId: number;
@@ -1657,6 +1734,15 @@ function StartedGameScreen(props: {
     return !props.currentVotes.some((item) => item.user_id === userId && item.has_voted);
   };
   const displayedMajorOptions = props.majorVoteOptions.length ? props.majorVoteOptions : props.availableDecisions;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const majorUnlockMs = props.state.major_vote_unlocked_at ? new Date(props.state.major_vote_unlocked_at).getTime() : 0;
+  const majorVoteLocked = props.phase === "major_voting" && majorUnlockMs > nowMs;
+  const majorVoteSecondsLeft = Math.max(0, Math.ceil((majorUnlockMs - nowMs) / 1000));
+  const canSubmitMajorVote = props.canVote && !majorVoteLocked;
 
   return (
     <section className="game-stage">
@@ -1686,7 +1772,7 @@ function StartedGameScreen(props: {
                       }}
                       className={player.user_id === props.currentUserId ? "director-row is-current" : "director-row"}
                   >
-                    <div className="director-identity">
+                    <button className="director-identity profile-link" type="button" onClick={() => props.onOpenProfile(player.user_id)}>
                       <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
                       <div>
                         <strong>
@@ -1703,9 +1789,9 @@ function StartedGameScreen(props: {
                       </span>
                         <span>
                         Полномочия {formatShare(player.authority_bps)}
-                      </span>
+                        </span>
                       </div>
-                    </div>
+                    </button>
                     <div className="badge-row">
                       {player.is_ceo ? <span className="badge accent">CEO</span> : null}
                     </div>
@@ -1796,7 +1882,7 @@ function StartedGameScreen(props: {
                 <div>
                   <p className="eyebrow">голосование</p>
                 </div>
-                {props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
+                {majorVoteLocked ? <span className="wait-pill">Обсуждение: {majorVoteSecondsLeft}с</span> : props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
               </div>
 
               <div className="decision-grid">
@@ -1813,7 +1899,7 @@ function StartedGameScreen(props: {
                         .join(" ")}
                       key={decision}
                       onClick={() => props.onVote(decision)}
-                      disabled={!props.canVote || props.isSubmitting}
+                      disabled={!canSubmitMajorVote || props.isSubmitting}
                     >
                       <span>{isMoleSabotage ? "Диверсия" : isMoleTarget ? "Подкоп" : "Решение"}</span>
                       <strong>{decisionTitle(decision)}</strong>
@@ -1834,6 +1920,8 @@ function StartedGameScreen(props: {
               canSend={props.canSendChatMessage}
               isSubmitting={props.isSubmitting}
               onSend={props.onSendChatMessage}
+              onReact={props.onReactChatMessage}
+              onOpenProfile={props.onOpenProfile}
           />
         </div>
       </div>
@@ -1852,6 +1940,8 @@ function FinishScreen(props: {
   currentUserId: number;
   isSubmitting: boolean;
   onSendChatMessage: (message: string) => Promise<void>;
+  onReactChatMessage: (messageId: number, emoji: string) => Promise<void>;
+  onOpenProfile: (userId: number) => void;
   onRefresh: () => Promise<void>;
   onBack: () => void;
   isLoading: boolean;
@@ -1923,7 +2013,7 @@ function FinishScreen(props: {
           <p className="eyebrow">ключевые решения</p>
           <div className="final-decision-list">
             {acceptedReports.slice(-5).map((report, index) => (
-              <span key={`accepted-${report.round}`}>Решение {index + 1}: {report.decision ? decisionLabel(report.decision) : "принято"}</span>
+              <span className={finalDecisionClass(report.decision, summary)} key={`accepted-${report.round}`}>Решение {index + 1}: {report.decision ? decisionLabel(report.decision) : "принято"}</span>
             ))}
             {riskyReports.slice(-2).map((report, index) => (
               <span key={`risky-${report.round}`}>Спорное решение {index + 1}: {report.reason ?? "ничья"}</span>
@@ -1937,6 +2027,8 @@ function FinishScreen(props: {
         canSend={props.canSendChatMessage}
         isSubmitting={props.isSubmitting}
         onSend={props.onSendChatMessage}
+        onReact={props.onReactChatMessage}
+        onOpenProfile={props.onOpenProfile}
       />
       <div className="toolbar-actions centered-actions">
         <button className="primary-action" onClick={() => setReplayOpen(true)}>
@@ -2429,13 +2521,24 @@ function ChatPanel(props: {
   canSend: boolean;
   isSubmitting: boolean;
   onSend: (message: string) => Promise<void>;
+  onReact: (messageId: number, emoji: string) => Promise<void>;
+  onOpenProfile: (userId: number) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [historyMode, setHistoryMode] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [expandedSystemIds, setExpandedSystemIds] = useState<Record<number, boolean>>({});
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
   const emojiChoices = ["👍", "🤝", "💼", "📈", "⚠️", "🕵️", "✅", "🔥"];
+
+  function scrollToBottom() {
+    window.requestAnimationFrame(() => {
+      if (messagesRef.current) {
+        messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+      }
+    });
+  }
 
   const visibleMessages = useMemo(() => {
     if (!historyMode) {
@@ -2484,6 +2587,7 @@ function ChatPanel(props: {
     setDraft("");
     setEmojiOpen(false);
     window.requestAnimationFrame(() => inputRef.current?.focus());
+    scrollToBottom();
   }
 
   function insertEmoji(emoji: string) {
@@ -2517,7 +2621,7 @@ function ChatPanel(props: {
         </div>
       </div>
 
-      <div className="chat-messages">
+      <div className="chat-messages" ref={messagesRef}>
         {groupedMessages.map((group) => {
           const firstMessage = group.messages[0];
           const isMine = firstMessage.user_id === props.currentUserId;
@@ -2534,17 +2638,20 @@ function ChatPanel(props: {
           return (
             <article className={isMine ? "chat-message is-mine" : "chat-message"} key={group.id}>
               <div className="chat-message-head">
-                <span className="chat-author">
+                <button className="chat-author profile-link" type="button" onClick={() => props.onOpenProfile(firstMessage.user_id)}>
                   <UserAvatar name={firstMessage.user_name} avatarUrl={firstMessage.avatar_url} size="small" />
                   <span className="chat-author-text">
                     <strong>{firstMessage.user_name}</strong>
                     {firstMessage.company_position ? <small> · {firstMessage.company_position}</small> : null}
                   </span>
-                </span>
+                </button>
                 <small>{formatChatTime(firstMessage.created_at)}</small>
               </div>
               {group.messages.map((message) => (
-                <p key={`${message.id}-${message.created_at}`}>{message.message}</p>
+                <div className={message.kind === "official" ? "chat-message-line official-line" : "chat-message-line"} key={`${message.id}-${message.created_at}`}>
+                  <p>{message.message}</p>
+                  <ChatReactions message={message} choices={emojiChoices} disabled={props.isSubmitting} onReact={props.onReact} />
+                </div>
               ))}
             </article>
           );
@@ -2561,6 +2668,7 @@ function ChatPanel(props: {
           placeholder={props.canSend ? "Сообщение совету" : "Чат доступен участникам комнаты"}
           maxLength={500}
           disabled={!props.canSend || props.isSubmitting}
+          onFocus={scrollToBottom}
         />
         <div className="emoji-picker-wrap">
           <button
@@ -2589,6 +2697,36 @@ function ChatPanel(props: {
       </form>
       )}
     </section>
+  );
+}
+
+function ChatReactions(props: {
+  message: PublicChatMessage;
+  choices: string[];
+  disabled: boolean;
+  onReact: (messageId: number, emoji: string) => Promise<void>;
+}) {
+  const reactions = props.message.reactions ?? [];
+  return (
+    <div className="chat-reactions">
+      {props.choices.map((emoji) => {
+        const reaction = reactions.find((item) => item.emoji === emoji);
+        const count = reaction?.count ?? 0;
+        return (
+          <button
+            key={emoji}
+            type="button"
+            className={reaction?.reacted_by_me ? "reaction-button active" : "reaction-button"}
+            disabled={props.disabled}
+            onClick={() => props.onReact(props.message.id, emoji)}
+            title={emoji}
+          >
+            <span>{emoji}</span>
+            {count > 0 ? <strong>{count}</strong> : null}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2667,17 +2805,18 @@ function PlayerCard(props: {
   isSubmitting: boolean;
   onKick: () => void;
   onBan: () => void;
+  onOpenProfile: () => void;
 }) {
   return (
     <article className={props.player.user_id === props.currentUserId ? "player-card is-current" : "player-card"}>
-      <div className="player-card-heading">
+      <button className="player-card-heading profile-link" type="button" onClick={props.onOpenProfile}>
         <UserAvatar name={props.player.name} avatarUrl={props.player.avatar_url} size="medium" />
         <div>
           <h2>{props.player.name}</h2>
           {props.player.company_position ? <small>{props.player.company_position}</small> : null}
           <p>Доля {formatShare(props.player.share_bps)} · Полномочия {formatShare(props.player.authority_bps)}</p>
         </div>
-      </div>
+      </button>
       <div className="badge-row">
         {props.player.is_host ? <span className="badge">Host</span> : null}
         {props.player.is_ceo ? <span className="badge accent">CEO</span> : null}

@@ -115,6 +115,39 @@ paths:
         "200":
           description: Updated profile
 
+  /users/{id}/profile:
+    get:
+      summary: Get user profile and stats
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: User profile, stats, respect count, and whether the viewer has respected this user
+
+  /users/{id}/respect:
+    post:
+      summary: Give +respect to a user
+      description: A viewer can respect another user once. Repeating the request is idempotent.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Updated user profile
+
   /users:
     post:
       summary: Create user
@@ -365,7 +398,9 @@ paths:
   /games/ws:
     get:
       summary: Open live games list WebSocket
-      description: Authenticated WebSocket endpoint. Pass the JWT as `?token=...`. The server sends `{ "type": "games", "games": Game[] }` messages with the current lobby list after game list changes.
+      description: |
+        Authenticated WebSocket endpoint. Pass the JWT as `?token=...`.
+        The server sends `{ "type": "games", "games": Game[] }` messages with the current lobby list after game list changes.
       parameters:
         - in: query
           name: token
@@ -379,7 +414,9 @@ paths:
   /games/{id}/ws:
     get:
       summary: Open live game state WebSocket
-      description: Authenticated WebSocket endpoint. Pass the JWT as `?token=...`. The server sends personalized `{ "type": "state", "state": PublicGameState }` messages after game actions.
+      description: |
+        Authenticated WebSocket endpoint. Pass the JWT as `?token=...`.
+        The server sends personalized `{ "type": "state", "state": PublicGameState }` messages after game actions.
       parameters:
         - in: path
           name: id
@@ -453,6 +490,10 @@ components:
           type: string
         company_position:
           type: string
+        respect_count:
+          type: integer
+        respected_by_me:
+          type: boolean
         last_seen_at:
           type: string
           nullable: true
@@ -564,6 +605,7 @@ components:
             - kick_player
             - ban_player
             - send_chat_message
+            - react_chat_message
             - start_game
             - choose_memorandum
             - select_mole_objectives
@@ -572,13 +614,24 @@ components:
             - skip_governance_proposal
         payload:
           oneOf:
+            - $ref: "#/components/schemas/SendChatMessagePayload"
             - $ref: "#/components/schemas/ChooseMemorandumPayload"
             - $ref: "#/components/schemas/SelectMoleObjectivesPayload"
             - $ref: "#/components/schemas/VotePayload"
             - $ref: "#/components/schemas/SubmitGovernanceProposalPayload"
+            - $ref: "#/components/schemas/ReactChatMessagePayload"
             - type: object
               additionalProperties: true
       required: [type]
+
+    SendChatMessagePayload:
+      type: object
+      description: Chat message payload. Messages starting with `/me ` are posted as official statements from the player's effective position.
+      properties:
+        message:
+          type: string
+          maxLength: 500
+      required: [message]
 
     ChooseMemorandumPayload:
       type: object
@@ -616,6 +669,18 @@ components:
           type: integer
         abstain:
           type: boolean
+
+    ReactChatMessagePayload:
+      type: object
+      description: Toggles one emoji reaction for the acting player on a visible chat message.
+      properties:
+        message_id:
+          type: integer
+          format: int64
+        emoji:
+          type: string
+          enum: ["👍", "🤝", "💼", "📈", "⚠️", "🕵️", "✅", "🔥"]
+      required: [message_id, emoji]
 
     SubmitGovernanceProposalPayload:
       type: object
@@ -979,9 +1044,24 @@ components:
           enum: [success, warning, danger]
         collapsible:
           type: boolean
+        reactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicChatReaction"
         created_at:
           type: string
       required: [id, user_id, user_name, message, created_at]
+
+    PublicChatReaction:
+      type: object
+      properties:
+        emoji:
+          type: string
+        count:
+          type: integer
+        reacted_by_me:
+          type: boolean
+      required: [emoji, count, reacted_by_me]
 
     PublicMemorandum:
       type: object
@@ -1037,6 +1117,11 @@ components:
           description: Current 4-card major vote showcase. Falls back to available_decisions for legacy rounds.
           items:
             type: string
+        major_vote_unlocked_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Present for the first major vote when voting is locked for memorandum review.
         decision_types:
           type: object
           additionalProperties:
@@ -1098,10 +1183,10 @@ components:
           $ref: "#/components/schemas/PublicMemorandum"
         mole_victory_points:
           type: integer
-          description: Private. Present only for the Mole.
+          description: Present for the Mole from setup; revealed to all players after the sabotage decision is accepted.
         players_victory_points:
           type: integer
-          description: Private. Present only for the Mole.
+          description: Present for the Mole from setup; revealed to all players after the sabotage decision is accepted.
         final_summary:
           $ref: "#/components/schemas/PublicFinalSummary"
         replay_steps:

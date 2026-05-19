@@ -45,15 +45,17 @@ const (
 	EventMemorandumAssigned           = "memorandum_assigned"
 	EventPlayerReceivedShare          = "player_received_share"
 	EventPlayerAuthorityGranted       = "player_authority_granted"
+	EventPlayerPositionAssigned       = "player_position_assigned"
 	EventCEOSelected                  = "ceo_selected"
 	EventVotingRoundStarted           = "voting_round_started"
 
 	EventVoteSubmitted  = "vote_submitted"
 	EventVotingResolved = "voting_resolved"
 
-	EventDecisionAccepted = "decision_accepted"
-	EventDecisionRejected = "decision_rejected"
-	EventGameFinished     = "game_finished"
+	EventDecisionAccepted    = "decision_accepted"
+	EventDecisionRejected    = "decision_rejected"
+	EventGameFinished        = "game_finished"
+	EventChatReactionToggled = "chat_reaction_toggled"
 
 	EventGovernanceProposalPhaseStarted = "governance_proposal_phase_started"
 	EventGovernanceProposalSubmitted    = "governance_proposal_submitted"

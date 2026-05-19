@@ -49,6 +49,11 @@ func (e *Engine) CreateGame(ctx context.Context, title string, hostUserID int64)
 
 	gameModel := &models.Game{Title: title}
 	company := e.randomCompanyScenario()
+	briefingMessage := fmt.Sprintf(
+		"Совет директоров компании %s собирается на внеочередное заседание.\nНа кону — будущее корпорации.\nОдин из присутствующих работает против компании.\n\n%s",
+		company.Name,
+		company.Situation,
+	)
 	gameCreatedPayload := mustJSON(GameCreatedPayload{
 		HostUserID:       hostUserID,
 		Title:            title,
@@ -82,8 +87,8 @@ func (e *Engine) CreateGame(ctx context.Context, title string, hostUserID int64)
 				Kind:            "system",
 				SystemEventType: "company_briefing",
 				Title:           fmt.Sprintf("Компания: %s", company.Name),
-				Summary:         company.Situation,
-				Message:         fmt.Sprintf("%s. %s", company.Name, company.Situation),
+				Summary:         briefingMessage,
+				Message:         briefingMessage,
 				Details: []string{
 					fmt.Sprintf("Компания: %s", company.Name),
 					fmt.Sprintf("Ситуация: %s", company.Situation),
@@ -201,6 +206,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleBanPlayer(state, actor, action.Payload)
 	case ActionSendChatMessage:
 		return e.handleSendChatMessage(state, actor, action.Payload)
+	case ActionReactChatMessage:
+		return e.handleReactChatMessage(state, actor, action.Payload)
 	case ActionStartGame:
 		return e.handleStartGame(state, actor)
 	case ActionChooseMemorandum:

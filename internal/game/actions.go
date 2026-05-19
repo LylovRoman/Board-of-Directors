@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"agentbackend/internal/models"
 )
@@ -117,7 +118,8 @@ func (e *Engine) handleBanPlayer(state *GameState, actor *models.User, raw json.
 }
 
 func (e *Engine) handleSendChatMessage(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
-	if activePlayerByID(state, actor.ID) == nil {
+	player := activePlayerByID(state, actor.ID)
+	if player == nil {
 		return nil, errors.New("only active players can send chat messages")
 	}
 
@@ -132,6 +134,22 @@ func (e *Engine) handleSendChatMessage(state *GameState, actor *models.User, raw
 	if len([]rune(message)) > MaxChatMessageLength {
 		return nil, fmt.Errorf("message cannot exceed %d characters", MaxChatMessageLength)
 	}
+	kind := "user"
+	if strings.HasPrefix(message, "/me") {
+		text := strings.TrimSpace(strings.TrimPrefix(message, "/me"))
+		if text == "" {
+			return nil, errors.New("official statement text is required")
+		}
+		position := effectivePlayerPosition(player)
+		if position == "" {
+			return nil, errors.New("company position is required for official statements")
+		}
+		message = fmt.Sprintf("Официальное заявление %s: %s", position, text)
+		kind = "official"
+		if len([]rune(message)) > MaxChatMessageLength {
+			return nil, fmt.Errorf("message cannot exceed %d characters", MaxChatMessageLength)
+		}
+	}
 
 	return []models.Event{{
 		GameID:    state.GameID,
@@ -141,6 +159,40 @@ func (e *Engine) handleSendChatMessage(state *GameState, actor *models.User, raw
 		EventValue: mustJSON(ChatMessageSentPayload{
 			UserID:  actor.ID,
 			Message: message,
+			Kind:    kind,
+		}),
+	}}, nil
+}
+
+func (e *Engine) handleReactChatMessage(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
+	if activePlayerByID(state, actor.ID) == nil {
+		return nil, errors.New("only active players can react to chat messages")
+	}
+
+	var payload ReactChatMessageActionPayload
+	if err := decodeActionPayload(raw, &payload); err != nil {
+		return nil, err
+	}
+	if payload.MessageID <= 0 {
+		return nil, errors.New("message_id is required")
+	}
+	payload.Emoji = strings.TrimSpace(payload.Emoji)
+	if !isAllowedChatReaction(payload.Emoji) {
+		return nil, errors.New("unsupported chat reaction")
+	}
+	if !chatMessageExists(state, payload.MessageID) {
+		return nil, errors.New("chat message not found")
+	}
+
+	return []models.Event{{
+		GameID:    state.GameID,
+		UserID:    &actor.ID,
+		ActorName: actor.Name,
+		EventType: models.EventChatReactionToggled,
+		EventValue: mustJSON(ChatReactionToggledPayload{
+			MessageID: payload.MessageID,
+			UserID:    actor.ID,
+			Emoji:     payload.Emoji,
 		}),
 	}}, nil
 }
@@ -190,6 +242,15 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 			EventType:  models.EventPlayerReceivedShare,
 			EventValue: mustJSON(PlayerReceivedSharePayload{UserID: player.UserID, ShareBPS: shares[i]}),
 		})
+		if strings.TrimSpace(player.Position) == "" {
+			events = append(events, models.Event{
+				GameID:     state.GameID,
+				UserID:     &actor.ID,
+				ActorName:  actor.Name,
+				EventType:  models.EventPlayerPositionAssigned,
+				EventValue: mustJSON(PlayerPositionAssignedPayload{UserID: player.UserID, Position: e.randomGeneratedPosition()}),
+			})
+		}
 	}
 
 	events = append(events,
@@ -267,6 +328,7 @@ func (e *Engine) handleSelectMoleObjectives(state *GameState, actor *models.User
 	}
 
 	showcase := e.majorShowcase(state.Available, targets, sabotage)
+	unlockedAt := time.Now().UTC().Add(FirstMajorVoteLock)
 	events := []models.Event{{
 		GameID:     state.GameID,
 		UserID:     &actor.ID,
@@ -280,7 +342,7 @@ func (e *Engine) handleSelectMoleObjectives(state *GameState, actor *models.User
 		UserID:     &actor.ID,
 		ActorName:  actor.Name,
 		EventType:  models.EventVotingRoundStarted,
-		EventValue: mustJSON(VotingRoundStartedPayload{Round: 1, ShowcaseDecisions: showcase}),
+		EventValue: mustJSON(VotingRoundStartedPayload{Round: 1, ShowcaseDecisions: showcase, UnlockedAt: &unlockedAt}),
 	})
 	return events, nil
 }
@@ -299,6 +361,9 @@ func (e *Engine) handleVote(state *GameState, actor *models.User, raw json.RawMe
 	player := activePlayerByID(state, actor.ID)
 	if player == nil {
 		return nil, errors.New("only active players can vote")
+	}
+	if state.MajorVoteUnlockedAt != nil && time.Now().UTC().Before(*state.MajorVoteUnlockedAt) {
+		return nil, errors.New("major voting is locked while directors review memorandums")
 	}
 	var payload VoteActionPayload
 	if err := decodeActionPayload(raw, &payload); err != nil {
@@ -1199,10 +1264,12 @@ func formatMajorVoteSystemMessage(state *GameState, outcome string, decision str
 
 	companyName := companyNameForChat(state)
 	summary := fmt.Sprintf("%s, раунд %d: решение не принято (%s).", companyName, state.CurrentRound, reason)
+	summary = fmt.Sprintf("Раунд %d: решение не принято (%s). Совет уходит на повторное обсуждение.", state.CurrentRound, reason)
 	systemEventType := "major_vote_rejected"
 	tone := "warning"
 	if outcome == "accepted" {
 		summary = fmt.Sprintf("%s, раунд %d: принято %s.", companyName, state.CurrentRound, decisionLabelForChat(decision))
+		summary = majorVoteNarrative(state, decision)
 		systemEventType = "major_vote_accepted"
 		tone = "success"
 		if rewardDetail := majorDecisionRewardDetail(state, decision); rewardDetail != "" {
@@ -1261,15 +1328,17 @@ func formatGovernanceSystemMessage(state *GameState, outcome string, proposalID 
 
 	companyName := companyNameForChat(state)
 	summary := fmt.Sprintf("%s, раунд %d: маневр не принят (%s).", companyName, state.GovernanceRound, reason)
+	summary = fmt.Sprintf("Раунд %d: корпоративный маневр не принят (%s). Баланс влияния остается прежним.", state.GovernanceRound, reason)
 	systemEventType := "governance_rejected"
 	tone := "warning"
 	if outcome == "accepted" {
 		summary = fmt.Sprintf("%s, раунд %d: принято %s.", companyName, state.GovernanceRound, describeGovernanceProposalForChat(state, state.GovernanceProposals[proposalID]))
+		summary = governanceVoteNarrative(state, proposalID)
 		systemEventType = "governance_accepted"
 		tone = "success"
 	}
 	return ChatMessageSentPayload{
-		Title:           fmt.Sprintf("Итоги governance: %s", companyName),
+		Title:           "Итоги governance",
 		Summary:         summary,
 		Message:         summary,
 		Details:         details,
@@ -1429,11 +1498,99 @@ func playerNameWithPositionForChat(state *GameState, userID int64, fallbackName 
 		name = playerNameForChat(state, userID)
 	}
 	if state != nil {
-		if player := state.Players[userID]; player != nil && player.Position != "" {
-			return fmt.Sprintf("%s, %s", name, player.Position)
+		if player := state.Players[userID]; player != nil && effectivePlayerPosition(player) != "" {
+			return fmt.Sprintf("%s, %s", name, effectivePlayerPosition(player))
 		}
 	}
 	return name
+}
+
+func effectivePlayerPosition(player *PlayerState) string {
+	if player == nil {
+		return ""
+	}
+	if player.IsCEO {
+		return "CEO"
+	}
+	return strings.TrimSpace(player.Position)
+}
+
+func (e *Engine) randomGeneratedPosition() string {
+	e.rngMu.Lock()
+	defer e.rngMu.Unlock()
+	return generatedPositions[e.rng.Intn(len(generatedPositions))]
+}
+
+func isAllowedChatReaction(emoji string) bool {
+	switch emoji {
+	case "👍", "🤝", "💼", "📈", "⚠️", "🕵️", "✅", "🔥":
+		return true
+	default:
+		return false
+	}
+}
+
+func chatMessageExists(state *GameState, messageID int64) bool {
+	if state == nil {
+		return false
+	}
+	for _, message := range state.ChatMessages {
+		if message.ID == messageID {
+			return true
+		}
+	}
+	return false
+}
+
+func majorVoteNarrative(state *GameState, decision string) string {
+	if state != nil && decision == state.MoleSabotage {
+		if text := majorVoteSabotageNarratives[decision]; text != "" {
+			return text
+		}
+	}
+	if text := majorVoteCleanNarratives[decision]; text != "" {
+		return text
+	}
+	return fmt.Sprintf("Совет принял решение %s. Влияние сторонников инициативы растет.", decisionLabelForChat(decision))
+}
+
+var majorVoteCleanNarratives = map[string]string{
+	"A": "Совет одобрил выпуск облигаций. Капитал приходит вовремя, а сторонники инициативы укрепляют позиции.",
+	"B": "Совет одобрил агрессивный выход в новый регион. Рынок в восторге. Регуляторы пока молчат. Те, кто поддержал инициативу, усиливают своё влияние в совете.",
+	"C": "Совет утвердил выплату дивидендов. Акционеры довольны, а сторонники решения получают больше веса в кулуарах.",
+	"D": "Совет дал зеленый свет экспериментальному продукту. Команда получает шанс на рывок, а инициаторы выглядят смелыми визионерами.",
+	"E": "Совет поддержал сделку слияния. Переговорная позиция компании крепнет, а голоса за сделку звучат убедительнее.",
+	"F": "Совет одобрил оптимизацию персонала. Расходы взяты под контроль, а сторонники жесткой дисциплины набирают влияние.",
+	"G": "Совет принял агрессивную налоговую стратегию. Финансовая модель выглядит легче, а ее защитники получают дополнительные полномочия.",
+	"H": "Совет согласовал обратный выкуп акций. Доля капитала концентрируется, а сторонники решения становятся заметнее.",
+}
+
+var majorVoteSabotageNarratives = map[string]string{
+	"A": "Совет протолкнул выпуск облигаций на токсичных условиях. Долг уже давит на компанию, а доверие инвесторов трещит.",
+	"B": "Совет сорвался в чужой регион без подготовки. Рынок встречает компанию штрафами, утечками бюджета и холодной прессой.",
+	"C": "Совет вытащил деньги в дивиденды в самый плохой момент. Резерв проседает, а операционные риски остаются без прикрытия.",
+	"D": "Совет запустил сырой экспериментальный продукт. Первые пользователи видят сбои, команда тушит пожар вместо развития.",
+	"E": "Совет одобрил слияние с проблемным активом. На баланс заходят чужие долги, конфликты и токсичные обязательства.",
+	"F": "Совет провел оптимизацию вслепую. Из компании уходят критичные люди, процессы рушатся, а экономия выглядит фикцией.",
+	"G": "Совет принял налоговую схему на грани. Регуляторы уже задают вопросы, а юридический риск становится публичным.",
+	"H": "Совет запустил обратный выкуп в неподходящий момент. Компания сжигает ликвидность, пока реальные угрозы остаются без финансирования.",
+}
+
+func governanceVoteNarrative(state *GameState, proposalID int) string {
+	proposal := state.GovernanceProposals[proposalID]
+	if proposal == nil {
+		return fmt.Sprintf("Раунд %d: корпоративный маневр принят. Расстановка сил меняется.", state.GovernanceRound)
+	}
+	switch proposal.ProposalType {
+	case GovernanceProposalShareTransfer:
+		return fmt.Sprintf("Раунд %d: совет утвердил передачу доли. Влияние переходит от %s к %s.", state.GovernanceRound, playerNameForChat(state, proposal.FromUserID), playerNameForChat(state, proposal.ToUserID))
+	case GovernanceProposalTreasuryGrant:
+		return fmt.Sprintf("Раунд %d: совет выделил долю из резерва. %s получает дополнительный вес в капитале.", state.GovernanceRound, playerNameForChat(state, proposal.TargetUserID))
+	case GovernanceProposalTreasuryBuyback:
+		return fmt.Sprintf("Раунд %d: совет провел выкуп в резерв. Доля %s сокращена в пользу компании.", state.GovernanceRound, playerNameForChat(state, proposal.TargetUserID))
+	default:
+		return fmt.Sprintf("Раунд %d: корпоративный маневр принят. Расстановка сил меняется.", state.GovernanceRound)
+	}
 }
 
 func companyNameForChat(state *GameState) string {
@@ -1608,6 +1765,20 @@ func cloneState(state *GameState) *GameState {
 		cloned.Available[k] = v
 	}
 	cloned.MajorVoteOptions = append([]string(nil), state.MajorVoteOptions...)
+	if state.MajorVoteUnlockedAt != nil {
+		unlockedAt := *state.MajorVoteUnlockedAt
+		cloned.MajorVoteUnlockedAt = &unlockedAt
+	}
+	cloned.ChatReactions = make(map[int64]map[string]map[int64]bool, len(state.ChatReactions))
+	for messageID, reactions := range state.ChatReactions {
+		cloned.ChatReactions[messageID] = make(map[string]map[int64]bool, len(reactions))
+		for emoji, users := range reactions {
+			cloned.ChatReactions[messageID][emoji] = make(map[int64]bool, len(users))
+			for userID, reacted := range users {
+				cloned.ChatReactions[messageID][emoji][userID] = reacted
+			}
+		}
+	}
 	cloned.AcceptedOrder = append([]string(nil), state.AcceptedOrder...)
 	cloned.MoleTargets = append([]string(nil), state.MoleTargets...)
 	cloned.MoleSabotage = state.MoleSabotage

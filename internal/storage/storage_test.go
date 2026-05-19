@@ -28,6 +28,7 @@ func newTestPostgres(t *testing.T) *Postgres {
 	_, err = db.db.ExecContext(ctx, `
 		DROP TABLE IF EXISTS events;
 		DROP TABLE IF EXISTS games;
+		DROP TABLE IF EXISTS user_respects;
 		DROP TABLE IF EXISTS users;
 
 		CREATE TABLE users (
@@ -60,6 +61,14 @@ func newTestPostgres(t *testing.T) *Postgres {
 			event_type VARCHAR(255) NOT NULL,
 			event_value TEXT,
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		);
+
+		CREATE TABLE user_respects (
+			giver_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			receiver_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (giver_user_id, receiver_user_id),
+			CONSTRAINT user_respects_no_self CHECK (giver_user_id <> receiver_user_id)
 		);
 	`)
 	if err != nil {
@@ -170,6 +179,37 @@ func TestUserAuthProfileFields(t *testing.T) {
 	}
 	if got.Name != "Alice Updated" || got.AvatarURL != "https://example.com/new.png" || got.Position != "Chief Strategy Officer" || got.PasswordHash != "new-hash" {
 		t.Fatalf("expected updated fields, got %+v", got)
+	}
+}
+
+func TestUserRespectPersistence(t *testing.T) {
+	store := newTestPostgres(t)
+	ctx := context.Background()
+
+	alice := &models.User{Login: "alice", Name: "Alice"}
+	bob := &models.User{Login: "bob", Name: "Bob"}
+	if err := store.CreateUser(ctx, alice); err != nil {
+		t.Fatalf("CreateUser alice: %v", err)
+	}
+	if err := store.CreateUser(ctx, bob); err != nil {
+		t.Fatalf("CreateUser bob: %v", err)
+	}
+	if err := store.GiveUserRespect(ctx, alice.ID, bob.ID); err != nil {
+		t.Fatalf("GiveUserRespect: %v", err)
+	}
+	if err := store.GiveUserRespect(ctx, alice.ID, bob.ID); err != nil {
+		t.Fatalf("GiveUserRespect repeat: %v", err)
+	}
+	count, err := store.CountUserRespect(ctx, bob.ID)
+	if err != nil {
+		t.Fatalf("CountUserRespect: %v", err)
+	}
+	respected, err := store.HasUserRespect(ctx, alice.ID, bob.ID)
+	if err != nil {
+		t.Fatalf("HasUserRespect: %v", err)
+	}
+	if count != 1 || !respected {
+		t.Fatalf("expected one respect from alice to bob, count=%d respected=%v", count, respected)
 	}
 }
 

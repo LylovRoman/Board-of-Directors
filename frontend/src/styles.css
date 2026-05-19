@@ -615,6 +615,19 @@ code {
   min-width: 0;
 }
 
+.profile-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-link:hover strong {
+  color: #f2cf85;
+}
+
 .player-card-heading > div,
 .identity-name > h2,
 .director-identity > div,
@@ -1427,6 +1440,46 @@ button.decision-card:disabled,
   overflow-wrap: anywhere;
 }
 
+.chat-message-line {
+  display: grid;
+  gap: 5px;
+}
+
+.official-line p {
+  color: #f2cf85;
+  font-weight: 900;
+}
+
+.chat-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.reaction-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid rgba(246, 241, 232, 0.12);
+  border-radius: 999px;
+  background: rgba(246, 241, 232, 0.06);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.reaction-button.active {
+  border-color: rgba(77, 159, 114, 0.62);
+  background: rgba(77, 159, 114, 0.18);
+}
+
+.reaction-button strong {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1859,8 +1912,21 @@ button.decision-card:disabled,
 .final-decision-list span,
 .final-stat-row {
   padding: 10px;
+  border: 1px solid rgba(246, 241, 232, 0.1);
   border-radius: 8px;
   background: rgba(246, 241, 232, 0.07);
+}
+
+.final-decision-list .final-decision-clean {
+  border-color: rgba(77, 159, 114, 0.76);
+}
+
+.final-decision-list .final-decision-podkop {
+  border-color: rgba(255, 151, 51, 0.82);
+}
+
+.final-decision-list .final-decision-sabotage {
+  border-color: rgba(255, 48, 64, 0.9);
 }
 
 .final-stat-row {

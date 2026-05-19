@@ -24,6 +24,9 @@ type Storage interface {
 	UpdateUserProfile(ctx context.Context, user *models.User) error
 	UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error
 	TouchUserLastSeen(ctx context.Context, id int64, minInterval time.Duration) error
+	GiveUserRespect(ctx context.Context, giverID int64, receiverID int64) error
+	CountUserRespect(ctx context.Context, userID int64) (int, error)
+	HasUserRespect(ctx context.Context, giverID int64, receiverID int64) (bool, error)
 	DeleteUser(ctx context.Context, id int64) error
 
 	CreateGame(ctx context.Context, game *models.Game) error
@@ -265,6 +268,46 @@ func (p *Postgres) TouchUserLastSeen(ctx context.Context, id int64, minInterval 
 
 	_, err = res.RowsAffected()
 	return err
+}
+
+func (p *Postgres) GiveUserRespect(ctx context.Context, giverID int64, receiverID int64) error {
+	if giverID <= 0 || receiverID <= 0 {
+		return errors.New("giver_id and receiver_id are required")
+	}
+	_, err := p.db.ExecContext(ctx, `
+		INSERT INTO user_respects (giver_user_id, receiver_user_id)
+		VALUES ($1, $2)
+		ON CONFLICT (giver_user_id, receiver_user_id) DO NOTHING
+	`, giverID, receiverID)
+	return err
+}
+
+func (p *Postgres) CountUserRespect(ctx context.Context, userID int64) (int, error) {
+	if userID <= 0 {
+		return 0, errors.New("user_id is required")
+	}
+	var count int
+	err := p.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM user_respects
+		WHERE receiver_user_id = $1
+	`, userID).Scan(&count)
+	return count, err
+}
+
+func (p *Postgres) HasUserRespect(ctx context.Context, giverID int64, receiverID int64) (bool, error) {
+	if giverID <= 0 || receiverID <= 0 {
+		return false, errors.New("giver_id and receiver_id are required")
+	}
+	var exists bool
+	err := p.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM user_respects
+			WHERE giver_user_id = $1 AND receiver_user_id = $2
+		)
+	`, giverID, receiverID).Scan(&exists)
+	return exists, err
 }
 
 func (p *Postgres) DeleteUser(ctx context.Context, id int64) error {

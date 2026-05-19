@@ -26,15 +26,17 @@ type userStatsResponse struct {
 }
 
 type profileResponse struct {
-	ID         int64             `json:"id"`
-	Login      string            `json:"login,omitempty"`
-	Name       string            `json:"name"`
-	AvatarURL  string            `json:"avatar_url,omitempty"`
-	Position   string            `json:"company_position,omitempty"`
-	LastSeenAt *time.Time        `json:"last_seen_at,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  *time.Time        `json:"updated_at,omitempty"`
-	Stats      userStatsResponse `json:"stats"`
+	ID            int64             `json:"id"`
+	Login         string            `json:"login,omitempty"`
+	Name          string            `json:"name"`
+	AvatarURL     string            `json:"avatar_url,omitempty"`
+	Position      string            `json:"company_position,omitempty"`
+	LastSeenAt    *time.Time        `json:"last_seen_at,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     *time.Time        `json:"updated_at,omitempty"`
+	Stats         userStatsResponse `json:"stats"`
+	RespectCount  int               `json:"respect_count"`
+	RespectedByMe bool              `json:"respected_by_me"`
 }
 
 type leaderboardEntryResponse struct {
@@ -60,7 +62,8 @@ type playerResult struct {
 }
 
 func (s *Server) handleMyProfile(w http.ResponseWriter, r *http.Request) {
-	profile, err := s.profileForUser(r.Context(), currentUser(r))
+	user := currentUser(r)
+	profile, err := s.profileForUser(r.Context(), user, user.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -81,7 +84,35 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, err := s.profileForUser(r.Context(), user)
+	profile, err := s.profileForUser(r.Context(), user, currentUserID(r))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profile": profile})
+}
+
+func (s *Server) handleRespectUser(w http.ResponseWriter, r *http.Request) {
+	id, err := readIDParam(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid user id"})
+		return
+	}
+	viewerID := currentUserID(r)
+	if id == viewerID {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "cannot respect yourself"})
+		return
+	}
+	user, err := s.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
+		return
+	}
+	if err := s.store.GiveUserRespect(r.Context(), viewerID, id); err != nil {
+		writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
+		return
+	}
+	profile, err := s.profileForUser(r.Context(), user, viewerID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
@@ -156,12 +187,27 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, leaderboardResponse{Period: period, Entries: entries})
 }
 
-func (s *Server) profileForUser(ctx context.Context, user *models.User) (profileResponse, error) {
+func (s *Server) profileForUser(ctx context.Context, user *models.User, viewerID int64) (profileResponse, error) {
 	statsByUser, err := s.statsForAllUsers(ctx, nil)
 	if err != nil {
 		return profileResponse{}, err
 	}
-	return profileFromUser(user, statsByUser[user.ID]), nil
+	profile := profileFromUser(user, statsByUser[user.ID])
+	if user != nil && user.ID > 0 {
+		respectCount, err := s.store.CountUserRespect(ctx, user.ID)
+		if err != nil {
+			return profileResponse{}, err
+		}
+		profile.RespectCount = respectCount
+		if viewerID > 0 && viewerID != user.ID {
+			respectedByMe, err := s.store.HasUserRespect(ctx, viewerID, user.ID)
+			if err != nil {
+				return profileResponse{}, err
+			}
+			profile.RespectedByMe = respectedByMe
+		}
+	}
+	return profile, nil
 }
 
 func profileFromUser(user *models.User, stats userStatsResponse) profileResponse {
@@ -301,7 +347,9 @@ func (s *Server) decoratePublicState(ctx context.Context, state *game.PublicGame
 	}
 	for i := range state.Players {
 		state.Players[i].AvatarURL = avatars[state.Players[i].UserID]
-		state.Players[i].Position = positions[state.Players[i].UserID]
+		if state.Status == game.GameStatusLobby {
+			state.Players[i].Position = positions[state.Players[i].UserID]
+		}
 		if state.Me.UserID == state.Players[i].UserID {
 			state.Me.AvatarURL = state.Players[i].AvatarURL
 			state.Me.Position = state.Players[i].Position
@@ -309,7 +357,9 @@ func (s *Server) decoratePublicState(ctx context.Context, state *game.PublicGame
 	}
 	for i := range state.ChatMessages {
 		state.ChatMessages[i].AvatarURL = avatars[state.ChatMessages[i].UserID]
-		state.ChatMessages[i].UserPosition = positions[state.ChatMessages[i].UserID]
+		if state.Status == game.GameStatusLobby {
+			state.ChatMessages[i].UserPosition = positions[state.ChatMessages[i].UserID]
+		}
 	}
 }
 

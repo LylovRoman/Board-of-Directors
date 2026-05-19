@@ -21,9 +21,10 @@ import (
 )
 
 type mockStorage struct {
-	users  []models.User
-	games  []models.Game
-	events []models.Event
+	users    []models.User
+	games    []models.Game
+	events   []models.Event
+	respects map[int64]map[int64]bool
 }
 
 func (m *mockStorage) CreateUser(ctx context.Context, user *models.User) error {
@@ -115,6 +116,25 @@ func (m *mockStorage) TouchUserLastSeen(ctx context.Context, id int64, minInterv
 		}
 	}
 	return errNotFound("user")
+}
+
+func (m *mockStorage) GiveUserRespect(ctx context.Context, giverID int64, receiverID int64) error {
+	if m.respects == nil {
+		m.respects = map[int64]map[int64]bool{}
+	}
+	if m.respects[receiverID] == nil {
+		m.respects[receiverID] = map[int64]bool{}
+	}
+	m.respects[receiverID][giverID] = true
+	return nil
+}
+
+func (m *mockStorage) CountUserRespect(ctx context.Context, userID int64) (int, error) {
+	return len(m.respects[userID]), nil
+}
+
+func (m *mockStorage) HasUserRespect(ctx context.Context, giverID int64, receiverID int64) (bool, error) {
+	return m.respects[receiverID][giverID], nil
 }
 
 func (m *mockStorage) DeleteUser(ctx context.Context, id int64) error {
@@ -342,6 +362,36 @@ func TestUpdateMyProfileStoresCompanyPosition(t *testing.T) {
 	}
 	if resp.User.Position != "Финансовый директор" || store.users[0].Position != "Финансовый директор" {
 		t.Fatalf("expected profile position to be saved, resp=%+v store=%+v", resp.User, store.users[0])
+	}
+}
+
+func TestRespectUserIsIdempotentAndBlocksSelf(t *testing.T) {
+	alice := models.User{ID: 1, Login: "alice", Name: "Alice"}
+	bob := models.User{ID: 2, Login: "bob", Name: "Bob"}
+	store := &mockStorage{users: []models.User{alice, bob}}
+	router := NewRouter(store, "test-secret")
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/users/2/respect", bytes.NewReader([]byte(`{}`)))
+		req.Header.Set("Content-Type", "application/json")
+		setAuth(req, t, alice)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, rec.Code, rec.Body.String())
+		}
+	}
+	if len(store.respects[2]) != 1 {
+		t.Fatalf("expected one respect entry, got %+v", store.respects)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/users/1/respect", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, alice)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected self respect to fail, got %d", rec.Code)
 	}
 }
 

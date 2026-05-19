@@ -63,6 +63,7 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 		r.Get("/me/profile", s.handleMyProfile)
 		r.Put("/me/profile", s.handleUpdateMyProfile)
 		r.Get("/{id}/profile", s.handleUserProfile)
+		r.Post("/{id}/respect", s.handleRespectUser)
 		r.Post("/", s.handleCreateUser)
 		r.Get("/", s.handleListUsers)
 		r.Get("/{id}", s.handleGetUser)
@@ -351,7 +352,7 @@ func (s *Server) listGameItems(ctx context.Context, viewerID int64) ([]gameListI
 					UserID:    userID,
 					Name:      player.Name,
 					AvatarURL: usersByID[userID].AvatarURL,
-					Position:  usersByID[userID].Position,
+					Position:  gameListPlayerPosition(state.Status, player, usersByID[userID].Position),
 					IsHost:    player.IsHost,
 					IsCEO:     player.IsCEO,
 				})
@@ -368,6 +369,19 @@ func (s *Server) listGameItems(ctx context.Context, viewerID int64) ([]gameListI
 	}
 
 	return items, nil
+}
+
+func gameListPlayerPosition(status game.GameStatus, player *game.PlayerState, profilePosition string) string {
+	if player != nil && player.IsCEO {
+		return "CEO"
+	}
+	if status == game.GameStatusLobby {
+		return profilePosition
+	}
+	if player != nil {
+		return player.Position
+	}
+	return profilePosition
 }
 
 type gameListItem struct {

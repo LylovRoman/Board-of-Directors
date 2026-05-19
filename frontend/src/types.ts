@@ -4,6 +4,7 @@ export type ActionType =
   | "kick_player"
   | "ban_player"
   | "send_chat_message"
+  | "react_chat_message"
   | "start_game"
   | "choose_memorandum"
   | "select_mole_objectives"
@@ -115,7 +116,14 @@ export interface PublicChatMessage {
   details?: string[] | null;
   tone?: "success" | "warning" | "danger" | string;
   collapsible?: boolean;
+  reactions?: PublicChatReaction[] | null;
   created_at: string;
+}
+
+export interface PublicChatReaction {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
 }
 
 export interface PublicMemorandum {
@@ -248,6 +256,7 @@ export interface PublicGameState {
   treasury_share_bps: number;
   available_decisions?: string[] | null;
   major_vote_options?: string[] | null;
+  major_vote_unlocked_at?: string | null;
   decision_types?: Record<string, DecisionType> | null;
   accepted_decisions?: string[] | null;
   rejected_decisions?: string[] | null;
@@ -311,6 +320,8 @@ export interface UserStats {
 
 export interface Profile extends User {
   stats: UserStats;
+  respect_count: number;
+  respected_by_me: boolean;
 }
 
 export interface ProfileResponse {
