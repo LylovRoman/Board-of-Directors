@@ -1465,7 +1465,7 @@ button.decision-card:disabled,
 }
 
 .chat-reactions {
-  display: flex;
+  display: none;
   flex-wrap: wrap;
   gap: 4px;
 }
