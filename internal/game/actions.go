@@ -1257,19 +1257,16 @@ func formatMajorVoteSystemMessage(state *GameState, outcome string, decision str
 		}
 		names := make([]string, 0, len(vote.Voters))
 		for _, voter := range vote.Voters {
-			names = append(names, playerNameWithPositionForChat(state, voter.UserID, voter.Name))
+			names = append(names, playerNameOrFallbackForChat(state, voter.UserID, voter.Name))
 		}
 		details = append(details, fmt.Sprintf("%s: %s (%s)", label, formatBPS(vote.ShareBPS), strings.Join(names, ", ")))
 	}
 
-	companyName := companyNameForChat(state)
-	summary := fmt.Sprintf("%s, раунд %d: решение не принято (%s).", companyName, state.CurrentRound, reason)
-	summary = fmt.Sprintf("Раунд %d: решение не принято (%s). Совет уходит на повторное обсуждение.", state.CurrentRound, reason)
+	summary := fmt.Sprintf("Раунд %d: решение не принято (%s). Совет уходит на повторное обсуждение.", state.CurrentRound, reason)
 	systemEventType := "major_vote_rejected"
 	tone := "warning"
 	titleValue := "не принято"
 	if outcome == "accepted" {
-		summary = fmt.Sprintf("%s, раунд %d: принято %s.", companyName, state.CurrentRound, decisionLabelForChat(decision))
 		summary = majorVoteNarrative(state, decision)
 		systemEventType = "major_vote_accepted"
 		tone = "success"
@@ -1297,7 +1294,7 @@ func majorDecisionRewardDetail(state *GameState, decision string) string {
 
 	names := make([]string, 0, len(reward.Voters))
 	for _, voter := range reward.Voters {
-		names = append(names, playerNameWithPositionForChat(state, voter.UserID, voter.Name))
+		names = append(names, playerNameOrFallbackForChat(state, voter.UserID, voter.Name))
 	}
 
 	rewardName := "доле"
@@ -1323,18 +1320,15 @@ func formatGovernanceSystemMessage(state *GameState, outcome string, proposalID 
 		}
 		voters := make([]string, 0, len(vote.Voters))
 		for _, voter := range vote.Voters {
-			voters = append(voters, playerNameWithPositionForChat(state, voter.UserID, voter.Name))
+			voters = append(voters, playerNameOrFallbackForChat(state, voter.UserID, voter.Name))
 		}
 		details = append(details, fmt.Sprintf("%s: %s (%s)", label, formatBPS(vote.VotingPowerBPS), strings.Join(voters, ", ")))
 	}
 
-	companyName := companyNameForChat(state)
-	summary := fmt.Sprintf("%s, раунд %d: маневр не принят (%s).", companyName, state.GovernanceRound, reason)
-	summary = fmt.Sprintf("Раунд %d: корпоративный маневр не принят (%s). Баланс влияния остается прежним.", state.GovernanceRound, reason)
+	summary := fmt.Sprintf("Раунд %d: корпоративный маневр не принят (%s). Баланс влияния остается прежним.", state.GovernanceRound, reason)
 	systemEventType := "governance_rejected"
 	tone := "warning"
 	if outcome == "accepted" {
-		summary = fmt.Sprintf("%s, раунд %d: принято %s.", companyName, state.GovernanceRound, describeGovernanceProposalForChat(state, state.GovernanceProposals[proposalID]))
 		summary = governanceVoteNarrative(state, proposalID)
 		systemEventType = "governance_accepted"
 		tone = "success"
@@ -1354,7 +1348,7 @@ func sabotageAcceptedSystemMessage(state *GameState, decision string) ChatMessag
 	companyName := companyNameForChat(state)
 	summary := fmt.Sprintf("В отчетах %s появились строки, которые никто не хочет подписывать. Компания явно идет не туда.", companyName)
 	return ChatMessageSentPayload{
-		Title:           fmt.Sprintf("Тревожный сигнал: %s", companyName),
+		Title:           "Тревожный сигнал",
 		Summary:         summary,
 		Message:         summary,
 		Details:         []string{fmt.Sprintf("Принята диверсия: %s.", decisionLabelForChat(decision))},
@@ -1366,7 +1360,7 @@ func sabotageAcceptedSystemMessage(state *GameState, decision string) ChatMessag
 
 func moleRevealSystemMessage(state *GameState) ChatMessageSentPayload {
 	companyName := companyNameForChat(state)
-	moleName := playerNameWithPositionForChat(state, state.MoleUserID, playerNameForChat(state, state.MoleUserID))
+	moleName := playerNameForChat(state, state.MoleUserID)
 	targets := make([]string, 0, len(state.MoleTargets))
 	for _, target := range state.MoleTargets {
 		targets = append(targets, decisionLabelForChat(target))
@@ -1380,7 +1374,7 @@ func moleRevealSystemMessage(state *GameState) ChatMessageSentPayload {
 	}
 	summary := fmt.Sprintf("%s: %s был кротом. Все цели раскрыты.", companyName, moleName)
 	return ChatMessageSentPayload{
-		Title:           fmt.Sprintf("Крот раскрыт: %s", companyName),
+		Title:           "Крот раскрыт",
 		Summary:         summary,
 		Message:         summary,
 		Details:         details,
@@ -1412,7 +1406,7 @@ func formatMajorVoteSummary(state *GameState, outcome string, decision string, r
 		}
 		names := make([]string, 0, len(vote.Voters))
 		for _, voter := range vote.Voters {
-			names = append(names, playerNameWithPositionForChat(state, voter.UserID, voter.Name))
+			names = append(names, playerNameOrFallbackForChat(state, voter.UserID, voter.Name))
 		}
 		builder.WriteString(fmt.Sprintf("%s — %s (%s)", label, formatBPS(vote.ShareBPS), strings.Join(names, ", ")))
 	}
@@ -1449,7 +1443,7 @@ func formatGovernanceSummary(state *GameState, outcome string, proposalID int, r
 		for _, voter := range vote.Voters {
 			voters = append(voters, fmt.Sprintf(
 				"%s %s + %s = %s",
-				playerNameWithPositionForChat(state, voter.UserID, voter.Name),
+				playerNameOrFallbackForChat(state, voter.UserID, voter.Name),
 				formatBPS(voter.ShareBPS),
 				formatBPS(voter.AuthorityBPS),
 				formatBPS(voter.VotingPowerBPS),
@@ -1494,15 +1488,10 @@ func playerNameForChat(state *GameState, userID int64) string {
 	return fmt.Sprintf("Игрок #%d", userID)
 }
 
-func playerNameWithPositionForChat(state *GameState, userID int64, fallbackName string) string {
-	name := fallbackName
+func playerNameOrFallbackForChat(state *GameState, userID int64, fallbackName string) string {
+	name := strings.TrimSpace(fallbackName)
 	if name == "" {
 		name = playerNameForChat(state, userID)
-	}
-	if state != nil {
-		if player := state.Players[userID]; player != nil && effectivePlayerPosition(player) != "" {
-			return fmt.Sprintf("%s, %s", name, effectivePlayerPosition(player))
-		}
 	}
 	return name
 }

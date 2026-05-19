@@ -1103,6 +1103,12 @@ components:
 
     PublicChatMessage:
       type: object
+      description: >
+        Chat message returned in public game state. Structured system messages use concise titles
+        without duplicating the generated company name; company context remains in summary/details.
+        Major vote result titles use the accepted decision letter, for example `Итоги major vote: C`,
+        or `Итоги major vote: не принято` when no decision is accepted. Vote details and reward
+        details list player names without embedding company_position.
       properties:
         id:
           type: integer
@@ -1116,6 +1122,7 @@ components:
           type: string
         company_position:
           type: string
+          description: Sender's display position for user and official chat messages. System vote/reward details do not embed positions in player lists.
         message:
           type: string
         kind:
@@ -1123,9 +1130,10 @@ components:
           enum: [user, system]
         system_event_type:
           type: string
-          description: Present for structured system messages, for example major_vote_accepted, governance_accepted, sabotage_accepted, mole_revealed.
+          description: Present for structured system messages, for example company_briefing, major_vote_accepted, governance_accepted, sabotage_accepted, mole_revealed.
         title:
           type: string
+          description: Concise display title for structured system messages. Company names are not duplicated in this field.
         summary:
           type: string
         details:

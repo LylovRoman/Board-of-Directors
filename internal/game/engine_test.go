@@ -99,6 +99,9 @@ func TestCreateGameGeneratesCompanyScenarioAndProfilePosition(t *testing.T) {
 	if len(state.ChatMessages) != 1 || state.ChatMessages[0].SystemEventType != "company_briefing" {
 		t.Fatalf("expected company briefing chat message, got %+v", state.ChatMessages)
 	}
+	if state.ChatMessages[0].Title != "Брифинг компании" || strings.Contains(state.ChatMessages[0].Title, state.CompanyName) {
+		t.Fatalf("expected company briefing title without company name, got %+v", state.ChatMessages[0])
+	}
 }
 
 func TestBuildStateUsesCompanyFallbackForOldGameCreatedEvents(t *testing.T) {
@@ -954,9 +957,9 @@ func TestAcceptedMajorDecisionStartsGovernanceAndAppliesProposal(t *testing.T) {
 		events: map[int64][]models.Event{
 			1: {
 				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
-				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
-				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
-				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice","company_position":"CFO"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob","company_position":"Юрист компании"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol","company_position":"AI Risk"}`},
 				{EventType: models.EventGameStarted, EventValue: `{}`},
 				{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
 				{EventType: models.EventMoleTargetsGenerated, EventValue: `{"targets":["A","D","F"]}`},
@@ -988,7 +991,14 @@ func TestAcceptedMajorDecisionStartsGovernanceAndAppliesProposal(t *testing.T) {
 	if len(state.ChatMessages) == 0 || state.ChatMessages[len(state.ChatMessages)-1].Title != "Итоги major vote: B" {
 		t.Fatalf("expected accepted major vote title with decision letter, got %+v", state.ChatMessages)
 	}
-	if len(state.ChatMessages) == 0 || !chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Бонус +1% к доле за принятое решение получили: Alice, Bob, Carol") {
+	lastChat := state.ChatMessages[len(state.ChatMessages)-1]
+	if !chatDetailsContain(lastChat, "B — Экспансия на новый рынок: 80% (Alice, Bob, Carol)") {
+		t.Fatalf("expected vote detail to list names without positions, got %+v", lastChat)
+	}
+	if chatDetailsContain(lastChat, "Alice, CEO") || chatDetailsContain(lastChat, "Bob, Юрист компании") || chatDetailsContain(lastChat, "Carol, AI Risk") {
+		t.Fatalf("expected vote detail to omit company positions, got %+v", lastChat)
+	}
+	if len(state.ChatMessages) == 0 || !chatDetailsContain(lastChat, "Бонус +1% к доле за принятое решение получили: Alice, Bob, Carol") {
 		t.Fatalf("expected share reward detail in system chat, got %+v", state.ChatMessages)
 	}
 
@@ -1390,9 +1400,9 @@ func TestEmpowermentDecisionRewardsAuthority(t *testing.T) {
 		events: map[int64][]models.Event{
 			1: {
 				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
-				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
-				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
-				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice","company_position":"CFO"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob","company_position":"Юрист компании"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol","company_position":"AI Risk"}`},
 				{EventType: models.EventGameStarted, EventValue: `{}`},
 				{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
 				{EventType: models.EventMoleTargetsGenerated, EventValue: `{"targets":["A","D","F"]}`},
@@ -1431,6 +1441,34 @@ func TestEmpowermentDecisionRewardsAuthority(t *testing.T) {
 	}
 	if !chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Бонус +1% к полномочиям за принятое решение получили: Alice, Bob, Carol") {
 		t.Fatalf("expected authority reward detail in system chat, got %+v", state.ChatMessages[len(state.ChatMessages)-1])
+	}
+	if chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Alice, CEO") || chatDetailsContain(state.ChatMessages[len(state.ChatMessages)-1], "Bob, Юрист компании") {
+		t.Fatalf("expected authority reward detail to omit positions, got %+v", state.ChatMessages[len(state.ChatMessages)-1])
+	}
+}
+
+func TestSystemEventTitlesOmitCompanyName(t *testing.T) {
+	state := &GameState{
+		CompanyName:  "NordClinic",
+		MoleUserID:   1,
+		MoleTargets:  []string{"A", "B", "C"},
+		MoleSabotage: "D",
+		Players: map[int64]*PlayerState{
+			1: {UserID: 1, Name: "Alice", Position: "CEO"},
+		},
+	}
+
+	sabotage := sabotageAcceptedSystemMessage(state, "D")
+	if sabotage.Title != "Тревожный сигнал" || strings.Contains(sabotage.Title, state.CompanyName) {
+		t.Fatalf("expected sabotage title without company name, got %+v", sabotage)
+	}
+	if !strings.Contains(sabotage.Summary, state.CompanyName) {
+		t.Fatalf("expected sabotage summary to keep company context, got %+v", sabotage)
+	}
+
+	reveal := moleRevealSystemMessage(state)
+	if reveal.Title != "Крот раскрыт" || strings.Contains(reveal.Title, state.CompanyName) {
+		t.Fatalf("expected reveal title without company name, got %+v", reveal)
 	}
 }
 

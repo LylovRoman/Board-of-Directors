@@ -86,7 +86,7 @@ func (e *Engine) CreateGame(ctx context.Context, title string, hostUserID int64)
 				UserID:          0,
 				Kind:            "system",
 				SystemEventType: "company_briefing",
-				Title:           fmt.Sprintf("Компания: %s", company.Name),
+				Title:           "Брифинг компании",
 				Summary:         briefingMessage,
 				Message:         briefingMessage,
 				Details: []string{

@@ -235,6 +235,70 @@ function playerName(players: PublicPlayerState[], userId?: number): string {
   return players.find((player) => player.user_id === userId)?.name ?? `Игрок #${userId}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function effectivePlayerPositionLabel(player: PublicPlayerState): string {
+  return player.is_ceo ? "CEO" : (player.company_position ?? "").trim();
+}
+
+function stripKnownPositionSuffixes(text: string, players: PublicPlayerState[]): string {
+  return players.reduce((current, player) => {
+    const position = effectivePlayerPositionLabel(player);
+    const name = player.name?.trim();
+    if (!name || !position) {
+      return current;
+    }
+    const pattern = new RegExp(`${escapeRegExp(name)},\\s*${escapeRegExp(position)}(?=\\)|,|\\.|;|$)`, "g");
+    return current.replace(pattern, name);
+  }, text);
+}
+
+function majorVoteDecisionFromDetails(details?: string[] | null): string | null {
+  let winner: { decision: string; share: number } | null = null;
+  for (const detail of details ?? []) {
+    const match = detail.match(/^([A-H])\s+[—-].*?:\s+(\d+(?:[.,]\d+)?)%/);
+    if (!match) {
+      continue;
+    }
+    const share = Number(match[2].replace(",", "."));
+    if (!Number.isFinite(share)) {
+      continue;
+    }
+    if (!winner || share > winner.share) {
+      winner = { decision: match[1], share };
+    }
+  }
+  return winner?.decision ?? null;
+}
+
+function systemChatTitle(message: PublicChatMessage): string {
+  const title = message.title?.trim() || "";
+  switch (message.system_event_type) {
+    case "company_briefing":
+      return title && !title.startsWith("Компания:") ? title : "Брифинг компании";
+    case "sabotage_accepted":
+      return title && !title.startsWith("Тревожный сигнал:") ? title : "Тревожный сигнал";
+    case "mole_revealed":
+      return title && !title.startsWith("Крот раскрыт:") ? title : "Крот раскрыт";
+    case "major_vote_accepted":
+    case "major_vote_rejected": {
+      const value = title.startsWith("Итоги major vote:") ? title.slice("Итоги major vote:".length).trim() : "";
+      if (DECISION_OPTIONS.includes(value) || value === "не принято") {
+        return `Итоги major vote: ${value}`;
+      }
+      const decision = majorVoteDecisionFromDetails(message.details);
+      if (decision) {
+        return `Итоги major vote: ${decision}`;
+      }
+      return message.system_event_type === "major_vote_rejected" ? "Итоги major vote: не принято" : "Итоги major vote: принято";
+    }
+    default:
+      return title || "Системное сообщение";
+  }
+}
+
 function describeGovernanceProposal(proposal: PublicGovernanceProposal, players: PublicPlayerState[]): string {
   switch (proposal.proposal_type) {
     case "share_transfer":
@@ -1717,6 +1781,7 @@ function GameLobbyScreen(props: {
 
       <ChatPanel
         messages={props.chatMessages}
+        players={state?.players ?? []}
         currentUserId={props.currentUserId}
         canSend={props.canSendChatMessage}
         isSubmitting={props.isSubmitting}
@@ -2009,13 +2074,14 @@ function StartedGameScreen(props: {
           )}
 
           <ChatPanel
-              messages={props.chatMessages}
-              currentUserId={props.currentUserId}
-              canSend={props.canSendChatMessage}
-              isSubmitting={props.isSubmitting}
-              onSend={props.onSendChatMessage}
-              onReact={props.onReactChatMessage}
-              onOpenProfile={props.onOpenProfile}
+            messages={props.chatMessages}
+            players={props.players}
+            currentUserId={props.currentUserId}
+            canSend={props.canSendChatMessage}
+            isSubmitting={props.isSubmitting}
+            onSend={props.onSendChatMessage}
+            onReact={props.onReactChatMessage}
+            onOpenProfile={props.onOpenProfile}
           />
         </div>
       </div>
@@ -2117,6 +2183,7 @@ function FinishScreen(props: {
       </div>
       <ChatPanel
         messages={props.chatMessages}
+        players={props.state.players ?? []}
         currentUserId={props.currentUserId}
         canSend={props.canSendChatMessage}
         isSubmitting={props.isSubmitting}
@@ -2611,6 +2678,7 @@ function GovernanceProposalCard(props: {
 
 function ChatPanel(props: {
   messages: PublicChatMessage[];
+  players: PublicPlayerState[];
   currentUserId: number;
   canSend: boolean;
   isSubmitting: boolean;
@@ -2726,6 +2794,7 @@ function ChatPanel(props: {
               <SystemChatMessage
                 key={group.id}
                 message={firstMessage}
+                players={props.players}
                 expanded={expandedSystemIds[firstMessage.id] ?? false}
                 onToggle={() => setExpandedSystemIds((current) => ({ ...current, [firstMessage.id]: !current[firstMessage.id] }))}
               />
@@ -2871,11 +2940,11 @@ function ChatReactions(props: {
   );
 }
 
-function SystemChatMessage(props: { message: PublicChatMessage; expanded: boolean; onToggle: () => void }) {
-  const details = props.message.details ?? [];
+function SystemChatMessage(props: { message: PublicChatMessage; players: PublicPlayerState[]; expanded: boolean; onToggle: () => void }) {
+  const details = (props.message.details ?? []).map((detail) => stripKnownPositionSuffixes(detail, props.players));
   const hasDetails = details.length > 0;
-  const title = props.message.title || "Системное сообщение";
-  const summary = props.message.summary || props.message.message;
+  const title = systemChatTitle(props.message);
+  const summary = stripKnownPositionSuffixes(props.message.summary || props.message.message, props.players);
   return (
     <article className={["chat-message", "system-message", props.message.tone ? `tone-${props.message.tone}` : ""].filter(Boolean).join(" ")}>
       <div className="chat-message-head">
