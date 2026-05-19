@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, Download, LogOut, Plus, RefreshCcw, UserRound, Users } from "lucide-react";
+import { BarChart3, BookOpen, Download, LogOut, Plus, RefreshCcw, UserRound, Users, Volume2, VolumeX } from "lucide-react";
 import type { FormEvent } from "react";
 import { Avatar } from "../components/Avatar";
 import { bpsToPercent, phaseLabel, statusLabel } from "../gameText";
@@ -12,6 +12,7 @@ interface LobbyScreenProps {
   createTitle: string;
   isCreating: boolean;
   isLoading: boolean;
+  soundEnabled: boolean;
   onCreateTitleChange: (value: string) => void;
   onCreateToggle: (value: boolean) => void;
   onCreateGame: (event: FormEvent<HTMLFormElement>) => void;
@@ -20,6 +21,7 @@ interface LobbyScreenProps {
   onOpenLeaderboard: () => void;
   onOpenRules: () => void;
   onRefresh: () => void;
+  onToggleSound: () => void;
   onLogout: () => void;
   showInstallAction: boolean;
   onInstallClick: () => void;
@@ -45,6 +47,14 @@ export function LobbyScreen(props: LobbyScreenProps) {
               <Download size={19} />
             </button>
           ) : null}
+          <button
+            className={props.soundEnabled ? "icon-button active" : "icon-button"}
+            type="button"
+            aria-label={props.soundEnabled ? "Выключить звук" : "Включить звук"}
+            onClick={props.onToggleSound}
+          >
+            {props.soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}
+          </button>
           <span className={`live-pill live-${props.liveStatus}`}>{props.liveStatus}</span>
         </div>
       </header>

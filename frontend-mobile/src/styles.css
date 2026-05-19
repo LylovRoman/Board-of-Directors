@@ -240,7 +240,13 @@ input:focus {
 }
 
 .game-topbar {
-  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+}
+
+.game-topbar .game-topbar-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .game-topbar strong,
@@ -345,6 +351,12 @@ input:focus {
 .mini-button.danger {
   border-color: rgba(210, 99, 85, 0.42);
   background: rgba(210, 99, 85, 0.16);
+}
+
+.icon-button.active {
+  border-color: rgba(240, 197, 110, 0.58);
+  background: rgba(240, 197, 110, 0.16);
+  color: #f0c56e;
 }
 
 .live-pill {

@@ -10,6 +10,8 @@ import {
   Shield,
   UserMinus,
   Users,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Avatar } from "../components/Avatar";
@@ -48,9 +50,11 @@ interface GameScreenProps {
   currentUserId: number;
   liveStatus: string;
   isSubmitting: boolean;
+  soundEnabled: boolean;
   onAction: (type: ActionType, payload?: Record<string, unknown>) => void;
   onBack: () => void;
   onRefresh: () => void;
+  onToggleSound: () => void;
   onOpenChat: () => void;
   onOpenRules: () => void;
   onOpenReplay: () => void;
@@ -74,9 +78,19 @@ export function GameScreen(props: GameScreenProps) {
           <strong>{state.company_name || state.title}</strong>
           <small>{phaseLabel(state.phase)} · {props.liveStatus}</small>
         </div>
-        <button className="icon-button" type="button" aria-label="Обновить" onClick={props.onRefresh}>
-          <RefreshCcw size={19} />
-        </button>
+        <div className="game-topbar-actions">
+          <button
+            className={props.soundEnabled ? "icon-button active" : "icon-button"}
+            type="button"
+            aria-label={props.soundEnabled ? "Выключить звук" : "Включить звук"}
+            onClick={props.onToggleSound}
+          >
+            {props.soundEnabled ? <Volume2 size={19} /> : <VolumeX size={19} />}
+          </button>
+          <button className="icon-button" type="button" aria-label="Обновить" onClick={props.onRefresh}>
+            <RefreshCcw size={19} />
+          </button>
+        </div>
       </header>
 
       <section className="company-card">

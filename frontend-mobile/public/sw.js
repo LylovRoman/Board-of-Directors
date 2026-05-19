@@ -1,4 +1,4 @@
-const CACHE_NAME = "board-of-directors-mobile-v1";
+const CACHE_NAME = "board-of-directors-mobile-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -8,7 +8,7 @@ const APP_SHELL = [
   "/pwa-512.png",
   "/apple-touch-icon.png",
 ];
-const STATIC_DESTINATIONS = new Set(["font", "image", "manifest", "script", "style", "worker"]);
+const STATIC_DESTINATIONS = new Set(["audio", "font", "image", "manifest", "script", "style", "worker"]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

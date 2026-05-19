@@ -24,6 +24,8 @@ import {
   saveAuthSession,
   saveAuthUser,
 } from "./authSession";
+import { playMusic, playSfx, preloadAudio, stopMusic } from "./audio";
+import type { MusicName, SfxName } from "./audio";
 import { BottomSheet } from "./components/BottomSheet";
 import { ChatSheetContent } from "./components/ChatSheet";
 import { ProfileSheetContent } from "./components/ProfileSheet";
@@ -47,14 +49,35 @@ import type {
 import "./styles.css";
 
 const MOBILE_SELECTED_GAME_KEY = "board-of-directors-mobile-selected-game-id";
+const MOBILE_SOUND_KEY = "board-of-directors-mobile-sound-enabled";
 
 type AuthMode = "login" | "register";
 type LiveStatus = "offline" | "connecting" | "live" | "fallback";
+
+const ACTION_SFX: Partial<Record<ActionType, SfxName>> = {
+  join_game: "join",
+  leave_game: "close",
+  kick_player: "success",
+  ban_player: "success",
+  add_bot: "success",
+  send_chat_message: "chat-send",
+  react_chat_message: "reaction",
+  start_game: "start",
+  choose_memorandum: "success",
+  select_mole_objectives: "success",
+  vote: "vote",
+  submit_governance_proposal: "success",
+  skip_governance_proposal: "close",
+};
 
 function readStoredGameId(): number | null {
   const raw = window.localStorage.getItem(MOBILE_SELECTED_GAME_KEY);
   const parsed = raw ? Number(raw) : Number.NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readStoredBoolean(key: string): boolean {
+  return window.localStorage.getItem(key) === "true";
 }
 
 function liveStatusLabel(status: LiveStatus): string {
@@ -84,6 +107,7 @@ export default function App() {
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(() => readStoredGameId());
   const [gameState, setGameState] = useState<PublicGameState | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(() => readStoredBoolean(MOBILE_SOUND_KEY));
   const [createTitle, setCreateTitle] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
@@ -111,6 +135,18 @@ export default function App() {
 
   const currentUserId = currentUser?.id ?? 0;
   const showInstallAction = canInstall || shouldShowManualIosInstall;
+  const activeMusic = useMemo<MusicName | null>(() => {
+    if (!currentUser) {
+      return null;
+    }
+    if (selectedGameId && gameState?.is_finished) {
+      return "finale";
+    }
+    if (selectedGameId) {
+      return "meeting";
+    }
+    return "lobby";
+  }, [currentUser, gameState?.is_finished, selectedGameId]);
 
   const handleInstallClick = useCallback(async () => {
     if (canInstall) {
@@ -226,6 +262,42 @@ export default function App() {
   }, [currentUser, loadGame, selectedGameId, showError]);
 
   useEffect(() => {
+    preloadAudio();
+    return () => stopMusic();
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(MOBILE_SOUND_KEY, String(soundEnabled));
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    if (!soundEnabled || !activeMusic) {
+      stopMusic();
+      return;
+    }
+    playMusic(activeMusic, true);
+  }, [activeMusic, soundEnabled]);
+
+  useEffect(() => {
+    if (!soundEnabled) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      if (target.closest("button:not(:disabled), [role='button']")) {
+        playSfx("click", true);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, { capture: true });
+    return () => window.removeEventListener("pointerdown", handlePointerDown, { capture: true });
+  }, [soundEnabled]);
+
+  useEffect(() => {
     if (!currentUser) {
       setLiveStatus("offline");
       return undefined;
@@ -312,7 +384,21 @@ export default function App() {
         try {
           const data = JSON.parse(event.data) as { type?: string; state?: PublicGameState };
           if (data.type === "state" && data.state) {
-            setGameState(data.state);
+            setGameState((previous) => {
+              if (previous && previous.phase !== data.state?.phase) {
+                playSfx("phase", soundEnabled);
+              }
+              if (previous && !previous.is_finished && data.state?.is_finished) {
+                playSfx("finish", soundEnabled);
+              }
+              const previousMessages = previous?.chat_messages ?? [];
+              const nextMessages = data.state?.chat_messages ?? [];
+              const latestMessage = nextMessages[nextMessages.length - 1];
+              if (previous && nextMessages.length > previousMessages.length && latestMessage?.user_id !== currentUserId) {
+                playSfx("chat-receive", soundEnabled);
+              }
+              return data.state ?? previous;
+            });
           }
         } catch {
           // Keep the current state; manual and fallback refresh are available.
@@ -340,7 +426,7 @@ export default function App() {
       }
       socket?.close();
     };
-  }, [currentUser, loadGame, selectedGameId, showError]);
+  }, [currentUser, currentUserId, loadGame, selectedGameId, showError, soundEnabled]);
 
   useEffect(() => {
     if (liveStatus !== "fallback" || !currentUser) {
@@ -429,6 +515,16 @@ export default function App() {
         setGameState(null);
         window.localStorage.removeItem(MOBILE_SELECTED_GAME_KEY);
       } else if (response.state) {
+        const actionSound = ACTION_SFX[type];
+        if (actionSound) {
+          playSfx(actionSound, soundEnabled);
+        }
+        if (gameState && gameState.phase !== response.state.phase) {
+          playSfx("phase", soundEnabled);
+        }
+        if (gameState && !gameState.is_finished && response.state.is_finished) {
+          playSfx("finish", soundEnabled);
+        }
         setGameState(response.state);
       } else {
         await loadGame(selectedGameId);
@@ -533,6 +629,21 @@ export default function App() {
     setReplayOpen(false);
   }
 
+  function handleSoundToggle() {
+    const nextEnabled = !soundEnabled;
+    setSoundEnabled(nextEnabled);
+
+    if (nextEnabled) {
+      playSfx("click", true);
+      if (activeMusic) {
+        playMusic(activeMusic, true);
+      }
+      return;
+    }
+
+    stopMusic();
+  }
+
   const sortedGames = useMemo(() => games, [games]);
   const currentLiveLabel = liveStatusLabel(liveStatus);
   const installHelpSheet = (
@@ -590,9 +701,11 @@ export default function App() {
           currentUserId={currentUserId}
           liveStatus={currentLiveLabel}
           isSubmitting={isSubmitting}
+          soundEnabled={soundEnabled}
           onAction={(type, payload) => void handleAction(type, payload)}
           onBack={handleBackToLobby}
           onRefresh={() => void refreshCurrentView()}
+          onToggleSound={handleSoundToggle}
           onOpenChat={() => setChatOpen(true)}
           onOpenRules={() => setRulesOpen(true)}
           onOpenReplay={() => setReplayOpen(true)}
@@ -607,6 +720,7 @@ export default function App() {
           createTitle={createTitle}
           isCreating={isCreating}
           isLoading={isLoading || isSubmitting}
+          soundEnabled={soundEnabled}
           onCreateTitleChange={setCreateTitle}
           onCreateToggle={setIsCreating}
           onCreateGame={handleCreateGame}
@@ -615,6 +729,7 @@ export default function App() {
           onOpenLeaderboard={() => setLeaderboardOpen(true)}
           onOpenRules={() => setRulesOpen(true)}
           onRefresh={() => void refreshCurrentView()}
+          onToggleSound={handleSoundToggle}
           onLogout={handleLogout}
           showInstallAction={showInstallAction}
           onInstallClick={handleInstallClick}

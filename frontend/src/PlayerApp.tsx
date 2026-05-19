@@ -24,6 +24,8 @@ import {
   saveAuthSession,
   saveAuthUser,
 } from "./authSession";
+import { playMusic, playSfx, preloadAudio, stopMusic } from "./audio";
+import type { MusicName, SfxName } from "./audio";
 import type {
   ActionType,
   AuthUser,
@@ -60,9 +62,9 @@ const SOUND_STORAGE_KEY = "board-of-directors-sound-enabled";
 const DECISION_TITLES: Record<string, string> = {
   A: "Выпуск облигаций",
   B: "Экспансия на новый рынок",
-  C: "Выплата дивидендов по акциям",
+  C: "Сделка слияния",
   D: "Запуск экспериментального продукта",
-  E: "Сделка слияния",
+  E: "Выплата дивидендов по акциям",
   F: "Оптимизация неэффективного персонала",
   G: "Агрессивная налоговая стратегия",
   H: "Обратный выкуп акций",
@@ -71,9 +73,9 @@ const DECISION_OPTIONS = Object.keys(DECISION_TITLES);
 const DECISION_TYPE_FALLBACK: Record<string, DecisionType> = {
   A: "growth",
   B: "growth",
-  C: "empowerment",
+  C: "growth",
   D: "growth",
-  E: "growth",
+  E: "empowerment",
   F: "empowerment",
   G: "empowerment",
   H: "empowerment",
@@ -86,6 +88,22 @@ interface GameCard {
 type AuthMode = "login" | "register";
 type LiveStatus = "idle" | "connecting" | "connected" | "reconnecting" | "fallback";
 type LobbySort = "newest" | "players" | "round";
+
+const ACTION_SFX: Partial<Record<ActionType, SfxName>> = {
+  join_game: "join",
+  leave_game: "close",
+  kick_player: "success",
+  ban_player: "success",
+  add_bot: "success",
+  send_chat_message: "chat-send",
+  react_chat_message: "reaction",
+  start_game: "start",
+  choose_memorandum: "success",
+  select_mole_objectives: "success",
+  vote: "vote",
+  submit_governance_proposal: "success",
+  skip_governance_proposal: "close",
+};
 
 function readStoredNumber(key: string): number | null {
   const raw = window.localStorage.getItem(key);
@@ -344,30 +362,6 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Неизвестная ошибка";
 }
 
-function playUiSound(kind: "vote" | "phase" | "finish", enabled: boolean) {
-  if (!enabled) {
-    return;
-  }
-  const AudioContextConstructor =
-    window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioContextConstructor) {
-    return;
-  }
-  const context = new AudioContextConstructor();
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.frequency.value = kind === "finish" ? 420 : kind === "phase" ? 320 : 240;
-  oscillator.type = "sine";
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
-  oscillator.connect(gain);
-  gain.connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.2);
-  window.setTimeout(() => void context.close(), 260);
-}
-
 export default function PlayerApp() {
   const [authSession, setAuthSession] = useState(() => readStoredAuthSession());
   const [isAuthChecking, setIsAuthChecking] = useState(() => Boolean(getAuthToken()));
@@ -407,6 +401,18 @@ export default function PlayerApp() {
 
   const currentUser: AuthUser | null = authSession?.user ?? null;
   const currentUserId = currentUser?.id ?? null;
+  const activeMusic = useMemo<MusicName | null>(() => {
+    if (!currentUserId) {
+      return null;
+    }
+    if (selectedGameId && gameState?.is_finished) {
+      return "finale";
+    }
+    if (selectedGameId) {
+      return "meeting";
+    }
+    return "lobby";
+  }, [currentUserId, gameState?.is_finished, selectedGameId]);
   const availableActions = gameState?.available_actions ?? [];
   const players = gameState?.players ?? [];
   const currentVotes = normalizeVotes(gameState?.current_votes);
@@ -610,7 +616,39 @@ export default function PlayerApp() {
   }, [selectedGameId]);
 
   useEffect(() => {
+    preloadAudio();
+    return () => stopMusic();
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(SOUND_STORAGE_KEY, String(soundEnabled));
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    if (!soundEnabled || !activeMusic) {
+      stopMusic();
+      return;
+    }
+    playMusic(activeMusic, true);
+  }, [activeMusic, soundEnabled]);
+
+  useEffect(() => {
+    if (!soundEnabled) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      if (target.closest("button:not(:disabled), [role='button']")) {
+        playSfx("click", true);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown, { capture: true });
+    return () => window.removeEventListener("pointerdown", handlePointerDown, { capture: true });
   }, [soundEnabled]);
 
   useEffect(() => {
@@ -643,10 +681,16 @@ export default function PlayerApp() {
           if (data.type === "state" && data.state) {
             setGameState((previous) => {
               if (previous && previous.phase !== data.state?.phase) {
-                playUiSound("phase", soundEnabled);
+                playSfx("phase", soundEnabled);
               }
               if (previous && !previous.is_finished && data.state?.is_finished) {
-                playUiSound("finish", soundEnabled);
+                playSfx("finish", soundEnabled);
+              }
+              const previousMessages = previous?.chat_messages ?? [];
+              const nextMessages = data.state?.chat_messages ?? [];
+              const latestMessage = nextMessages[nextMessages.length - 1];
+              if (previous && nextMessages.length > previousMessages.length && latestMessage?.user_id !== currentUserId) {
+                playSfx("chat-receive", soundEnabled);
               }
               return data.state ?? previous;
             });
@@ -865,14 +909,15 @@ export default function PlayerApp() {
         payload,
       });
       if (response.state) {
-        if (type === "vote") {
-          playUiSound("vote", soundEnabled);
+        const actionSound = ACTION_SFX[type];
+        if (actionSound) {
+          playSfx(actionSound, soundEnabled);
         }
         if (gameState && gameState.phase !== response.state.phase) {
-          playUiSound("phase", soundEnabled);
+          playSfx("phase", soundEnabled);
         }
         if (gameState && !gameState.is_finished && response.state.is_finished) {
-          playUiSound("finish", soundEnabled);
+          playSfx("finish", soundEnabled);
         }
         setGameState(response.state);
       } else {
@@ -1033,6 +1078,21 @@ export default function PlayerApp() {
     window.localStorage.removeItem(SELECTED_GAME_STORAGE_KEY);
   }
 
+  function handleSoundToggle() {
+    const nextEnabled = !soundEnabled;
+    setSoundEnabled(nextEnabled);
+
+    if (nextEnabled) {
+      playSfx("click", true);
+      if (activeMusic) {
+        playMusic(activeMusic, true);
+      }
+      return;
+    }
+
+    stopMusic();
+  }
+
   if (!currentUserId || !currentUser) {
     return (
       <main className="play-shell welcome-screen">
@@ -1120,7 +1180,7 @@ export default function PlayerApp() {
           <span className={`live-pill live-${liveStatus}`}>{liveStatusLabel(liveStatus)}</span>
           <button className="mini-button" onClick={() => setIsRulesOpen(true)}>Правила</button>
           <button className="mini-button" onClick={() => setIsTutorialOpen(true)}>Обучение</button>
-          <button className={soundEnabled ? "mini-button active" : "mini-button"} onClick={() => setSoundEnabled((value) => !value)}>
+          <button className={soundEnabled ? "mini-button active" : "mini-button"} onClick={handleSoundToggle}>
             {soundEnabled ? "Звук: вкл" : "Звук: выкл"}
           </button>
         </div>
