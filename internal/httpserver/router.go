@@ -355,6 +355,7 @@ func (s *Server) listGameItems(ctx context.Context, viewerID int64) ([]gameListI
 					Position:  gameListPlayerPosition(state.Status, player, usersByID[userID].Position),
 					IsHost:    player.IsHost,
 					IsCEO:     player.IsCEO,
+					IsBot:     player.IsBot,
 				})
 			}
 		}
@@ -407,6 +408,7 @@ type gameListPlayer struct {
 	Position  string `json:"company_position,omitempty"`
 	IsHost    bool   `json:"is_host"`
 	IsCEO     bool   `json:"is_ceo"`
+	IsBot     bool   `json:"is_bot"`
 }
 
 func (s *Server) handleGetGame(w http.ResponseWriter, r *http.Request) {

@@ -559,7 +559,9 @@ components:
           type: boolean
         is_ceo:
           type: boolean
-      required: [user_id, name, is_host, is_ceo]
+        is_bot:
+          type: boolean
+      required: [user_id, name, is_host, is_ceo, is_bot]
 
     CreateGameRequest:
       type: object
@@ -604,6 +606,7 @@ components:
             - leave_game
             - kick_player
             - ban_player
+            - add_bot
             - send_chat_message
             - react_chat_message
             - start_game
@@ -620,6 +623,7 @@ components:
             - $ref: "#/components/schemas/VotePayload"
             - $ref: "#/components/schemas/SubmitGovernanceProposalPayload"
             - $ref: "#/components/schemas/ReactChatMessagePayload"
+            - $ref: "#/components/schemas/AddBotPayload"
             - type: object
               additionalProperties: true
       required: [type]
@@ -682,6 +686,19 @@ components:
           enum: ["👍", "🤝", "💼", "📈", "⚠️", "🕵️", "✅", "🔥"]
       required: [message_id, emoji]
 
+    AddBotPayload:
+      type: object
+      description: Host-only lobby action. Adds one or more synthetic bot players to the room without creating real user accounts.
+      properties:
+        count:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 1
+        name:
+          type: string
+          description: Optional display name when adding a single bot.
+
     SubmitGovernanceProposalPayload:
       type: object
       description: Governance proposal submission. Backend ignores client share_bps and stores the actual applicable share_bps after clamping the proposer's effective authority to available treasury or the 5% player minimum.
@@ -720,6 +737,8 @@ components:
         is_host:
           type: boolean
         is_ceo:
+          type: boolean
+        is_bot:
           type: boolean
         role:
           type: string

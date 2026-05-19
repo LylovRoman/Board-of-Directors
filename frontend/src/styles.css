@@ -628,6 +628,15 @@ code {
   color: #f2cf85;
 }
 
+.profile-link:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.profile-link:disabled:hover strong {
+  color: inherit;
+}
+
 .player-card-heading > div,
 .identity-name > h2,
 .director-identity > div,
@@ -681,6 +690,11 @@ code {
 .badge.current {
   background: rgba(77, 159, 114, 0.18);
   color: #a7e7bd;
+}
+
+.badge.bot {
+  background: rgba(130, 112, 199, 0.18);
+  color: #cfc5ff;
 }
 
 .game-hud {

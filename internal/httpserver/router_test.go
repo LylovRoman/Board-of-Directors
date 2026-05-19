@@ -633,6 +633,54 @@ func TestGameActionJoinGame(t *testing.T) {
 	}
 }
 
+func TestGameActionAddBot(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Mafia"},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		},
+	}
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader([]byte(`{"type":"add_bot"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Events []models.Event       `json:"events"`
+		State  game.PublicGameState `json:"state"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Events) != 1 || resp.Events[0].EventType != models.EventPlayerJoined {
+		t.Fatalf("expected public bot player_joined event, got %+v", resp.Events)
+	}
+	foundBot := false
+	for _, player := range resp.State.Players {
+		if player.IsBot && player.UserID < 0 {
+			foundBot = true
+		}
+	}
+	if !foundBot {
+		t.Fatalf("expected bot in public state, got %+v", resp.State.Players)
+	}
+	if store.events[len(store.events)-1].UserID != nil {
+		t.Fatalf("stored bot event must not reference users table")
+	}
+}
+
 func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 	store := &mockStorage{
 		users: []models.User{

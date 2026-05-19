@@ -171,6 +171,21 @@ func (e *Engine) HandleAction(ctx context.Context, gameID int64, action Action) 
 		return nil, nil, err
 	}
 
+	if len(newEvents) > 0 {
+		projected := cloneState(state)
+		for _, event := range newEvents {
+			if err := ApplyEvent(projected, event); err != nil {
+				return nil, nil, err
+			}
+		}
+		botEvents, err := e.botTurnEvents(projected)
+		if err != nil {
+			return nil, nil, err
+		}
+		newEvents = append(newEvents, botEvents...)
+		scrubSyntheticEventUserIDs(newEvents)
+	}
+
 	if len(newEvents) == 0 {
 		publicState, projErr := ProjectStateForViewer(state, action.UserID)
 		return publicState, nil, projErr
@@ -204,6 +219,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleKickPlayer(state, actor, action.Payload)
 	case ActionBanPlayer:
 		return e.handleBanPlayer(state, actor, action.Payload)
+	case ActionAddBot:
+		return e.handleAddBot(state, actor, action.Payload)
 	case ActionSendChatMessage:
 		return e.handleSendChatMessage(state, actor, action.Payload)
 	case ActionReactChatMessage:

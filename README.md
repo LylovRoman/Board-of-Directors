@@ -293,6 +293,7 @@ join_game
 leave_game
 kick_player
 ban_player
+add_bot
 start_game
 select_mole_objectives
 vote

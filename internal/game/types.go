@@ -12,6 +12,7 @@ const (
 	ActionLeaveGame                ActionType = "leave_game"
 	ActionKickPlayer               ActionType = "kick_player"
 	ActionBanPlayer                ActionType = "ban_player"
+	ActionAddBot                   ActionType = "add_bot"
 	ActionSendChatMessage          ActionType = "send_chat_message"
 	ActionReactChatMessage         ActionType = "react_chat_message"
 	ActionStartGame                ActionType = "start_game"
@@ -175,6 +176,7 @@ type PlayerState struct {
 	AuthorityBPS int    `json:"authority_bps"`
 	IsHost       bool   `json:"is_host"`
 	IsCEO        bool   `json:"is_ceo"`
+	IsBot        bool   `json:"is_bot"`
 	IsLeft       bool   `json:"is_left"`
 	IsKicked     bool   `json:"is_kicked"`
 	Role         string `json:"role,omitempty"`
@@ -285,6 +287,7 @@ type PublicPlayerState struct {
 	AuthorityBPS int    `json:"authority_bps"`
 	IsHost       bool   `json:"is_host"`
 	IsCEO        bool   `json:"is_ceo"`
+	IsBot        bool   `json:"is_bot"`
 	Role         string `json:"role,omitempty"`
 }
 
@@ -499,6 +502,7 @@ type PlayerJoinedPayload struct {
 	UserID   int64  `json:"user_id"`
 	Name     string `json:"name"`
 	Position string `json:"company_position,omitempty"`
+	IsBot    bool   `json:"is_bot,omitempty"`
 }
 
 type PlayerKickedPayload struct {
@@ -666,6 +670,11 @@ type KickPlayerActionPayload struct {
 
 type BanPlayerActionPayload struct {
 	UserID int64 `json:"user_id"`
+}
+
+type AddBotActionPayload struct {
+	Count int    `json:"count,omitempty"`
+	Name  string `json:"name,omitempty"`
 }
 
 type SendChatMessageActionPayload struct {

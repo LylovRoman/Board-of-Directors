@@ -367,6 +367,7 @@ export default function PlayerApp() {
   const canStart = availableActions.includes("start_game");
   const canKick = availableActions.includes("kick_player");
   const canBan = availableActions.includes("ban_player");
+  const canAddBot = availableActions.includes("add_bot");
   const canSendChatMessage = availableActions.includes("send_chat_message");
   const lobbyStats = useMemo(() => {
     const active = gameCards.filter(({ game }) => game.status === "started").length;
@@ -815,7 +816,7 @@ export default function PlayerApp() {
 
   async function openProfile(userId?: number) {
     const targetUserId = userId ?? currentUserId;
-    if (!targetUserId) {
+    if (!targetUserId || targetUserId <= 0) {
       return;
     }
     setProfileUserId(targetUserId);
@@ -1268,6 +1269,7 @@ export default function PlayerApp() {
           canStart={canStart}
           canKick={canKick}
           canBan={canBan}
+          canAddBot={canAddBot}
           hasMe={hasMe}
           chatMessages={chatMessages}
           canSendChatMessage={canSendChatMessage}
@@ -1276,6 +1278,7 @@ export default function PlayerApp() {
           onJoin={() => void handleAction("join_game")}
           onLeave={() => void handleLeaveGame()}
           onStart={() => void handleAction("start_game")}
+          onAddBot={() => void handleAction("add_bot")}
           onKick={(userId) => void handleAction("kick_player", { user_id: userId })}
           onBan={(userId) => void handleAction("ban_player", { user_id: userId })}
           onSendChatMessage={(message) => handleAction("send_chat_message", { message })}
@@ -1567,6 +1570,7 @@ function GameLobbyScreen(props: {
   canStart: boolean;
   canKick: boolean;
   canBan: boolean;
+  canAddBot: boolean;
   hasMe: boolean;
   chatMessages: PublicChatMessage[];
   canSendChatMessage: boolean;
@@ -1575,6 +1579,7 @@ function GameLobbyScreen(props: {
   onJoin: () => void;
   onLeave: () => void;
   onStart: () => void;
+  onAddBot: () => void;
   onKick: (userId: number) => void;
   onBan: (userId: number) => void;
   onSendChatMessage: (message: string) => Promise<void>;
@@ -1606,6 +1611,11 @@ function GameLobbyScreen(props: {
           {props.canStart ? (
             <button className="primary-action" onClick={props.onStart} disabled={props.isSubmitting}>
               Начать игру
+            </button>
+          ) : null}
+          {props.canAddBot ? (
+            <button className="secondary-action" onClick={props.onAddBot} disabled={props.isSubmitting}>
+              Добавить бота
             </button>
           ) : null}
         </div>
@@ -1772,7 +1782,7 @@ function StartedGameScreen(props: {
                       }}
                       className={player.user_id === props.currentUserId ? "director-row is-current" : "director-row"}
                   >
-                    <button className="director-identity profile-link" type="button" onClick={() => props.onOpenProfile(player.user_id)}>
+                    <button className="director-identity profile-link" type="button" onClick={() => props.onOpenProfile(player.user_id)} disabled={player.is_bot}>
                       <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
                       <div>
                         <strong>
@@ -1794,6 +1804,7 @@ function StartedGameScreen(props: {
                     </button>
                     <div className="badge-row">
                       {player.is_ceo ? <span className="badge accent">CEO</span> : null}
+                      {player.is_bot ? <span className="badge bot">Bot</span> : null}
                     </div>
                   </div>
               ))}
@@ -2809,7 +2820,7 @@ function PlayerCard(props: {
 }) {
   return (
     <article className={props.player.user_id === props.currentUserId ? "player-card is-current" : "player-card"}>
-      <button className="player-card-heading profile-link" type="button" onClick={props.onOpenProfile}>
+      <button className="player-card-heading profile-link" type="button" onClick={props.player.is_bot ? undefined : props.onOpenProfile} disabled={props.player.is_bot}>
         <UserAvatar name={props.player.name} avatarUrl={props.player.avatar_url} size="medium" />
         <div>
           <h2>{props.player.name}</h2>
@@ -2820,6 +2831,7 @@ function PlayerCard(props: {
       <div className="badge-row">
         {props.player.is_host ? <span className="badge">Host</span> : null}
         {props.player.is_ceo ? <span className="badge accent">CEO</span> : null}
+        {props.player.is_bot ? <span className="badge bot">Bot</span> : null}
         {props.player.user_id === props.currentUserId ? <span className="badge current">Вы</span> : null}
       </div>
       {props.canKick || props.canBan ? (

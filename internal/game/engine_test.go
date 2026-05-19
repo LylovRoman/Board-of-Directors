@@ -409,6 +409,121 @@ func TestProjectStateJoinedNonHostDoesNotSeeJoinGame(t *testing.T) {
 	}
 }
 
+func TestHostCanAddBotToLobby(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			},
+		},
+	}
+
+	state, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionAddBot})
+	if err != nil {
+		t.Fatalf("add bot: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventPlayerJoined {
+		t.Fatalf("expected one player_joined event, got %+v", events)
+	}
+	if events[0].UserID != nil {
+		t.Fatalf("bot event must not reference users table, got user_id=%v", *events[0].UserID)
+	}
+	if len(state.Players) != 2 {
+		t.Fatalf("expected host plus bot, got %+v", state.Players)
+	}
+	var bot *PublicPlayerState
+	for i := range state.Players {
+		if state.Players[i].IsBot {
+			bot = &state.Players[i]
+			break
+		}
+	}
+	if bot == nil || bot.UserID >= 0 || bot.Name == "" {
+		t.Fatalf("expected synthetic bot player, got %+v", state.Players)
+	}
+}
+
+func TestBotMoleAutomaticallySelectsObjectives(t *testing.T) {
+	state, err := BuildState(1, "Mafia", []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Strategy","is_bot":true}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":-1}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":-1,"share_bps":2000}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+	})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+
+	events, err := NewEngine(&stubStore{}).botTurnEvents(state)
+	if err != nil {
+		t.Fatalf("bot turns: %v", err)
+	}
+	if !eventsContainType(events, models.EventMoleObjectivesSelected) || !eventsContainType(events, models.EventVotingRoundStarted) {
+		t.Fatalf("expected bot mole objective selection and voting start, got %+v", events)
+	}
+	if state.Phase != GamePhaseMajorVoting || len(state.MoleTargets) != 3 || state.MoleSabotage == "" {
+		t.Fatalf("expected projected major voting state with mole objectives, got phase=%s targets=%v sabotage=%q", state.Phase, state.MoleTargets, state.MoleSabotage)
+	}
+}
+
+func TestBotsVoteAfterHumanAction(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{
+			1: {ID: 1, Title: "Mafia"},
+		},
+		events: map[int64][]models.Event{
+			1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Strategy","is_bot":true}`},
+				{EventType: models.EventGameStarted, EventValue: `{}`},
+				{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+				{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","D","F"],"sabotage":"H"}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+				{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":-1,"share_bps":2000}`},
+				{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+				{EventType: models.EventMemorandumAssigned, EventValue: `{"user_id":-1,"type":"opportunity","decisions":["B","C","E"]}`},
+				{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","C","H"]}`},
+				{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"B","abstain":false}`},
+			},
+		},
+	}
+
+	_, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  2,
+		Type:    ActionVote,
+		Payload: []byte(`{"decision":"A"}`),
+	})
+	if err != nil {
+		t.Fatalf("human vote: %v", err)
+	}
+	if !hasVoteFrom(events, -1) {
+		t.Fatalf("expected bot vote event after human action, got %+v", events)
+	}
+	if !eventsContainType(events, models.EventVotingResolved) {
+		t.Fatalf("expected bot vote to complete the round, got %+v", events)
+	}
+}
+
 func TestLeaveLobbyAllowsRejoinAndTransfersHost(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{
@@ -1701,6 +1816,31 @@ func chatDetailsContain(message PublicChatMessage, expected string) bool {
 	for _, detail := range message.Details {
 		normalized := strings.ReplaceAll(detail, ", CEO", "")
 		if strings.Contains(normalized, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func eventsContainType(events []models.Event, eventType string) bool {
+	for _, event := range events {
+		if event.EventType == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVoteFrom(events []models.Event, userID int64) bool {
+	for _, event := range events {
+		if event.EventType != models.EventVoteSubmitted {
+			continue
+		}
+		var payload VoteSubmittedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			continue
+		}
+		if payload.UserID == userID {
 			return true
 		}
 	}

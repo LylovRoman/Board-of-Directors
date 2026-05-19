@@ -49,6 +49,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 			AuthorityBPS: effectiveAuthorityBPS(player),
 			IsHost:       player.IsHost,
 			IsCEO:        player.IsCEO,
+			IsBot:        player.IsBot,
 		}
 
 		if player.UserID == viewerUserID {
@@ -341,6 +342,9 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 		}
 		if player != nil && player.IsHost && !player.IsKicked && !player.IsLeft {
 			actions = append(actions, ActionKickPlayer, ActionBanPlayer, ActionStartGame)
+			if len(activePlayers(state)) < MaxPlayers {
+				actions = append(actions, ActionAddBot)
+			}
 		}
 	case GameStatusStarted:
 		if player == nil || player.IsKicked || player.IsLeft {

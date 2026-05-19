@@ -72,6 +72,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		player.Name = payload.Name
 		player.Position = payload.Position
+		player.IsBot = payload.IsBot || payload.UserID < 0
 		player.IsKicked = false
 		player.IsLeft = false
 		if activePlayerByID(state, state.HostUserID) == nil {

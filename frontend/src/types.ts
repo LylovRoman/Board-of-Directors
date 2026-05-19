@@ -3,6 +3,7 @@ export type ActionType =
   | "leave_game"
   | "kick_player"
   | "ban_player"
+  | "add_bot"
   | "send_chat_message"
   | "react_chat_message"
   | "start_game"
@@ -62,6 +63,7 @@ export interface GameListPlayer {
   company_position?: string;
   is_host: boolean;
   is_ceo: boolean;
+  is_bot: boolean;
 }
 
 export interface Event {
@@ -83,6 +85,7 @@ export interface PublicPlayerState {
   authority_bps: number;
   is_host: boolean;
   is_ceo: boolean;
+  is_bot: boolean;
   role?: string;
 }
 

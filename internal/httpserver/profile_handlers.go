@@ -347,7 +347,7 @@ func (s *Server) decoratePublicState(ctx context.Context, state *game.PublicGame
 	}
 	for i := range state.Players {
 		state.Players[i].AvatarURL = avatars[state.Players[i].UserID]
-		if state.Status == game.GameStatusLobby {
+		if state.Status == game.GameStatusLobby && !state.Players[i].IsBot {
 			state.Players[i].Position = positions[state.Players[i].UserID]
 		}
 		if state.Me.UserID == state.Players[i].UserID {
