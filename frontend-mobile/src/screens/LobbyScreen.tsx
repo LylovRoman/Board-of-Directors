@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, LogOut, Plus, RefreshCcw, UserRound, Users } from "lucide-react";
+import { BarChart3, BookOpen, Download, LogOut, Plus, RefreshCcw, UserRound, Users } from "lucide-react";
 import type { FormEvent } from "react";
 import { Avatar } from "../components/Avatar";
 import { bpsToPercent, phaseLabel, statusLabel } from "../gameText";
@@ -21,6 +21,8 @@ interface LobbyScreenProps {
   onOpenRules: () => void;
   onRefresh: () => void;
   onLogout: () => void;
+  showInstallAction: boolean;
+  onInstallClick: () => void;
 }
 
 export function LobbyScreen(props: LobbyScreenProps) {
@@ -37,7 +39,14 @@ export function LobbyScreen(props: LobbyScreenProps) {
             <small>{props.currentUser.company_position || "Директор"}</small>
           </span>
         </button>
-        <span className={`live-pill live-${props.liveStatus}`}>{props.liveStatus}</span>
+        <div className="topbar-actions">
+          {props.showInstallAction ? (
+            <button className="icon-button" type="button" aria-label="Установить приложение" onClick={props.onInstallClick}>
+              <Download size={19} />
+            </button>
+          ) : null}
+          <span className={`live-pill live-${props.liveStatus}`}>{props.liveStatus}</span>
+        </div>
       </header>
 
       <section className="dashboard-strip">

@@ -1,0 +1,43 @@
+{
+  "id": "/",
+  "name": "Board of Directors",
+  "short_name": "Board",
+  "description": "Мобильный совет директоров для быстрых партий с телефона.",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#151712",
+  "theme_color": "#151712",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Лобби",
+      "short_name": "Лобби",
+      "url": "/",
+      "icons": [
+        {
+          "src": "/pwa-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

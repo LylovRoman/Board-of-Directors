@@ -31,6 +31,7 @@ import { ReplaySheetContent } from "./components/ReplaySheet";
 import { RulesSheetContent } from "./components/RulesSheet";
 import { Toast } from "./components/Toast";
 import { getErrorMessage, normalizeList } from "./gameText";
+import { usePwaInstall } from "./hooks/usePwaInstall";
 import { AuthScreen } from "./screens/AuthScreen";
 import { GameScreen } from "./screens/GameScreen";
 import { LeaderboardSheetContent, LobbyScreen } from "./screens/LobbyScreen";
@@ -105,8 +106,23 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("offline");
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  const { canInstall, install, shouldShowManualIosInstall } = usePwaInstall();
 
   const currentUserId = currentUser?.id ?? 0;
+  const showInstallAction = canInstall || shouldShowManualIosInstall;
+
+  const handleInstallClick = useCallback(async () => {
+    if (canInstall) {
+      const outcome = await install();
+      if (outcome === "accepted") {
+        setSuccessMessage("Приложение устанавливается.");
+      }
+      return;
+    }
+
+    setInstallHelpOpen(true);
+  }, [canInstall, install]);
 
   const showError = useCallback((error: unknown) => {
     setErrorMessage(getErrorMessage(error));
@@ -519,6 +535,15 @@ export default function App() {
 
   const sortedGames = useMemo(() => games, [games]);
   const currentLiveLabel = liveStatusLabel(liveStatus);
+  const installHelpSheet = (
+    <BottomSheet title="Установить приложение" eyebrow="PWA" open={installHelpOpen} onClose={() => setInstallHelpOpen(false)}>
+      <div className="install-help">
+        <strong>iPhone / iPad</strong>
+        <p>Откройте меню «Поделиться» и выберите «На экран Домой».</p>
+        <span>После этого Board of Directors появится отдельной иконкой.</span>
+      </div>
+    </BottomSheet>
+  );
 
   if (isAuthChecking) {
     return (
@@ -547,8 +572,12 @@ export default function App() {
           onNameChange={setAuthName}
           onAvatarUrlChange={setAuthAvatarUrl}
           onSubmit={handleAuthSubmit}
+          showInstallAction={showInstallAction}
+          onInstallClick={handleInstallClick}
         />
+        {installHelpSheet}
         <Toast message={errorMessage} onClose={() => setErrorMessage(null)} />
+        <Toast message={successMessage} tone="success" onClose={() => setSuccessMessage(null)} />
       </>
     );
   }
@@ -587,6 +616,8 @@ export default function App() {
           onOpenRules={() => setRulesOpen(true)}
           onRefresh={() => void refreshCurrentView()}
           onLogout={handleLogout}
+          showInstallAction={showInstallAction}
+          onInstallClick={handleInstallClick}
         />
       )}
 
@@ -640,6 +671,7 @@ export default function App() {
         {gameState ? <ReplaySheetContent state={gameState} steps={normalizeList(gameState.replay_steps)} /> : null}
       </BottomSheet>
 
+      {installHelpSheet}
       <Toast message={errorMessage} onClose={() => setErrorMessage(null)} />
       <Toast message={successMessage} tone="success" onClose={() => setSuccessMessage(null)} />
     </>

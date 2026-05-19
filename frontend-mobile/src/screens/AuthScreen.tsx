@@ -1,4 +1,4 @@
-import { LogIn, UserPlus } from "lucide-react";
+import { Download, LogIn, UserPlus } from "lucide-react";
 import type { FormEvent } from "react";
 
 type AuthMode = "login" | "register";
@@ -16,6 +16,8 @@ interface AuthScreenProps {
   onNameChange: (value: string) => void;
   onAvatarUrlChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  showInstallAction: boolean;
+  onInstallClick: () => void;
 }
 
 export function AuthScreen(props: AuthScreenProps) {
@@ -29,6 +31,12 @@ export function AuthScreen(props: AuthScreenProps) {
         <p className="auth-copy">
           Входи в комнату, голосуй, веди переговоры и следи за корпоративными маневрами прямо с телефона.
         </p>
+        {props.showInstallAction ? (
+          <button className="mini-button install-action" type="button" onClick={props.onInstallClick}>
+            <Download size={18} />
+            Установить
+          </button>
+        ) : null}
 
         <div className="segmented-control" role="tablist" aria-label="Режим авторизации">
           <button

@@ -361,6 +361,17 @@ input:focus {
   color: #9ee4b4;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.install-action {
+  width: 100%;
+}
+
 .dashboard-strip,
 .score-strip,
 .stat-grid {
@@ -918,6 +929,19 @@ input:focus {
 .profile-sheet-content {
   display: grid;
   gap: 14px;
+}
+
+.install-help {
+  display: grid;
+  gap: 8px;
+}
+
+.install-help p {
+  margin: 0;
+}
+
+.install-help span {
+  color: var(--muted);
 }
 
 .profile-hero {
