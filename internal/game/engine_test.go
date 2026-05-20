@@ -685,6 +685,50 @@ func TestLeaveLobbyAllowsRejoinAndTransfersHost(t *testing.T) {
 	}
 }
 
+func TestHostDoesNotTransferToBotWhenLastHumanLeavesLobby(t *testing.T) {
+	events := []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Finance","is_bot":true}`},
+		{EventType: models.EventPlayerLeft, EventValue: `{"user_id":1}`},
+	}
+	state, err := BuildState(1, "Mafia", events)
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if state.HostUserID != 0 {
+		t.Fatalf("expected lobby to have no host after last human leaves, got %d", state.HostUserID)
+	}
+	if bot := activePlayerByID(state, -1); bot == nil || bot.IsHost {
+		t.Fatalf("expected bot to stay active but not host, got %+v", bot)
+	}
+}
+
+func TestBotSimulationIsDeterministicWithSeed(t *testing.T) {
+	seed := int64(12345)
+	left, err := SimulateBotGames(BotSimulationRequest{Games: 5, Players: 6, Seed: &seed, IncludeGames: true})
+	if err != nil {
+		t.Fatalf("SimulateBotGames left: %v", err)
+	}
+	right, err := SimulateBotGames(BotSimulationRequest{Games: 5, Players: 6, Seed: &seed, IncludeGames: true})
+	if err != nil {
+		t.Fatalf("SimulateBotGames right: %v", err)
+	}
+	if left.MoleWins != right.MoleWins || left.PlayersWins != right.PlayersWins || left.AverageRounds != right.AverageRounds {
+		t.Fatalf("expected deterministic aggregate, left=%+v right=%+v", left, right)
+	}
+	if len(left.Results) != len(right.Results) {
+		t.Fatalf("expected same result length, left=%d right=%d", len(left.Results), len(right.Results))
+	}
+	for i := range left.Results {
+		if left.Results[i].Winner != right.Results[i].Winner ||
+			left.Results[i].Rounds != right.Results[i].Rounds ||
+			strings.Join(left.Results[i].AcceptedDecisions, ",") != strings.Join(right.Results[i].AcceptedDecisions, ",") {
+			t.Fatalf("expected deterministic game %d, left=%+v right=%+v", i, left.Results[i], right.Results[i])
+		}
+	}
+}
+
 func TestSendChatMessageAddsPublicMessage(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{

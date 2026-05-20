@@ -67,7 +67,8 @@ func newTestPostgres(t *testing.T) *Postgres {
 			giver_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			receiver_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			PRIMARY KEY (giver_user_id, receiver_user_id),
+			week_start TIMESTAMP NOT NULL DEFAULT date_trunc('week', (NOW() AT TIME ZONE 'UTC')),
+			PRIMARY KEY (giver_user_id, receiver_user_id, week_start),
 			CONSTRAINT user_respects_no_self CHECK (giver_user_id <> receiver_user_id)
 		);
 	`)
@@ -80,12 +81,26 @@ func newTestPostgres(t *testing.T) *Postgres {
 		_, _ = db.db.ExecContext(context.Background(), `
 			DROP TABLE IF EXISTS events;
 			DROP TABLE IF EXISTS games;
+			DROP TABLE IF EXISTS user_respects;
 			DROP TABLE IF EXISTS users;
 		`)
 		_ = db.Close()
 	})
 
 	return db
+}
+
+func TestUTCWeekStartStartsOnMonday(t *testing.T) {
+	got := utcWeekStart(time.Date(2026, 5, 20, 15, 30, 0, 0, time.UTC))
+	want := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+
+	got = utcWeekStart(time.Date(2026, 5, 24, 23, 59, 0, 0, time.UTC))
+	if !got.Equal(want) {
+		t.Fatalf("expected Sunday to stay in same UTC week %s, got %s", want, got)
+	}
 }
 
 func TestCreateAndGetUser(t *testing.T) {
@@ -209,7 +224,33 @@ func TestUserRespectPersistence(t *testing.T) {
 		t.Fatalf("HasUserRespect: %v", err)
 	}
 	if count != 1 || !respected {
-		t.Fatalf("expected one respect from alice to bob, count=%d respected=%v", count, respected)
+		t.Fatalf("expected one respect from alice to bob this week, count=%d respected=%v", count, respected)
+	}
+
+	previousWeek := utcWeekStart(time.Now().UTC()).AddDate(0, 0, -7)
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE user_respects
+		SET week_start = $1, created_at = $1
+		WHERE giver_user_id = $2 AND receiver_user_id = $3
+	`, previousWeek, alice.ID, bob.ID); err != nil {
+		t.Fatalf("move respect to previous week: %v", err)
+	}
+	respected, err = store.HasUserRespect(ctx, alice.ID, bob.ID)
+	if err != nil {
+		t.Fatalf("HasUserRespect after week shift: %v", err)
+	}
+	if respected {
+		t.Fatalf("expected previous-week respect to not count as respected_by_me")
+	}
+	if err := store.GiveUserRespect(ctx, alice.ID, bob.ID); err != nil {
+		t.Fatalf("GiveUserRespect next week: %v", err)
+	}
+	count, err = store.CountUserRespect(ctx, bob.ID)
+	if err != nil {
+		t.Fatalf("CountUserRespect after next week: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected respects to accumulate across weeks, count=%d", count)
 	}
 }
 

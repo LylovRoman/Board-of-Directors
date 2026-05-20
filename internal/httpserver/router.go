@@ -19,11 +19,12 @@ import (
 )
 
 type Server struct {
-	store     storage.Storage
-	engine    *game.Engine
-	live      *liveHub
-	jwtSecret string
-	tokenTTL  time.Duration
+	store         storage.Storage
+	engine        *game.Engine
+	live          *liveHub
+	jwtSecret     string
+	adminAPIToken string
+	tokenTTL      time.Duration
 }
 
 func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
@@ -36,11 +37,12 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 	}
 
 	s := &Server{
-		store:     store,
-		engine:    game.NewEngine(store),
-		live:      newLiveHub(),
-		jwtSecret: secret,
-		tokenTTL:  7 * 24 * time.Hour,
+		store:         store,
+		engine:        game.NewEngine(store),
+		live:          newLiveHub(),
+		jwtSecret:     secret,
+		adminAPIToken: os.Getenv("ADMIN_API_TOKEN"),
+		tokenTTL:      7 * 24 * time.Hour,
 	}
 	go s.runMaintenance(context.Background())
 
@@ -58,6 +60,10 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 	})
 
 	r.Get("/leaderboard", s.authMiddleware(http.HandlerFunc(s.handleLeaderboard)).ServeHTTP)
+
+	r.Route("/admin", func(r chi.Router) {
+		r.Post("/simulations/bot-games", s.handleBotGameSimulation)
+	})
 
 	r.Route("/users", func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -350,6 +356,7 @@ func (s *Server) listGameItems(ctx context.Context, viewerID int64) ([]gameListI
 		item.Phase = state.Phase
 		item.Winner = state.Winner
 		item.CurrentRound = state.CurrentRound
+		item.StartedPlayerCount = state.StartedPlayerCount
 		for _, userID := range state.PlayerOrder {
 			if player := state.Players[userID]; player != nil && !player.IsLeft && !player.IsKicked {
 				item.PlayerUserIDs = append(item.PlayerUserIDs, userID)
@@ -391,19 +398,20 @@ func gameListPlayerPosition(status game.GameStatus, player *game.PlayerState, pr
 }
 
 type gameListItem struct {
-	ID               int64            `json:"id"`
-	Title            string           `json:"title"`
-	CompanyName      string           `json:"company_name,omitempty"`
-	CompanySituation string           `json:"company_situation,omitempty"`
-	CreatedAt        time.Time        `json:"created_at"`
-	Status           game.GameStatus  `json:"status"`
-	Phase            game.GamePhase   `json:"phase,omitempty"`
-	Winner           string           `json:"winner,omitempty"`
-	CurrentRound     int              `json:"current_round"`
-	PlayerCount      int              `json:"player_count"`
-	PlayerUserIDs    []int64          `json:"player_user_ids"`
-	Players          []gameListPlayer `json:"players"`
-	IsMember         bool             `json:"is_member"`
+	ID                 int64            `json:"id"`
+	Title              string           `json:"title"`
+	CompanyName        string           `json:"company_name,omitempty"`
+	CompanySituation   string           `json:"company_situation,omitempty"`
+	CreatedAt          time.Time        `json:"created_at"`
+	Status             game.GameStatus  `json:"status"`
+	Phase              game.GamePhase   `json:"phase,omitempty"`
+	Winner             string           `json:"winner,omitempty"`
+	CurrentRound       int              `json:"current_round"`
+	PlayerCount        int              `json:"player_count"`
+	StartedPlayerCount int              `json:"started_player_count,omitempty"`
+	PlayerUserIDs      []int64          `json:"player_user_ids"`
+	Players            []gameListPlayer `json:"players"`
+	IsMember           bool             `json:"is_member"`
 }
 
 type gameListPlayer struct {
@@ -519,7 +527,7 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 	s.decoratePublicState(r.Context(), state)
 
 	deleted := false
-	if in.Type == game.ActionLeaveGame && state != nil && len(state.Players) == 0 {
+	if shouldDeletePublicLobby(state) {
 		if err := s.store.DeleteGame(r.Context(), gameID); err != nil {
 			writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
 			return
@@ -536,6 +544,18 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		"state":        state,
 		"game_deleted": deleted,
 	})
+}
+
+func shouldDeletePublicLobby(state *game.PublicGameState) bool {
+	if state == nil || state.Status != game.GameStatusLobby {
+		return false
+	}
+	for _, player := range state.Players {
+		if player.UserID > 0 && !player.IsBot {
+			return false
+		}
+	}
+	return true
 }
 
 func publicActionEvents(events []models.Event) []models.Event {
@@ -629,6 +649,7 @@ func statusFromError(err error) int {
 		containsText(err.Error(), "viewer is not an active player"),
 		containsText(err.Error(), "game requires"),
 		containsText(err.Error(), "game is full"),
+		containsText(err.Error(), "between"),
 		containsText(err.Error(), "duplicate"),
 		containsText(err.Error(), "unique constraint"),
 		containsText(err.Error(), "idx_users_login_lower"):

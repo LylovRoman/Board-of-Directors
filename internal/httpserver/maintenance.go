@@ -56,9 +56,6 @@ func (s *Server) cleanupExpiredLobbies(ctx context.Context, now time.Time) bool 
 	}
 	deleted := false
 	for _, gameModel := range games {
-		if gameModel.CreatedAt.IsZero() || now.Sub(gameModel.CreatedAt) <= time.Hour {
-			continue
-		}
 		events, err := s.store.ListEventsByGameID(ctx, gameModel.ID)
 		if err != nil {
 			log.Printf("maintenance list events for game %d: %v", gameModel.ID, err)
@@ -69,7 +66,7 @@ func (s *Server) cleanupExpiredLobbies(ctx context.Context, now time.Time) bool 
 			log.Printf("maintenance build state for game %d: %v", gameModel.ID, err)
 			continue
 		}
-		if state.Status != game.GameStatusLobby {
+		if !shouldDeleteLobby(state, gameModel.CreatedAt, now) {
 			continue
 		}
 		if err := s.store.DeleteGame(ctx, gameModel.ID); err != nil {
@@ -79,4 +76,27 @@ func (s *Server) cleanupExpiredLobbies(ctx context.Context, now time.Time) bool 
 		deleted = true
 	}
 	return deleted
+}
+
+func shouldDeleteLobby(state *game.GameState, createdAt time.Time, now time.Time) bool {
+	if state == nil || state.Status != game.GameStatusLobby {
+		return false
+	}
+	if !hasActiveRealLobbyPlayer(state) {
+		return true
+	}
+	return !createdAt.IsZero() && now.Sub(createdAt) > time.Hour
+}
+
+func hasActiveRealLobbyPlayer(state *game.GameState) bool {
+	publicState, err := game.ProjectStateForViewer(state, 0)
+	if err != nil {
+		return false
+	}
+	for _, player := range publicState.Players {
+		if player.UserID > 0 && !player.IsBot {
+			return true
+		}
+	}
+	return false
 }

@@ -76,7 +76,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		player.IsBot = payload.IsBot || payload.UserID < 0
 		player.IsKicked = false
 		player.IsLeft = false
-		if activePlayerByID(state, state.HostUserID) == nil {
+		if !player.IsBot && activeRealPlayerByID(state, state.HostUserID) == nil {
 			state.HostUserID = payload.UserID
 		}
 	case models.EventPlayerLeft:
@@ -88,7 +88,8 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			player.IsLeft = true
 		}
 		if state.HostUserID == payload.UserID {
-			for _, candidate := range activePlayers(state) {
+			state.HostUserID = 0
+			for _, candidate := range activeRealPlayers(state) {
 				state.HostUserID = candidate.UserID
 				break
 			}
@@ -100,6 +101,13 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		if player := state.Players[payload.UserID]; player != nil {
 			player.IsKicked = true
+		}
+		if state.HostUserID == payload.UserID {
+			state.HostUserID = 0
+			for _, candidate := range activeRealPlayers(state) {
+				state.HostUserID = candidate.UserID
+				break
+			}
 		}
 	case models.EventPlayerReplacedByBot:
 		var payload PlayerReplacedByBotPayload
@@ -136,7 +144,11 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			state.PlayerOrder = append(state.PlayerOrder, payload.BotUserID)
 		}
 		if state.HostUserID == payload.UserID {
-			state.HostUserID = payload.BotUserID
+			state.HostUserID = 0
+			for _, candidate := range activeRealPlayers(state) {
+				state.HostUserID = candidate.UserID
+				break
+			}
 		}
 		if state.CEOUserID == payload.UserID || payload.IsCEO {
 			state.CEOUserID = payload.BotUserID
@@ -173,9 +185,19 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			CreatedAt:       event.CreatedAt,
 		})
 	case models.EventGameStarted:
+		var payload GameStartedPayload
+		if event.EventValue != "" {
+			if err := decodeEventValue(event.EventValue, &payload); err != nil {
+				return err
+			}
+		}
 		state.Status = GameStatusStarted
 		state.Phase = GamePhaseMoleObjectiveSelection
 		state.TreasuryShareBPS = InitialTreasurySharesBPS
+		state.StartedPlayerCount = payload.PlayerCount
+		if state.StartedPlayerCount == 0 {
+			state.StartedPlayerCount = len(activePlayers(state))
+		}
 		setPhaseTiming(state, event)
 	case models.EventMoleSelected:
 		var payload MoleSelectedPayload

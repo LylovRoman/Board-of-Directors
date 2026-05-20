@@ -567,6 +567,47 @@ func TestListGamesReturnsSummariesWithoutState(t *testing.T) {
 	}
 }
 
+func TestListGamesReturnsStartedPlayerCount(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+			{ID: 2, Name: "Bob"},
+			{ID: 3, Name: "Carol"},
+		},
+		games: []models.Game{{ID: 1, Title: "Started Room"}},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Started Room"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, GameID: 1, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{ID: 4, GameID: 1, UserID: int64Ptr(3), ActorName: "Carol", EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+			{ID: 5, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameStarted, EventValue: `{"player_count":3}`},
+		},
+	}
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/games/", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Games []gameListItem `json:"games"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Games) != 1 {
+		t.Fatalf("expected one game, got %+v", resp.Games)
+	}
+	if resp.Games[0].PlayerCount != 3 || resp.Games[0].StartedPlayerCount != 3 {
+		t.Fatalf("expected 3/3 player counts, got %+v", resp.Games[0])
+	}
+}
+
 func TestListGamesDeletesExpiredLobby(t *testing.T) {
 	now := time.Now().UTC()
 	store := &mockStorage{
@@ -961,6 +1002,82 @@ func TestLeaveGameDeletesEmptyLobby(t *testing.T) {
 	}
 	if len(store.games) != 0 {
 		t.Fatalf("expected game to be deleted, got %+v", store.games)
+	}
+}
+
+func TestLeaveGameDeletesBotOnlyLobby(t *testing.T) {
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Name: "Alice"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Mafia"},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, GameID: 1, ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Finance","is_bot":true}`},
+		},
+	}
+	router := NewRouter(store, "test-secret")
+
+	body := []byte(`{"type":"leave_game"}`)
+	req := httptest.NewRequest(http.MethodPost, "/games/1/actions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		GameDeleted bool `json:"game_deleted"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.GameDeleted {
+		t.Fatalf("expected bot-only lobby to be deleted")
+	}
+	if len(store.games) != 0 {
+		t.Fatalf("expected game to be deleted, got %+v", store.games)
+	}
+}
+
+func TestAdminBotSimulationRequiresTokenAndReturnsResult(t *testing.T) {
+	t.Setenv("ADMIN_API_TOKEN", "secret-admin-token")
+	router := NewRouter(&mockStorage{}, "test-secret")
+
+	body := []byte(`{"games":2,"players":3,"seed":12345,"include_games":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/simulations/bot-games", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected missing token to fail, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/simulations/bot-games", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "secret-admin-token")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var resp game.BotSimulationResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Games != 2 || resp.Players != 3 || resp.Seed != 12345 || len(resp.Results) != 2 {
+		t.Fatalf("unexpected simulation response: %+v", resp)
+	}
+	if resp.MoleWins+resp.PlayersWins != 2 {
+		t.Fatalf("expected every game to have a winner, got %+v", resp)
 	}
 }
 

@@ -961,6 +961,10 @@ export default function PlayerApp() {
     }
     setProfileUserId(targetUserId);
     setIsProfileOpen(true);
+    setProfile(null);
+    setProfileName("");
+    setProfileAvatarUrl("");
+    setProfilePosition("");
     setIsLoading(true);
     setErrorMessage(null);
     try {
@@ -1546,6 +1550,8 @@ function RoomTable(props: { games: Game[]; onOpen: (gameId: number) => void }) {
           {props.games.map((game) => {
             const players = game.players ?? [];
             const host = players.find((player) => player.is_host);
+            const playerCount = game.player_count ?? players.length;
+            const playerLimit = game.status === "lobby" ? 8 : (game.started_player_count || playerCount || 8);
             return (
                 <tr key={game.id} className={game.is_member ? "is-member" : ""}>
                   <td><span className={`status-pill status-${game.status ?? "unknown"}`}>{statusLabel(game.status)}</span></td>
@@ -1557,7 +1563,7 @@ function RoomTable(props: { games: Game[]; onOpen: (gameId: number) => void }) {
                       {players.slice(0, 5).map((player) => (
                           <UserAvatar key={player.user_id} name={player.name} avatarUrl={player.avatar_url} size="small" />
                       ))}
-                      <span className="player-counter">{game.player_count ?? players.length}/8</span>
+                      <span className="player-counter">{playerCount}/{playerLimit}</span>
                     </div>
                   </td>
                   <td>{host?.name ?? "—"}</td>
@@ -1683,7 +1689,9 @@ function ProfileDialog(props: {
 }) {
   const shownName = props.profileName || props.currentUser.name;
   const shownAvatar = props.profileAvatarUrl || props.currentUser.avatar_url;
-  const shownPosition = props.profilePosition || props.currentUser.company_position;
+  const shownPosition = props.canEdit
+      ? (props.profilePosition || props.currentUser.company_position || "Директор")
+      : (props.profile?.company_position || "Директор");
   const stats = props.profile?.stats;
 
   return (

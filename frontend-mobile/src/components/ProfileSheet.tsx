@@ -28,7 +28,9 @@ export function ProfileSheetContent(props: ProfileSheetContentProps) {
   const canEdit = props.profileUserId === props.currentUser.id;
   const profileName = props.name || props.profile?.name || props.currentUser.name;
   const avatarUrl = props.avatarUrl || props.profile?.avatar_url || props.currentUser.avatar_url;
-  const position = props.position || props.profile?.company_position || props.currentUser.company_position || "Директор";
+  const position = canEdit
+    ? (props.position || props.profile?.company_position || props.currentUser.company_position || "Директор")
+    : (props.profile?.company_position || "Директор");
   const stats = props.profile?.stats;
 
   return (

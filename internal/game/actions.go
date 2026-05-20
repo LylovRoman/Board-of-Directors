@@ -225,7 +225,7 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 		UserID:     &actor.ID,
 		ActorName:  actor.Name,
 		EventType:  models.EventGameStarted,
-		EventValue: "{}",
+		EventValue: mustJSON(GameStartedPayload{PlayerCount: len(players)}),
 	}, {
 		GameID:     state.GameID,
 		UserID:     &actor.ID,
@@ -1021,6 +1021,14 @@ func activePlayerByID(state *GameState, userID int64) *PlayerState {
 	return player
 }
 
+func activeRealPlayerByID(state *GameState, userID int64) *PlayerState {
+	player := activePlayerByID(state, userID)
+	if player == nil || player.IsBot || player.UserID <= 0 {
+		return nil
+	}
+	return player
+}
+
 func nextGovernanceProposalID(state *GameState) int {
 	maxID := 0
 	for proposalID := range state.GovernanceProposals {
@@ -1702,6 +1710,17 @@ func activePlayers(state *GameState) []*PlayerState {
 	for _, userID := range state.PlayerOrder {
 		player := state.Players[userID]
 		if player != nil && !player.IsKicked && !player.IsLeft {
+			out = append(out, player)
+		}
+	}
+	return out
+}
+
+func activeRealPlayers(state *GameState) []*PlayerState {
+	players := activePlayers(state)
+	out := make([]*PlayerState, 0, len(players))
+	for _, player := range players {
+		if player != nil && !player.IsBot && player.UserID > 0 {
 			out = append(out, player)
 		}
 	}

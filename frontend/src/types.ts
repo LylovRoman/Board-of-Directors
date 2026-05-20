@@ -51,6 +51,7 @@ export interface Game {
   winner?: string;
   current_round?: number;
   player_count?: number;
+  started_player_count?: number;
   player_user_ids?: number[];
   players?: GameListPlayer[] | null;
   is_member?: boolean;

@@ -16,6 +16,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		Phase:                 state.Phase,
 		IsFinished:            state.IsFinished,
 		Winner:                state.Winner,
+		StartedPlayerCount:    state.StartedPlayerCount,
 		CurrentRound:          state.CurrentRound,
 		GovernanceRound:       state.GovernanceRound,
 		TreasuryShareBPS:      state.TreasuryShareBPS,

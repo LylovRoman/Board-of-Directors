@@ -276,10 +276,10 @@ func (p *Postgres) GiveUserRespect(ctx context.Context, giverID int64, receiverI
 		return errors.New("giver_id and receiver_id are required")
 	}
 	_, err := p.db.ExecContext(ctx, `
-		INSERT INTO user_respects (giver_user_id, receiver_user_id)
-		VALUES ($1, $2)
-		ON CONFLICT (giver_user_id, receiver_user_id) DO NOTHING
-	`, giverID, receiverID)
+		INSERT INTO user_respects (giver_user_id, receiver_user_id, week_start)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (giver_user_id, receiver_user_id, week_start) DO NOTHING
+	`, giverID, receiverID, utcWeekStart(time.Now().UTC()))
 	return err
 }
 
@@ -318,10 +318,21 @@ func (p *Postgres) HasUserRespect(ctx context.Context, giverID int64, receiverID
 		SELECT EXISTS (
 			SELECT 1
 			FROM user_respects
-			WHERE giver_user_id = $1 AND receiver_user_id = $2
+			WHERE giver_user_id = $1 AND receiver_user_id = $2 AND week_start = $3
 		)
-	`, giverID, receiverID).Scan(&exists)
+	`, giverID, receiverID, utcWeekStart(time.Now().UTC())).Scan(&exists)
 	return exists, err
+}
+
+func utcWeekStart(t time.Time) time.Time {
+	utc := t.UTC()
+	year, month, day := utc.Date()
+	midnight := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	weekday := int(midnight.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	return midnight.AddDate(0, 0, -(weekday - 1))
 }
 
 func (p *Postgres) DeleteUser(ctx context.Context, id int64) error {

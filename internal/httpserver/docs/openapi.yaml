@@ -146,7 +146,7 @@ paths:
   /users/{id}/respect:
     post:
       summary: Give +respect to a user
-      description: A viewer can respect another user once. Repeating the request is idempotent.
+      description: A viewer can respect another user once per UTC week. Repeating the request in the same week is idempotent; a new week adds another respect.
       security:
         - bearerAuth: []
       parameters:
@@ -299,7 +299,7 @@ paths:
 
     get:
       summary: List games
-      description: Returns room summaries. Expired lobby rooms older than one hour may be removed before the list is returned.
+      description: Returns room summaries. Expired lobby rooms older than one hour and bot-only lobbies may be removed before the list is returned.
       security:
         - bearerAuth: []
       responses:
@@ -482,7 +482,29 @@ paths:
                     $ref: "#/components/schemas/PublicGameState"
                   game_deleted:
                     type: boolean
-                    description: True when the action removed an empty lobby.
+                    description: True when the action removed a lobby with no remaining real players.
+
+  /admin/simulations/bot-games:
+    post:
+      summary: Run fast all-bot game simulations
+      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`.
+      security:
+        - adminToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotSimulationRequest"
+      responses:
+        "200":
+          description: Aggregated bot simulation results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotSimulationResponse"
+        "401":
+          description: Missing or invalid admin token
 
 components:
   securitySchemes:
@@ -490,8 +512,104 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    adminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
 
   schemas:
+
+    BotSimulationRequest:
+      type: object
+      properties:
+        games:
+          type: integer
+          default: 1
+          minimum: 1
+          maximum: 1000
+        players:
+          type: integer
+          default: 6
+          minimum: 3
+          maximum: 8
+        seed:
+          type: integer
+          format: int64
+          description: Optional deterministic RNG seed.
+        include_games:
+          type: boolean
+          default: false
+
+    BotSimulationGameResult:
+      type: object
+      properties:
+        index:
+          type: integer
+        winner:
+          type: string
+          enum: [mole, players]
+        rounds:
+          type: integer
+        mole_user_id:
+          type: integer
+          format: int64
+        mole_points:
+          type: integer
+        players_points:
+          type: integer
+        accepted_clean_count:
+          type: integer
+        accepted_target_count:
+          type: integer
+        accepted_sabotage_count:
+          type: integer
+        accepted_decisions:
+          type: array
+          items:
+            type: string
+
+    BotSimulationResponse:
+      type: object
+      properties:
+        games:
+          type: integer
+        players:
+          type: integer
+        seed:
+          type: integer
+          format: int64
+        mole_wins:
+          type: integer
+        players_wins:
+          type: integer
+        mole_winrate:
+          type: number
+          format: double
+        players_winrate:
+          type: number
+          format: double
+        average_rounds:
+          type: number
+          format: double
+        accepted_clean_count:
+          type: integer
+        accepted_target_count:
+          type: integer
+        accepted_sabotage_count:
+          type: integer
+        average_accepted_clean_count:
+          type: number
+          format: double
+        average_accepted_target_count:
+          type: number
+          format: double
+        average_accepted_sabotage_count:
+          type: number
+          format: double
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/BotSimulationGameResult"
 
     User:
       type: object
@@ -639,6 +757,9 @@ components:
           type: integer
         player_count:
           type: integer
+        started_player_count:
+          type: integer
+          description: Number of active players when the game started; clients can use it as the denominator for started/finished rooms.
         player_user_ids:
           type: array
           items:
@@ -1253,6 +1374,9 @@ components:
           type: boolean
         winner:
           type: string
+        started_player_count:
+          type: integer
+          description: Number of active players when the game started.
         current_round:
           type: integer
         governance_round:

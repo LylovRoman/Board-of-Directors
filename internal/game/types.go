@@ -133,14 +133,15 @@ type Action struct {
 }
 
 type GameState struct {
-	GameID           int64      `json:"game_id"`
-	Title            string     `json:"title"`
-	CompanyName      string     `json:"company_name"`
-	CompanySituation string     `json:"company_situation"`
-	Status           GameStatus `json:"status"`
-	Phase            GamePhase  `json:"phase"`
-	IsFinished       bool       `json:"is_finished"`
-	Winner           string     `json:"winner,omitempty"`
+	GameID             int64      `json:"game_id"`
+	Title              string     `json:"title"`
+	CompanyName        string     `json:"company_name"`
+	CompanySituation   string     `json:"company_situation"`
+	Status             GameStatus `json:"status"`
+	Phase              GamePhase  `json:"phase"`
+	IsFinished         bool       `json:"is_finished"`
+	Winner             string     `json:"winner,omitempty"`
+	StartedPlayerCount int        `json:"started_player_count,omitempty"`
 
 	HostUserID              int64
 	CEOUserID               int64
@@ -253,6 +254,7 @@ type PublicGameState struct {
 	Phase                 GamePhase                    `json:"phase"`
 	IsFinished            bool                         `json:"is_finished"`
 	Winner                string                       `json:"winner,omitempty"`
+	StartedPlayerCount    int                          `json:"started_player_count,omitempty"`
 	CurrentRound          int                          `json:"current_round"`
 	GovernanceRound       int                          `json:"governance_round"`
 	TreasuryShareBPS      int                          `json:"treasury_share_bps"`
@@ -590,6 +592,10 @@ type PlayerPositionAssignedPayload struct {
 
 type CEOSelectedPayload struct {
 	UserID int64 `json:"user_id"`
+}
+
+type GameStartedPayload struct {
+	PlayerCount int `json:"player_count,omitempty"`
 }
 
 type VotingRoundStartedPayload struct {

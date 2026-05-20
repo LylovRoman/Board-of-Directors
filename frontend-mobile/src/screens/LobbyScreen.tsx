@@ -175,6 +175,8 @@ export function LobbyScreen(props: LobbyScreenProps) {
 function LobbyGameCard({ game, onOpen }: { game: Game; onOpen: () => void }) {
   const players = game.players ?? [];
   const host = players.find((player) => player.is_host);
+  const playerCount = game.player_count ?? players.length;
+  const playerLimit = game.status === "lobby" ? 8 : (game.started_player_count || playerCount || 8);
 
   return (
     <article className="game-card">
@@ -190,7 +192,7 @@ function LobbyGameCard({ game, onOpen }: { game: Game; onOpen: () => void }) {
           <p>{game.company_name ? `${game.company_name}${game.company_situation ? `: ${game.company_situation}` : ""}` : game.company_situation}</p>
         ) : null}
         <div className="game-card-meta">
-          <span>{game.player_count ?? players.length}/8 игроков</span>
+          <span>{playerCount}/{playerLimit} игроков</span>
           <span>Раунд {game.current_round ?? 0}</span>
           {game.is_member ? <span>ты внутри</span> : null}
         </div>

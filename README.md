@@ -112,12 +112,16 @@ game_finished
 |---|---|---|
 | `PORT` | Порт HTTP-сервера | `8080` |
 | `POSTGRES_DSN` | Строка подключения к PostgreSQL | обязательная |
+| `JWT_SECRET` | Секрет для JWT-токенов | обязательная |
+| `ADMIN_API_TOKEN` | Токен для `X-Admin-Token` в admin API симуляций | пусто, endpoint недоступен |
 
 Пример:
 
 ```env
 PORT=8000
 POSTGRES_DSN=postgres://agent:pass@localhost:5432/board-of-directors?sslmode=disable
+JWT_SECRET=change-me
+ADMIN_API_TOKEN=local-admin-token
 ```
 
 ## Запуск через Docker Compose
@@ -308,6 +312,7 @@ vote
 - `users`
 - `games`
 - `events`
+- `user_respects`
 
 А также индексы для быстрого поиска событий по:
 
@@ -352,9 +357,11 @@ npm run dev
 
 ```text
 VITE_API_BASE_URL=http://localhost:8000
+VITE_MOBILE_APP_URL=http://localhost:5174
 ```
 
 Пример файла окружения лежит в `frontend/.env.example`.
+Если `VITE_MOBILE_APP_URL` задан, desktop frontend делает hard redirect мобильных устройств на этот URL.
 
 ## Примеры curl-запросов
 
@@ -387,6 +394,17 @@ curl -X POST http://localhost:8000/games/1/actions \
   -H "Content-Type: application/json" \
   -d '{"user_id":2,"type":"join_game"}'
 ```
+
+### Быстрая all-bot симуляция для админа
+
+```bash
+curl -X POST http://localhost:8000/admin/simulations/bot-games \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: local-admin-token" \
+  -d '{"games":100,"players":6,"seed":12345,"include_games":false}'
+```
+
+Симуляции выполняются в памяти, не создают записи в `users`, `games` и `events`, используют текущую логику ботов и возвращают агрегированную статистику баланса.
 
 ## Примечания для разработки
 

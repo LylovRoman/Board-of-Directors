@@ -554,6 +554,9 @@ export default function App() {
     setProfileOpen(true);
     setProfileUserId(targetId);
     setProfile(null);
+    setProfileName("");
+    setProfileAvatarUrl("");
+    setProfilePosition("");
     setIsLoading(true);
     try {
       const nextProfile = targetId === currentUserId ? await getMyProfile() : await getUserProfile(targetId);
