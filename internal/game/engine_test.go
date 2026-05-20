@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"agentbackend/internal/models"
 )
@@ -457,12 +458,13 @@ func TestHostCanAddBotToLobby(t *testing.T) {
 }
 
 func TestBotMoleAutomaticallySelectsObjectives(t *testing.T) {
+	phaseStartedAt := time.Now().UTC().Add(-BotActionDelay - time.Second)
 	state, err := BuildState(1, "Mafia", []models.Event{
 		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
 		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
 		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
 		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Strategy","is_bot":true}`},
-		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`, CreatedAt: phaseStartedAt},
 		{EventType: models.EventMoleSelected, EventValue: `{"user_id":-1}`},
 		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
 		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
@@ -473,7 +475,7 @@ func TestBotMoleAutomaticallySelectsObjectives(t *testing.T) {
 		t.Fatalf("BuildState: %v", err)
 	}
 
-	events, err := NewEngine(&stubStore{}).botTurnEvents(state)
+	events, err := NewEngine(&stubStore{}).botTurnEvents(state, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("bot turns: %v", err)
 	}
@@ -522,11 +524,101 @@ func TestBotsVoteAfterHumanAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("human vote: %v", err)
 	}
-	if !hasVoteFrom(events, -1) {
-		t.Fatalf("expected bot vote event after human action, got %+v", events)
+	if hasVoteFrom(events, -1) {
+		t.Fatalf("expected bot vote to wait for bot delay, got %+v", events)
 	}
-	if !eventsContainType(events, models.EventVotingResolved) {
-		t.Fatalf("expected bot vote to complete the round, got %+v", events)
+	if eventsContainType(events, models.EventVotingResolved) {
+		t.Fatalf("expected round to remain open until delayed bot action, got %+v", events)
+	}
+}
+
+func TestAdvanceGameRunsDelayedBotVote(t *testing.T) {
+	phaseStartedAt := time.Now().UTC().Add(-BotActionDelay - time.Second)
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: {
+			{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Strategy","is_bot":true}`},
+			{EventType: models.EventGameStarted, EventValue: `{}`},
+			{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+			{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","D","F"],"sabotage":"H"}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":-1,"share_bps":2000}`},
+			{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+			{EventType: models.EventMemorandumAssigned, EventValue: `{"user_id":-1,"type":"opportunity","decisions":["B","C","E"]}`},
+			{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","C","H"]}`, CreatedAt: phaseStartedAt},
+			{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"B","abstain":false}`},
+			{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"A","abstain":false}`},
+		}},
+	}
+
+	changed, err := NewEngine(store).AdvanceGame(context.Background(), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected delayed bot action")
+	}
+	events, _ := store.ListEventsByGameID(context.Background(), 1)
+	if !hasVoteFrom(events, -1) {
+		t.Fatalf("expected bot vote after delay, got %+v", events)
+	}
+}
+
+func TestPhaseDeadlineReplacesInactivePlayerWithBot(t *testing.T) {
+	phaseStartedAt := time.Now().UTC().Add(-PhaseDuration - time.Second)
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: {
+			{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice","company_position":"CFO"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+			{EventType: models.EventGameStarted, EventValue: `{}`, CreatedAt: phaseStartedAt},
+			{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+			{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+			{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+			{EventType: models.EventMemorandumPreferenceSelected, EventValue: `{"user_id":3,"type":"risk"}`},
+		}},
+	}
+
+	changed, err := NewEngine(store).AdvanceGame(context.Background(), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected timeout replacements")
+	}
+	events, _ := store.ListEventsByGameID(context.Background(), 1)
+	state, err := BuildState(1, "Mafia", events)
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if activePlayerByID(state, 1) != nil || activePlayerByID(state, 2) != nil {
+		t.Fatalf("expected Alice and Bob replaced, got %+v", activePlayers(state))
+	}
+	var ceoReplacement *PlayerState
+	for _, player := range activePlayers(state) {
+		if player.IsBot && player.IsCEO {
+			ceoReplacement = player
+		}
+	}
+	if ceoReplacement == nil || ceoReplacement.ShareBPS != 3500 || ceoReplacement.AuthorityBPS != InitialAuthorityBPS {
+		t.Fatalf("expected CEO replacement to preserve stats, got %+v", activePlayers(state))
 	}
 }
 

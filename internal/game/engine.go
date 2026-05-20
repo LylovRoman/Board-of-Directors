@@ -166,23 +166,34 @@ func (e *Engine) HandleAction(ctx context.Context, gameID int64, action Action) 
 		return nil, nil, err
 	}
 
+	now := time.Now().UTC()
+	dueEvents, err := e.timeoutEvents(state, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(dueEvents) > 0 {
+		scrubSyntheticEventUserIDs(dueEvents)
+		if err := e.store.AppendEvents(ctx, gameID, dueEvents); err != nil {
+			return nil, nil, err
+		}
+		allEvents := append(append([]models.Event{}, events...), dueEvents...)
+		newState, err := BuildState(gameID, gameModel.Title, allEvents)
+		if err != nil {
+			return nil, nil, err
+		}
+		publicState, err := ProjectStateForViewer(newState, action.UserID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return publicState, dueEvents, nil
+	}
+
 	newEvents, err := e.decideEvents(state, actor, action)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if len(newEvents) > 0 {
-		projected := cloneState(state)
-		for _, event := range newEvents {
-			if err := ApplyEvent(projected, event); err != nil {
-				return nil, nil, err
-			}
-		}
-		botEvents, err := e.botTurnEvents(projected)
-		if err != nil {
-			return nil, nil, err
-		}
-		newEvents = append(newEvents, botEvents...)
 		scrubSyntheticEventUserIDs(newEvents)
 	}
 
@@ -201,12 +212,59 @@ func (e *Engine) HandleAction(ctx context.Context, gameID int64, action Action) 
 		return nil, nil, err
 	}
 
+	autoEvents, err := e.automaticEvents(newState, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(autoEvents) > 0 {
+		scrubSyntheticEventUserIDs(autoEvents)
+		if err := e.store.AppendEvents(ctx, gameID, autoEvents); err != nil {
+			return nil, nil, err
+		}
+		allEvents = append(allEvents, autoEvents...)
+		newState, err = BuildState(gameID, gameModel.Title, allEvents)
+		if err != nil {
+			return nil, nil, err
+		}
+		newEvents = append(newEvents, autoEvents...)
+	}
+
 	publicState, err := ProjectStateForViewer(newState, action.UserID)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return publicState, newEvents, nil
+}
+
+func (e *Engine) AdvanceGame(ctx context.Context, gameID int64, now time.Time) (bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	gameModel, err := e.store.GetGameByID(ctx, gameID)
+	if err != nil {
+		return false, err
+	}
+	events, err := e.store.ListEventsByGameID(ctx, gameID)
+	if err != nil {
+		return false, err
+	}
+	state, err := BuildState(gameID, gameModel.Title, events)
+	if err != nil {
+		return false, err
+	}
+	newEvents, err := e.automaticEvents(state, now.UTC())
+	if err != nil {
+		return false, err
+	}
+	if len(newEvents) == 0 {
+		return false, nil
+	}
+	scrubSyntheticEventUserIDs(newEvents)
+	if err := e.store.AppendEvents(ctx, gameID, newEvents); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (e *Engine) decideEvents(state *GameState, actor *models.User, action Action) ([]models.Event, error) {

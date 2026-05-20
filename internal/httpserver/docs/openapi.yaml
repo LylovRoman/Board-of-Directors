@@ -72,6 +72,7 @@ paths:
   /leaderboard:
     get:
       summary: Get leaderboard
+      description: Returns ranked player profiles. Use `sort=winrate`, `sort=respect`, or `sort=accuracy` to choose the primary weekly rating metric.
       security:
         - bearerAuth: []
       parameters:
@@ -80,6 +81,13 @@ paths:
           schema:
             type: string
             enum: [week, month, all]
+            default: week
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [winrate, respect, accuracy]
+            default: winrate
       responses:
         "200":
           description: Leaderboard entries
@@ -291,6 +299,7 @@ paths:
 
     get:
       summary: List games
+      description: Returns room summaries. Expired lobby rooms older than one hour may be removed before the list is returned.
       security:
         - bearerAuth: []
       responses:
@@ -379,6 +388,7 @@ paths:
   /games/{id}/state:
     get:
       summary: Get personalized game state
+      description: Returns viewer-specific state and advances due automatic timer events, including bot turns and inactive-player replacement.
       security:
         - bearerAuth: []
       parameters:
@@ -470,6 +480,9 @@ paths:
                       $ref: "#/components/schemas/Event"
                   state:
                     $ref: "#/components/schemas/PublicGameState"
+                  game_deleted:
+                    type: boolean
+                    description: True when the action removed an empty lobby.
 
 components:
   securitySchemes:
@@ -520,6 +533,13 @@ components:
         winrate:
           type: number
           format: double
+        major_votes:
+          type: integer
+        aligned_votes:
+          type: integer
+        accuracy_bps:
+          type: integer
+          description: Accuracy in basis points, where 10000 means 100%.
       required: [games, wins, losses, winrate]
 
     UserStats:
@@ -544,7 +564,11 @@ components:
               type: integer
             respected_by_me:
               type: boolean
-          required: [stats, respect_count, respected_by_me]
+            xp:
+              type: integer
+            rank_title:
+              type: string
+          required: [stats, respect_count, respected_by_me, xp, rank_title]
 
     LeaderboardEntry:
       type: object
@@ -564,7 +588,15 @@ components:
           format: double
         rating_points:
           type: integer
-      required: [rank, user, games, wins, losses, winrate, rating_points]
+        respect_delta:
+          type: integer
+        accuracy_bps:
+          type: integer
+        xp:
+          type: integer
+        rank_title:
+          type: string
+      required: [rank, user, games, wins, losses, winrate, rating_points, respect_delta, accuracy_bps, xp, rank_title]
 
     LeaderboardResponse:
       type: object
@@ -572,11 +604,14 @@ components:
         period:
           type: string
           enum: [week, month, all]
+        sort:
+          type: string
+          enum: [winrate, respect, accuracy]
         entries:
           type: array
           items:
             $ref: "#/components/schemas/LeaderboardEntry"
-      required: [period, entries]
+      required: [period, sort, entries]
 
     Game:
       type: object
@@ -1060,6 +1095,21 @@ components:
           type: integer
         accuracy_bps:
           type: integer
+        xp_earned:
+          type: integer
+        xp_breakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/XPAward"
+
+    XPAward:
+      type: object
+      properties:
+        reason:
+          type: string
+        points:
+          type: integer
+      required: [reason, points]
 
     PublicReplayStep:
       type: object
@@ -1223,6 +1273,16 @@ components:
           format: date-time
           nullable: true
           description: Present for the first major vote when voting is locked for memorandum review.
+        phase_started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Server timestamp when the current phase started.
+        phase_deadline_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Current phase deadline. Inactive human players are replaced by bots after this time.
         decision_types:
           type: object
           additionalProperties:

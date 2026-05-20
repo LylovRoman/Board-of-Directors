@@ -220,6 +220,10 @@ func (s *Server) writeGamesToClient(ctx context.Context, client *lobbyLiveClient
 }
 
 func (s *Server) publicStateForViewer(ctx context.Context, gameID int64, viewerID int64) (*game.PublicGameState, error) {
+	if _, err := s.engine.AdvanceGame(ctx, gameID, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+
 	gameModel, err := s.store.GetGameByID(ctx, gameID)
 	if err != nil {
 		return nil, err

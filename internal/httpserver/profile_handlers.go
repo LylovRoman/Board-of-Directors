@@ -13,16 +13,20 @@ import (
 )
 
 type roleStatsResponse struct {
-	Games   int     `json:"games"`
-	Wins    int     `json:"wins"`
-	Losses  int     `json:"losses"`
-	WinRate float64 `json:"winrate"`
+	Games        int     `json:"games"`
+	Wins         int     `json:"wins"`
+	Losses       int     `json:"losses"`
+	WinRate      float64 `json:"winrate"`
+	MajorVotes   int     `json:"major_votes"`
+	AlignedVotes int     `json:"aligned_votes"`
+	AccuracyBPS  int     `json:"accuracy_bps"`
 }
 
 type userStatsResponse struct {
 	Total    roleStatsResponse `json:"total"`
 	Mole     roleStatsResponse `json:"mole"`
 	Director roleStatsResponse `json:"director"`
+	XP       int               `json:"-"`
 }
 
 type profileResponse struct {
@@ -37,6 +41,8 @@ type profileResponse struct {
 	Stats         userStatsResponse `json:"stats"`
 	RespectCount  int               `json:"respect_count"`
 	RespectedByMe bool              `json:"respected_by_me"`
+	XP            int               `json:"xp"`
+	RankTitle     string            `json:"rank_title"`
 }
 
 type leaderboardEntryResponse struct {
@@ -47,18 +53,27 @@ type leaderboardEntryResponse struct {
 	Losses       int             `json:"losses"`
 	WinRate      float64         `json:"winrate"`
 	RatingPoints int             `json:"rating_points"`
+	RespectDelta int             `json:"respect_delta"`
+	AccuracyBPS  int             `json:"accuracy_bps"`
+	XP           int             `json:"xp"`
+	RankTitle    string          `json:"rank_title"`
 }
 
 type leaderboardResponse struct {
 	Period  string                     `json:"period"`
+	Sort    string                     `json:"sort"`
 	Entries []leaderboardEntryResponse `json:"entries"`
 }
 
 type playerResult struct {
-	UserID     int64
-	Role       string
-	Won        bool
-	FinishedAt time.Time
+	UserID       int64
+	Role         string
+	Won          bool
+	MajorVotes   int
+	AlignedVotes int
+	AccuracyBPS  int
+	XP           int
+	FinishedAt   time.Time
 }
 
 func (s *Server) handleMyProfile(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +145,14 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
+	sortBy := r.URL.Query().Get("sort")
+	if sortBy == "" {
+		sortBy = "winrate"
+	}
+	if !isLeaderboardSort(sortBy) {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid leaderboard sort"})
+		return
+	}
 
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
@@ -157,6 +180,17 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
+		respectDelta := 0
+		if since != nil {
+			respectDelta, err = s.store.CountUserRespectSince(r.Context(), userID, *since)
+		} else {
+			respectDelta, err = s.store.CountUserRespect(r.Context(), userID)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+			return
+		}
+		rank := game.RankForXP(stat.XP)
 		entries = append(entries, leaderboardEntryResponse{
 			User:         profileFromUser(&user, stat),
 			Games:        stat.Total.Games,
@@ -164,15 +198,30 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 			Losses:       stat.Total.Losses,
 			WinRate:      stat.Total.WinRate,
 			RatingPoints: stat.Total.Wins * 3,
+			RespectDelta: respectDelta,
+			AccuracyBPS:  stat.Total.AccuracyBPS,
+			XP:           stat.XP,
+			RankTitle:    rank.Title,
 		})
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
+		switch sortBy {
+		case "respect":
+			if entries[i].RespectDelta != entries[j].RespectDelta {
+				return entries[i].RespectDelta > entries[j].RespectDelta
+			}
+		case "accuracy":
+			if entries[i].AccuracyBPS != entries[j].AccuracyBPS {
+				return entries[i].AccuracyBPS > entries[j].AccuracyBPS
+			}
+		default:
+			if entries[i].WinRate != entries[j].WinRate {
+				return entries[i].WinRate > entries[j].WinRate
+			}
+		}
 		if entries[i].RatingPoints != entries[j].RatingPoints {
 			return entries[i].RatingPoints > entries[j].RatingPoints
-		}
-		if entries[i].WinRate != entries[j].WinRate {
-			return entries[i].WinRate > entries[j].WinRate
 		}
 		if entries[i].Games != entries[j].Games {
 			return entries[i].Games > entries[j].Games
@@ -184,7 +233,16 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		entries[i].Rank = i + 1
 	}
 
-	writeJSON(w, http.StatusOK, leaderboardResponse{Period: period, Entries: entries})
+	writeJSON(w, http.StatusOK, leaderboardResponse{Period: period, Sort: sortBy, Entries: entries})
+}
+
+func isLeaderboardSort(sortBy string) bool {
+	switch sortBy {
+	case "winrate", "respect", "accuracy":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) profileForUser(ctx context.Context, user *models.User, viewerID int64) (profileResponse, error) {
@@ -214,6 +272,7 @@ func profileFromUser(user *models.User, stats userStatsResponse) profileResponse
 	if user == nil {
 		return profileResponse{Stats: stats}
 	}
+	rank := game.RankForXP(stats.XP)
 	return profileResponse{
 		ID:         user.ID,
 		Login:      user.Login,
@@ -224,6 +283,8 @@ func profileFromUser(user *models.User, stats userStatsResponse) profileResponse
 		CreatedAt:  user.CreatedAt,
 		UpdatedAt:  user.UpdatedAt,
 		Stats:      stats,
+		XP:         stats.XP,
+		RankTitle:  rank.Title,
 	}
 }
 
@@ -239,12 +300,13 @@ func (s *Server) statsForAllUsers(ctx context.Context, since *time.Time) (map[in
 			continue
 		}
 		stat := statsByUser[result.UserID]
-		addResult(&stat.Total, result.Won)
+		addResult(&stat.Total, result)
 		if result.Role == "mole" {
-			addResult(&stat.Mole, result.Won)
+			addResult(&stat.Mole, result)
 		} else {
-			addResult(&stat.Director, result.Won)
+			addResult(&stat.Director, result)
 		}
+		stat.XP += result.XP
 		statsByUser[result.UserID] = stat
 	}
 
@@ -274,19 +336,34 @@ func (s *Server) completedPlayerResults(ctx context.Context) ([]playerResult, er
 		if !state.IsFinished || state.Winner == "" {
 			continue
 		}
+		publicState, err := game.ProjectStateForViewer(state, 0)
+		if err != nil {
+			return nil, err
+		}
+		finalStats := map[int64]game.PublicFinalPlayerStats{}
+		if publicState.FinalSummary != nil {
+			for _, stat := range publicState.FinalSummary.PlayerStats {
+				finalStats[stat.UserID] = stat
+			}
+		}
 		for _, userID := range state.PlayerOrder {
 			player := state.Players[userID]
-			if player == nil || player.IsKicked || player.IsLeft {
+			if player == nil || player.IsKicked || player.IsLeft || player.IsBot || player.UserID <= 0 {
 				continue
 			}
 			role := player.Role
 			won := (state.Winner == "mole" && role == "mole") ||
 				(state.Winner == "players" && role != "mole")
+			finalStat := finalStats[userID]
 			results = append(results, playerResult{
-				UserID:     userID,
-				Role:       role,
-				Won:        won,
-				FinishedAt: finishedAt,
+				UserID:       userID,
+				Role:         role,
+				Won:          won,
+				MajorVotes:   finalStat.MajorVotes,
+				AlignedVotes: finalStat.AlignedVotes,
+				AccuracyBPS:  finalStat.AccuracyBPS,
+				XP:           finalStat.XPEarned,
+				FinishedAt:   finishedAt,
 			})
 		}
 	}
@@ -303,15 +380,20 @@ func gameFinishedAt(events []models.Event) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func addResult(stats *roleStatsResponse, won bool) {
+func addResult(stats *roleStatsResponse, result playerResult) {
 	stats.Games++
-	if won {
+	if result.Won {
 		stats.Wins++
 	} else {
 		stats.Losses++
 	}
+	stats.MajorVotes += result.MajorVotes
+	stats.AlignedVotes += result.AlignedVotes
 	if stats.Games > 0 {
 		stats.WinRate = float64(stats.Wins) / float64(stats.Games)
+	}
+	if stats.MajorVotes > 0 {
+		stats.AccuracyBPS = stats.AlignedVotes * game.TotalSharesBPS / stats.MajorVotes
 	}
 }
 

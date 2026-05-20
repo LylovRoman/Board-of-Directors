@@ -79,6 +79,8 @@ const (
 	MaxPublicChatMessages    = 80
 	MaxGovernanceProposals   = 4
 	FirstMajorVoteLock       = time.Minute
+	PhaseDuration            = 3 * time.Minute
+	BotActionDelay           = 10 * time.Second
 )
 
 var allDecisions = []string{"A", "B", "C", "D", "E", "F", "G", "H"}
@@ -164,6 +166,8 @@ type GameState struct {
 	Available               map[string]bool
 	MajorVoteOptions        []string
 	MajorVoteUnlockedAt     *time.Time
+	PhaseStartedAt          *time.Time
+	PhaseDeadlineAt         *time.Time
 	ChatMessages            []ChatMessageState
 	ChatReactions           map[int64]map[string]map[int64]bool
 }
@@ -255,6 +259,8 @@ type PublicGameState struct {
 	AvailableDecisions    []string                     `json:"available_decisions"`
 	MajorVoteOptions      []string                     `json:"major_vote_options"`
 	MajorVoteUnlockedAt   *time.Time                   `json:"major_vote_unlocked_at,omitempty"`
+	PhaseStartedAt        *time.Time                   `json:"phase_started_at,omitempty"`
+	PhaseDeadlineAt       *time.Time                   `json:"phase_deadline_at,omitempty"`
 	DecisionTypes         map[string]DecisionType      `json:"decision_types"`
 	AcceptedDecisions     []string                     `json:"accepted_decisions"`
 	RejectedDecisions     []string                     `json:"rejected_decisions"`
@@ -461,14 +467,21 @@ type PublicFinalSummary struct {
 }
 
 type PublicFinalPlayerStats struct {
-	UserID       int64  `json:"user_id"`
-	Name         string `json:"name"`
-	Role         string `json:"role"`
-	Won          bool   `json:"won"`
-	MajorVotes   int    `json:"major_votes"`
-	AlignedVotes int    `json:"aligned_votes"`
-	Mistakes     int    `json:"mistakes"`
-	AccuracyBPS  int    `json:"accuracy_bps"`
+	UserID       int64     `json:"user_id"`
+	Name         string    `json:"name"`
+	Role         string    `json:"role"`
+	Won          bool      `json:"won"`
+	MajorVotes   int       `json:"major_votes"`
+	AlignedVotes int       `json:"aligned_votes"`
+	Mistakes     int       `json:"mistakes"`
+	AccuracyBPS  int       `json:"accuracy_bps"`
+	XPEarned     int       `json:"xp_earned"`
+	XPBreakdown  []XPAward `json:"xp_breakdown,omitempty"`
+}
+
+type XPAward struct {
+	Reason string `json:"reason"`
+	Points int    `json:"points"`
 }
 
 type PublicReplayStep struct {
@@ -511,6 +524,17 @@ type PlayerKickedPayload struct {
 
 type PlayerLeftPayload struct {
 	UserID int64 `json:"user_id"`
+}
+
+type PlayerReplacedByBotPayload struct {
+	UserID       int64  `json:"user_id"`
+	BotUserID    int64  `json:"bot_user_id"`
+	Name         string `json:"name"`
+	Position     string `json:"company_position,omitempty"`
+	ShareBPS     int    `json:"share_bps"`
+	AuthorityBPS int    `json:"authority_bps"`
+	IsCEO        bool   `json:"is_ceo,omitempty"`
+	Role         string `json:"role,omitempty"`
 }
 
 type ChatMessageSentPayload struct {

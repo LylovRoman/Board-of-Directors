@@ -61,6 +61,14 @@ export function ProfileSheetContent(props: ProfileSheetContentProps) {
           <small>Respect</small>
           <strong>{props.profile?.respect_count ?? 0}</strong>
         </div>
+        <div>
+          <small>Ранг</small>
+          <strong>{props.profile?.rank_title ?? "Стажер совета"}</strong>
+        </div>
+        <div>
+          <small>XP</small>
+          <strong>{props.profile?.xp ?? 0}</strong>
+        </div>
       </section>
 
       <section className="role-stats">

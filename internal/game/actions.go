@@ -1760,6 +1760,14 @@ func cloneState(state *GameState) *GameState {
 		unlockedAt := *state.MajorVoteUnlockedAt
 		cloned.MajorVoteUnlockedAt = &unlockedAt
 	}
+	if state.PhaseStartedAt != nil {
+		phaseStartedAt := *state.PhaseStartedAt
+		cloned.PhaseStartedAt = &phaseStartedAt
+	}
+	if state.PhaseDeadlineAt != nil {
+		phaseDeadlineAt := *state.PhaseDeadlineAt
+		cloned.PhaseDeadlineAt = &phaseDeadlineAt
+	}
 	cloned.ChatReactions = make(map[int64]map[string]map[int64]bool, len(state.ChatReactions))
 	for messageID, reactions := range state.ChatReactions {
 		cloned.ChatReactions[messageID] = make(map[string]map[int64]bool, len(reactions))

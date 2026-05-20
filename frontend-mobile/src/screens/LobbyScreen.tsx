@@ -138,7 +138,7 @@ export function LobbyScreen(props: LobbyScreenProps) {
             <span>#{entry.rank}</span>
             <Avatar name={entry.user.name} avatarUrl={entry.user.avatar_url} size="sm" />
             <strong>{entry.user.name}</strong>
-            <em>{entry.rating_points}</em>
+            <em>{entry.xp} XP</em>
           </button>
         ))}
         {!props.leaderboardEntries.length ? (
@@ -182,11 +182,13 @@ function LobbyGameCard({ game, onOpen }: { game: Game; onOpen: () => void }) {
         <div className="game-card-head">
           <span className={`status-dot status-${game.status ?? "unknown"}`} />
           <div>
-            <strong>{game.company_name || game.title}</strong>
+            <strong>{game.title}</strong>
             <small>{statusLabel(game.status)} · {phaseLabel(game.phase)}</small>
           </div>
         </div>
-        {game.company_situation ? <p>{game.company_situation}</p> : null}
+        {game.company_name || game.company_situation ? (
+          <p>{game.company_name ? `${game.company_name}${game.company_situation ? `: ${game.company_situation}` : ""}` : game.company_situation}</p>
+        ) : null}
         <div className="game-card-meta">
           <span>{game.player_count ?? players.length}/8 игроков</span>
           <span>Раунд {game.current_round ?? 0}</span>
@@ -224,9 +226,9 @@ export function LeaderboardSheetContent(props: {
           <Avatar name={entry.user.name} avatarUrl={entry.user.avatar_url} size="md" />
           <span>
             <strong>{entry.user.name}</strong>
-            <small>{entry.games} игр · {Math.round(entry.winrate * 100)}% побед · {bpsToPercent(entry.user.stats?.total.winrate ? entry.user.stats.total.winrate * 10000 : 0)}</small>
+            <small>{entry.rank_title} · {entry.games} игр · {Math.round(entry.winrate * 100)}% побед · точность {bpsToPercent(entry.accuracy_bps)}</small>
           </span>
-          <em>{entry.rating_points}</em>
+          <em>{entry.xp} XP</em>
         </button>
       ))}
     </div>

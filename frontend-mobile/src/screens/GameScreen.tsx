@@ -45,6 +45,13 @@ import type {
   PublicVoteState,
 } from "../types";
 
+const BOT_ACTION_DELAY_MS = 10_000;
+
+function formatCountdown(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`;
+}
+
 interface GameScreenProps {
   state: PublicGameState;
   currentUserId: number;
@@ -67,6 +74,12 @@ export function GameScreen(props: GameScreenProps) {
   const me = state.me;
   const activePlayers = state.players ?? [];
   const canChat = actions.includes("send_chat_message");
+  const now = useNow();
+  const phaseDeadline = state.phase_deadline_at ? new Date(state.phase_deadline_at).getTime() : 0;
+  const phaseSecondsLeft = Math.max(0, Math.ceil((phaseDeadline - now) / 1000));
+  const phaseStarted = state.phase_started_at ? new Date(state.phase_started_at).getTime() : 0;
+  const botReadyAt = activePlayers.some((player) => player.is_bot) && phaseStarted ? phaseStarted + BOT_ACTION_DELAY_MS : 0;
+  const botDelaySecondsLeft = Math.max(0, Math.ceil((botReadyAt - now) / 1000));
 
   return (
     <main className="mobile-shell game-shell">
@@ -111,6 +124,12 @@ export function GameScreen(props: GameScreenProps) {
             <strong>{me?.role ? roleLabel(me.role) : "Гость"}</strong>
           </div>
         </div>
+        {phaseDeadline ? (
+          <div className="victory-score">
+            <span>До автозамены {formatCountdown(phaseSecondsLeft)}</span>
+            {botDelaySecondsLeft > 0 ? <span>Боты через {formatCountdown(botDelaySecondsLeft)}</span> : null}
+          </div>
+        ) : null}
         {typeof state.mole_victory_points === "number" && typeof state.players_victory_points === "number" ? (
           <div className="victory-score">
             <span>Крот {state.mole_victory_points}/3</span>
@@ -733,7 +752,18 @@ function FinishPhase(props: { state: PublicGameState; me?: PublicPlayerState; on
           <small>Точность</small>
           <strong>{bpsToPercent(myStat?.accuracy_bps)}</strong>
         </div>
+        <div>
+          <small>XP</small>
+          <strong>+{myStat?.xp_earned ?? 0}</strong>
+        </div>
       </div>
+      {myStat?.xp_breakdown?.length ? (
+        <div className="final-reveal">
+          {myStat.xp_breakdown.map((award) => (
+            <span key={`${award.reason}-${award.points}`}>{award.reason}: +{award.points}</span>
+          ))}
+        </div>
+      ) : null}
       {summary ? (
         <div className="final-reveal">
           <span>Крот: {playerName(props.state.players, summary.mole_user_id)}</span>

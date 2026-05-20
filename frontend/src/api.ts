@@ -9,6 +9,7 @@ import type {
   GameStateResponse,
   LeaderboardPeriod,
   LeaderboardResponse,
+  LeaderboardSort,
   LoginRequest,
   MeResponse,
   ProfileResponse,
@@ -133,8 +134,8 @@ export async function listGames(): Promise<GamesResponse["games"]> {
   return data.games;
 }
 
-export async function getLeaderboard(period: LeaderboardPeriod = "week"): Promise<LeaderboardResponse> {
-  return request<LeaderboardResponse>(`/leaderboard?period=${encodeURIComponent(period)}`);
+export async function getLeaderboard(period: LeaderboardPeriod = "week", sort: LeaderboardSort = "winrate"): Promise<LeaderboardResponse> {
+  return request<LeaderboardResponse>(`/leaderboard?period=${encodeURIComponent(period)}&sort=${encodeURIComponent(sort)}`);
 }
 
 export async function createGame(input: CreateGameRequest): Promise<CreateGameResponse> {

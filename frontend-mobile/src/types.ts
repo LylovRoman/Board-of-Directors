@@ -223,6 +223,13 @@ export interface PublicFinalPlayerStats {
   aligned_votes: number;
   mistakes: number;
   accuracy_bps: number;
+  xp_earned: number;
+  xp_breakdown?: XPAward[] | null;
+}
+
+export interface XPAward {
+  reason: string;
+  points: number;
 }
 
 export interface PublicReplayStep {
@@ -260,6 +267,8 @@ export interface PublicGameState {
   available_decisions?: string[] | null;
   major_vote_options?: string[] | null;
   major_vote_unlocked_at?: string | null;
+  phase_started_at?: string | null;
+  phase_deadline_at?: string | null;
   decision_types?: Record<string, DecisionType> | null;
   accepted_decisions?: string[] | null;
   rejected_decisions?: string[] | null;
@@ -313,6 +322,9 @@ export interface RoleStats {
   wins: number;
   losses: number;
   winrate: number;
+  major_votes?: number;
+  aligned_votes?: number;
+  accuracy_bps?: number;
 }
 
 export interface UserStats {
@@ -325,6 +337,8 @@ export interface Profile extends User {
   stats: UserStats;
   respect_count: number;
   respected_by_me: boolean;
+  xp: number;
+  rank_title: string;
 }
 
 export interface ProfileResponse {
@@ -332,6 +346,7 @@ export interface ProfileResponse {
 }
 
 export type LeaderboardPeriod = "week" | "month" | "all";
+export type LeaderboardSort = "winrate" | "respect" | "accuracy";
 
 export interface LeaderboardEntry {
   rank: number;
@@ -341,10 +356,15 @@ export interface LeaderboardEntry {
   losses: number;
   winrate: number;
   rating_points: number;
+  respect_delta: number;
+  accuracy_bps: number;
+  xp: number;
+  rank_title: string;
 }
 
 export interface LeaderboardResponse {
   period: LeaderboardPeriod;
+  sort: LeaderboardSort;
   entries: LeaderboardEntry[];
 }
 

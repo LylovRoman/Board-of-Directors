@@ -42,6 +42,7 @@ func NewRouter(store storage.Storage, jwtSecret ...string) http.Handler {
 		jwtSecret: secret,
 		tokenTTL:  7 * 24 * time.Hour,
 	}
+	go s.runMaintenance(context.Background())
 
 	r := chi.NewRouter()
 	r.Use(devCORSMiddleware)
@@ -297,6 +298,10 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListGames(w http.ResponseWriter, r *http.Request) {
+	if s.cleanupExpiredLobbies(r.Context(), time.Now().UTC()) {
+		s.broadcastGames(r.Context())
+	}
+
 	items, err := s.listGameItems(r.Context(), currentUserID(r))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
@@ -566,6 +571,16 @@ func (s *Server) handleGetGameState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	viewerID := currentUserID(r)
+
+	changed, err := s.engine.AdvanceGame(r.Context(), gameID, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, statusFromError(err), errorResponse{Error: err.Error()})
+		return
+	}
+	if changed {
+		s.broadcastGameState(r.Context(), gameID)
+		s.broadcastGames(r.Context())
+	}
 
 	gameModel, err := s.store.GetGameByID(r.Context(), gameID)
 	if err != nil {

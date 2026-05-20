@@ -133,6 +133,10 @@ func (m *mockStorage) CountUserRespect(ctx context.Context, userID int64) (int, 
 	return len(m.respects[userID]), nil
 }
 
+func (m *mockStorage) CountUserRespectSince(ctx context.Context, userID int64, since time.Time) (int, error) {
+	return len(m.respects[userID]), nil
+}
+
 func (m *mockStorage) HasUserRespect(ctx context.Context, giverID int64, receiverID int64) (bool, error) {
 	return m.respects[receiverID][giverID], nil
 }
@@ -563,6 +567,47 @@ func TestListGamesReturnsSummariesWithoutState(t *testing.T) {
 	}
 }
 
+func TestListGamesDeletesExpiredLobby(t *testing.T) {
+	now := time.Now().UTC()
+	store := &mockStorage{
+		users: []models.User{
+			{ID: 1, Login: "alice", Name: "Alice"},
+		},
+		games: []models.Game{
+			{ID: 1, Title: "Old Room", CreatedAt: now.Add(-2 * time.Hour)},
+			{ID: 2, Title: "Fresh Room", CreatedAt: now},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Old Room"}`},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{ID: 3, GameID: 2, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Fresh Room"}`},
+			{ID: 4, GameID: 2, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		},
+	}
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/games/", nil)
+	setAuth(req, t, models.User{ID: 1, Login: "alice"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Games []gameListItem `json:"games"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Games) != 1 || resp.Games[0].ID != 2 {
+		t.Fatalf("expected only fresh lobby, got %+v", resp.Games)
+	}
+	if len(store.games) != 1 || store.games[0].ID != 2 {
+		t.Fatalf("expected expired lobby to be deleted, got %+v", store.games)
+	}
+}
+
 func TestGameActionJoinGame(t *testing.T) {
 	store := &mockStorage{
 		users: []models.User{
@@ -983,6 +1028,71 @@ func TestGetGameState_HidesMoleTargetsForRegularPlayer(t *testing.T) {
 	}
 	if resp.State.Me.Role != "mole" {
 		t.Fatalf("expected viewer 2 role mole, got %q", resp.State.Me.Role)
+	}
+}
+
+func TestGetGameStateAdvancesExpiredPhase(t *testing.T) {
+	now := time.Now().UTC()
+	phaseStartedAt := now.Add(-game.PhaseDuration - time.Second)
+	store := &mockStorage{
+		games: []models.Game{{ID: 1, Title: "Mafia", CreatedAt: now}},
+		users: []models.User{
+			{ID: 1, Login: "alice", Name: "Alice"},
+			{ID: 2, Login: "bob", Name: "Bob"},
+			{ID: 3, Login: "carol", Name: "Carol"},
+		},
+		events: []models.Event{
+			{ID: 1, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`, CreatedAt: now},
+			{ID: 2, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`, CreatedAt: now},
+			{ID: 3, GameID: 1, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`, CreatedAt: now},
+			{ID: 4, GameID: 1, UserID: int64Ptr(3), ActorName: "Carol", EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`, CreatedAt: now},
+			{ID: 5, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventGameStarted, EventValue: `{}`, CreatedAt: now},
+			{ID: 6, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`, CreatedAt: now},
+			{ID: 7, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","D","F"],"sabotage":"H"}`, CreatedAt: now},
+			{ID: 8, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`, CreatedAt: now},
+			{ID: 9, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`, CreatedAt: now},
+			{ID: 10, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`, CreatedAt: now},
+			{ID: 11, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`, CreatedAt: now},
+			{ID: 12, GameID: 1, UserID: int64Ptr(1), ActorName: "Alice", EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","C","H"]}`, CreatedAt: phaseStartedAt},
+			{ID: 13, GameID: 1, UserID: int64Ptr(2), ActorName: "Bob", EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"A","abstain":false}`, CreatedAt: now},
+			{ID: 14, GameID: 1, UserID: int64Ptr(3), ActorName: "Carol", EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":3,"decision":"B","abstain":false}`, CreatedAt: now},
+		},
+	}
+	router := NewRouter(store, "test-secret")
+
+	req := httptest.NewRequest(http.MethodGet, "/games/1/state", nil)
+	setAuth(req, t, models.User{ID: 2, Login: "bob"})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		State game.PublicGameState `json:"state"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	foundReplacement := false
+	for _, event := range store.events {
+		if event.EventType == models.EventPlayerReplacedByBot {
+			foundReplacement = true
+			break
+		}
+	}
+	if !foundReplacement {
+		t.Fatalf("expected expired phase to append player replacement, got events %+v", store.events)
+	}
+	foundBot := false
+	for _, player := range resp.State.Players {
+		if player.IsBot && player.UserID < 0 {
+			foundBot = true
+			break
+		}
+	}
+	if !foundBot {
+		t.Fatalf("expected replacement bot in public state, got %+v", resp.State.Players)
 	}
 }
 

@@ -26,6 +26,7 @@ type Storage interface {
 	TouchUserLastSeen(ctx context.Context, id int64, minInterval time.Duration) error
 	GiveUserRespect(ctx context.Context, giverID int64, receiverID int64) error
 	CountUserRespect(ctx context.Context, userID int64) (int, error)
+	CountUserRespectSince(ctx context.Context, userID int64, since time.Time) (int, error)
 	HasUserRespect(ctx context.Context, giverID int64, receiverID int64) (bool, error)
 	DeleteUser(ctx context.Context, id int64) error
 
@@ -292,6 +293,19 @@ func (p *Postgres) CountUserRespect(ctx context.Context, userID int64) (int, err
 		FROM user_respects
 		WHERE receiver_user_id = $1
 	`, userID).Scan(&count)
+	return count, err
+}
+
+func (p *Postgres) CountUserRespectSince(ctx context.Context, userID int64, since time.Time) (int, error) {
+	if userID <= 0 {
+		return 0, errors.New("user_id is required")
+	}
+	var count int
+	err := p.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM user_respects
+		WHERE receiver_user_id = $1 AND created_at >= $2
+	`, userID, since).Scan(&count)
 	return count, err
 }
 

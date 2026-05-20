@@ -72,14 +72,14 @@ func (e *Engine) handleAddBot(state *GameState, actor *models.User, raw []byte) 
 	return events, nil
 }
 
-func (e *Engine) botTurnEvents(state *GameState) ([]models.Event, error) {
+func (e *Engine) botTurnEvents(state *GameState, now time.Time) ([]models.Event, error) {
 	if state == nil || state.Status != GameStatusStarted || state.IsFinished {
 		return nil, nil
 	}
 
 	var events []models.Event
 	for i := 0; i < maxBotTurnIterations; i++ {
-		nextEvents, err := e.nextBotTurnEvents(state)
+		nextEvents, err := e.nextBotTurnEvents(state, now)
 		if err != nil {
 			return nil, err
 		}
@@ -99,8 +99,11 @@ func (e *Engine) botTurnEvents(state *GameState) ([]models.Event, error) {
 	return nil, errors.New("bot turn loop did not settle")
 }
 
-func (e *Engine) nextBotTurnEvents(state *GameState) ([]models.Event, error) {
+func (e *Engine) nextBotTurnEvents(state *GameState, now time.Time) ([]models.Event, error) {
 	if state.Status != GameStatusStarted || state.IsFinished {
+		return nil, nil
+	}
+	if !botsMayAct(state, now) {
 		return nil, nil
 	}
 
@@ -113,11 +116,11 @@ func (e *Engine) nextBotTurnEvents(state *GameState) ([]models.Event, error) {
 		}
 		if len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
 			if mole := activePlayerByID(state, state.MoleUserID); mole != nil && mole.IsBot {
-				return e.botMoleObjectiveEvents(state, mole), nil
+				return e.botMoleObjectiveEvents(state, mole, now), nil
 			}
 		}
 	case GamePhaseMajorVoting:
-		if state.MajorVoteUnlockedAt != nil && time.Now().UTC().Before(*state.MajorVoteUnlockedAt) {
+		if state.MajorVoteUnlockedAt != nil && now.Before(*state.MajorVoteUnlockedAt) {
 			return nil, nil
 		}
 		for _, bot := range activeBots(state) {
@@ -141,6 +144,13 @@ func (e *Engine) nextBotTurnEvents(state *GameState) ([]models.Event, error) {
 	return nil, nil
 }
 
+func botsMayAct(state *GameState, now time.Time) bool {
+	if state.PhaseStartedAt == nil {
+		return true
+	}
+	return !now.Before(state.PhaseStartedAt.Add(BotActionDelay))
+}
+
 func (e *Engine) botMemorandumPreferenceEvent(state *GameState, bot *PlayerState) models.Event {
 	actor := botActor(bot)
 	memorandumType := MemorandumTypeOpportunity
@@ -158,11 +168,11 @@ func (e *Engine) botMemorandumPreferenceEvent(state *GameState, bot *PlayerState
 	}
 }
 
-func (e *Engine) botMoleObjectiveEvents(state *GameState, bot *PlayerState) []models.Event {
+func (e *Engine) botMoleObjectiveEvents(state *GameState, bot *PlayerState, now time.Time) []models.Event {
 	actor := botActor(bot)
 	targets, sabotage := e.chooseBotMoleObjectives()
 	showcase := e.majorShowcase(state.Available, targets, sabotage)
-	unlockedAt := time.Now().UTC().Add(FirstMajorVoteLock)
+	unlockedAt := now.UTC().Add(FirstMajorVoteLock)
 
 	events := []models.Event{{
 		GameID:    state.GameID,

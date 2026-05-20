@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"agentbackend/internal/models"
 )
@@ -100,6 +101,49 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if player := state.Players[payload.UserID]; player != nil {
 			player.IsKicked = true
 		}
+	case models.EventPlayerReplacedByBot:
+		var payload PlayerReplacedByBotPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if player := state.Players[payload.UserID]; player != nil {
+			player.IsLeft = true
+		}
+		bot := &PlayerState{
+			UserID:       payload.BotUserID,
+			Name:         payload.Name,
+			Position:     payload.Position,
+			ShareBPS:     payload.ShareBPS,
+			AuthorityBPS: payload.AuthorityBPS,
+			IsBot:        true,
+		}
+		if bot.AuthorityBPS == 0 {
+			bot.AuthorityBPS = InitialAuthorityBPS
+		}
+		state.Players[payload.BotUserID] = bot
+		inserted := false
+		for index, userID := range state.PlayerOrder {
+			if userID == payload.UserID {
+				nextOrder := append([]int64{}, state.PlayerOrder[:index+1]...)
+				nextOrder = append(nextOrder, payload.BotUserID)
+				nextOrder = append(nextOrder, state.PlayerOrder[index+1:]...)
+				state.PlayerOrder = nextOrder
+				inserted = true
+				break
+			}
+		}
+		if !inserted {
+			state.PlayerOrder = append(state.PlayerOrder, payload.BotUserID)
+		}
+		if state.HostUserID == payload.UserID {
+			state.HostUserID = payload.BotUserID
+		}
+		if state.CEOUserID == payload.UserID || payload.IsCEO {
+			state.CEOUserID = payload.BotUserID
+		}
+		if state.MoleUserID == payload.UserID || payload.Role == "mole" {
+			state.MoleUserID = payload.BotUserID
+		}
 	case models.EventChatMessageSent:
 		var payload ChatMessageSentPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -132,6 +176,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.Status = GameStatusStarted
 		state.Phase = GamePhaseMoleObjectiveSelection
 		state.TreasuryShareBPS = InitialTreasurySharesBPS
+		setPhaseTiming(state, event)
 	case models.EventMoleSelected:
 		var payload MoleSelectedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -226,6 +271,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		} else {
 			state.MajorVoteUnlockedAt = nil
 		}
+		setPhaseTiming(state, event)
 	case models.EventVoteSubmitted:
 		var payload VoteSubmittedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -268,6 +314,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.GovernanceSubmissions = map[int64]GovernanceSubmissionState{}
 		state.GovernanceVotes = map[int64]GovernanceVoteState{}
 		state.MajorVoteOptions = nil
+		setPhaseTiming(state, event)
 	case models.EventGovernanceProposalSubmitted:
 		var payload GovernanceProposalSubmittedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -331,6 +378,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.Phase = GamePhaseGovernanceVoting
 		state.GovernanceRound = payload.Round
 		state.GovernanceVotes = map[int64]GovernanceVoteState{}
+		setPhaseTiming(state, event)
 	case models.EventGovernanceVoteSubmitted:
 		var payload GovernanceVoteSubmittedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -396,6 +444,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.Status = GameStatusFinished
 		state.IsFinished = true
 		state.Winner = payload.Winner
+		state.PhaseDeadlineAt = nil
 	case models.EventChatReactionToggled:
 		var payload ChatReactionToggledPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -431,6 +480,16 @@ func ApplyEvent(state *GameState, event models.Event) error {
 	}
 
 	return nil
+}
+
+func setPhaseTiming(state *GameState, event models.Event) {
+	startedAt := event.CreatedAt.UTC()
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	deadlineAt := startedAt.Add(PhaseDuration)
+	state.PhaseStartedAt = &startedAt
+	state.PhaseDeadlineAt = &deadlineAt
 }
 
 func buildRoundReport(state *GameState, round int, outcome string, decision string, reason string) RoundReport {

@@ -23,6 +23,8 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		RejectedDecisions:     append([]string(nil), state.RejectedOrder...),
 		MajorVoteOptions:      append([]string(nil), state.MajorVoteOptions...),
 		MajorVoteUnlockedAt:   cloneTimePtr(state.MajorVoteUnlockedAt),
+		PhaseStartedAt:        cloneTimePtr(state.PhaseStartedAt),
+		PhaseDeadlineAt:       cloneTimePtr(state.PhaseDeadlineAt),
 		DecisionTypes:         publicDecisionTypes(),
 		GovernanceProposals:   publicGovernanceProposals(state),
 		GovernanceSubmissions: publicGovernanceSubmissions(state),
@@ -456,6 +458,8 @@ func publicFinalSummary(state *GameState) *PublicFinalSummary {
 		if stat.MajorVotes > 0 {
 			stat.AccuracyBPS = stat.AlignedVotes * TotalSharesBPS / stat.MajorVotes
 		}
+		stat.XPBreakdown = xpBreakdownForPlayer(state, player, stat)
+		stat.XPEarned = XPTotal(stat.XPBreakdown)
 
 		if minMistakes == -1 || stat.Mistakes < minMistakes {
 			minMistakes = stat.Mistakes
