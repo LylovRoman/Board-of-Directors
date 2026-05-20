@@ -401,12 +401,14 @@ curl -X POST http://localhost:8000/games/1/actions \
 curl -X POST http://localhost:8000/admin/simulations/bot-games \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: local-admin-token" \
-  -d '{"games":100,"players":6,"seed":12345,"include_games":false,"bot_memorandum_count":7,"bot_memorandum_type":"risk"}'
+  -d '{"games":100,"players":6,"seed":12345,"include_games":false,"bot_memorandum_count":7,"bot_memorandum_type":"risk","workers":4,"monte_carlo_rollouts":32}'
 ```
 
 `bot_memorandum_count` defaults to `1` and supports up to `50`. Values above `1` give only simulation director bots extra hidden memorandum cards; normal games and public game state still use one memorandum per Director. `bot_memorandum_type` can be `opportunity`, `risk`, or omitted/`mixed`; explicit types force every simulation memorandum to that type, while `mixed` alternates the two types.
 
-Симуляции выполняются в памяти, не создают записи в `users`, `games` и `events`, используют текущую логику ботов и возвращают агрегированную статистику баланса.
+`workers` controls the parallel worker pool and defaults to `min(runtime.GOMAXPROCS, games)` when omitted or `0`; values above `64` are rejected. `monte_carlo_rollouts` defaults to `32` and supports up to `512`, trading CPU time for stronger bot decisions.
+
+Симуляции выполняются в памяти, не создают записи в `users`, `games` и `events`, используют Monte Carlo логику ботов с моделями подозрения, доверия и коалиций, а также возвращают агрегированную статистику баланса и метрики скорости (`duration_ms`, `games_per_second`).
 
 ## Примечания для разработки
 

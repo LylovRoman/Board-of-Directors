@@ -29,6 +29,7 @@ type Engine struct {
 	botSimulationMemorandumCount int
 	botSimulationMemorandumType  BotSimulationMemorandumType
 	botSimulationMemorandums     map[int64][]MemorandumState
+	botSimulationRollouts        int
 }
 
 func NewEngine(store Store) *Engine {

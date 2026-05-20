@@ -2,6 +2,7 @@ package game
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 
 	"agentbackend/internal/models"
@@ -16,15 +17,68 @@ func TestSimulateBotGamesAcceptsBotMemorandumCount(t *testing.T) {
 		IncludeGames:       true,
 		BotMemorandumCount: 7,
 		BotMemorandumType:  BotSimulationMemorandumTypeRisk,
+		Workers:            1,
+		MonteCarloRollouts: 5,
 	})
 	if err != nil {
 		t.Fatalf("SimulateBotGames: %v", err)
 	}
-	if response.Games != 1 || response.Players != 3 || response.Seed != seed || response.BotMemorandumCount != 7 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk {
+	if response.Games != 1 || response.Players != 3 || response.Seed != seed || response.BotMemorandumCount != 7 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk || response.Workers != 1 || response.MonteCarloRollouts != 5 {
 		t.Fatalf("unexpected response metadata: %+v", response)
+	}
+	if response.DurationMS < 0 || response.GamesPerSecond <= 0 {
+		t.Fatalf("expected timing metadata, got duration=%d gps=%f", response.DurationMS, response.GamesPerSecond)
 	}
 	if len(response.Results) != 1 {
 		t.Fatalf("expected included game result, got %+v", response.Results)
+	}
+}
+
+func TestSimulateBotGamesDeterministicAcrossWorkerCounts(t *testing.T) {
+	seed := int64(9091)
+	left, err := SimulateBotGames(BotSimulationRequest{
+		Games:              8,
+		Players:            6,
+		Seed:               &seed,
+		IncludeGames:       true,
+		Workers:            1,
+		MonteCarloRollouts: 4,
+	})
+	if err != nil {
+		t.Fatalf("SimulateBotGames workers=1: %v", err)
+	}
+	right, err := SimulateBotGames(BotSimulationRequest{
+		Games:              8,
+		Players:            6,
+		Seed:               &seed,
+		IncludeGames:       true,
+		Workers:            4,
+		MonteCarloRollouts: 4,
+	})
+	if err != nil {
+		t.Fatalf("SimulateBotGames workers=4: %v", err)
+	}
+
+	if left.MoleWins != right.MoleWins ||
+		left.PlayersWins != right.PlayersWins ||
+		left.AverageRounds != right.AverageRounds ||
+		left.AcceptedCleanCount != right.AcceptedCleanCount ||
+		left.AcceptedTargetCount != right.AcceptedTargetCount ||
+		left.AcceptedSabotageCount != right.AcceptedSabotageCount {
+		t.Fatalf("expected deterministic aggregate across workers, left=%+v right=%+v", left, right)
+	}
+	if len(left.Results) != len(right.Results) {
+		t.Fatalf("expected same result count, left=%d right=%d", len(left.Results), len(right.Results))
+	}
+	for i := range left.Results {
+		if left.Results[i].Winner != right.Results[i].Winner ||
+			left.Results[i].Rounds != right.Results[i].Rounds ||
+			left.Results[i].MoleUserID != right.Results[i].MoleUserID ||
+			left.Results[i].MolePoints != right.Results[i].MolePoints ||
+			left.Results[i].PlayersPoints != right.Results[i].PlayersPoints ||
+			strings.Join(left.Results[i].AcceptedDecisions, ",") != strings.Join(right.Results[i].AcceptedDecisions, ",") {
+			t.Fatalf("expected deterministic game %d, left=%+v right=%+v", i, left.Results[i], right.Results[i])
+		}
 	}
 }
 
@@ -47,6 +101,21 @@ func TestSimulateBotGamesValidatesBotMemorandumType(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected unsupported bot_memorandum_type to fail")
+	}
+}
+
+func TestSimulateBotGamesValidatesWorkersAndRollouts(t *testing.T) {
+	if _, err := SimulateBotGames(BotSimulationRequest{Games: 1, Players: 3, Workers: MaxBotSimulationWorkers + 1}); err == nil {
+		t.Fatalf("expected oversized workers to fail")
+	}
+	if _, err := SimulateBotGames(BotSimulationRequest{Games: 1, Players: 3, Workers: -1}); err == nil {
+		t.Fatalf("expected negative workers to fail")
+	}
+	if _, err := SimulateBotGames(BotSimulationRequest{Games: 1, Players: 3, MonteCarloRollouts: MaxBotSimulationMonteCarloRollouts + 1}); err == nil {
+		t.Fatalf("expected oversized monte_carlo_rollouts to fail")
+	}
+	if _, err := SimulateBotGames(BotSimulationRequest{Games: 1, Players: 3, MonteCarloRollouts: -1}); err == nil {
+		t.Fatalf("expected negative monte_carlo_rollouts to fail")
 	}
 }
 
@@ -138,5 +207,34 @@ func TestMultiMemorandumInferenceScoresCleanIntersection(t *testing.T) {
 	}
 	if scoreB, scoreA := engine.scoreBotMajorDecision(state, bot, "B"), engine.scoreBotMajorDecision(state, bot, "A"); scoreB <= scoreA {
 		t.Fatalf("expected inferred-clean B to outscore A, scoreB=%d scoreA=%d", scoreB, scoreA)
+	}
+}
+
+func BenchmarkSimulateBotGames100Workers1(b *testing.B) {
+	seed := int64(1001)
+	for i := 0; i < b.N; i++ {
+		if _, err := SimulateBotGames(BotSimulationRequest{
+			Games:              100,
+			Players:            6,
+			Seed:               &seed,
+			Workers:            1,
+			MonteCarloRollouts: 8,
+		}); err != nil {
+			b.Fatalf("SimulateBotGames: %v", err)
+		}
+	}
+}
+
+func BenchmarkSimulateBotGames1000DefaultWorkers(b *testing.B) {
+	seed := int64(1002)
+	for i := 0; i < b.N; i++ {
+		if _, err := SimulateBotGames(BotSimulationRequest{
+			Games:              1000,
+			Players:            6,
+			Seed:               &seed,
+			MonteCarloRollouts: 8,
+		}); err != nil {
+			b.Fatalf("SimulateBotGames: %v", err)
+		}
 	}
 }

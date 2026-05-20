@@ -72,6 +72,61 @@ func TestSuspicionInfluencesCurrentMajorVoteAndGovernanceScoring(t *testing.T) {
 	}
 }
 
+func TestMonteCarloDirectorAvoidsHighPosteriorRiskDecision(t *testing.T) {
+	bot := &PlayerState{UserID: -1, Name: "Bot", IsBot: true, Role: "player", ShareBPS: 2500, AuthorityBPS: InitialAuthorityBPS}
+	state := baseBotSuspicionTestState(bot)
+	state.MajorVoteOptions = []string{"A", "B", "C", "D"}
+
+	engine := &Engine{
+		botSimulationRollouts: 8,
+		botSimulationMemorandums: map[int64][]MemorandumState{
+			bot.UserID: {
+				{UserID: bot.UserID, Type: MemorandumTypeRisk, Decisions: []string{"A", "C", "E"}},
+				{UserID: bot.UserID, Type: MemorandumTypeRisk, Decisions: []string{"A", "D", "E"}},
+				{UserID: bot.UserID, Type: MemorandumTypeRisk, Decisions: []string{"C", "D", "E"}},
+				{UserID: bot.UserID, Type: MemorandumTypeOpportunity, Decisions: []string{"A", "B", "E"}},
+				{UserID: bot.UserID, Type: MemorandumTypeOpportunity, Decisions: []string{"B", "C", "E"}},
+				{UserID: bot.UserID, Type: MemorandumTypeOpportunity, Decisions: []string{"B", "D", "E"}},
+			},
+		},
+	}
+
+	if decision := engine.chooseBotMajorDecision(state, bot); decision != "B" {
+		t.Fatalf("expected Monte Carlo policy to choose inferred-clean B, got %s", decision)
+	}
+}
+
+func TestMonteCarloDirectorAvoidsFollowingSuspiciousCurrentVote(t *testing.T) {
+	bot, suspect, trusted := botSuspicionPlayers()
+	state := baseBotSuspicionTestState(bot, suspect, trusted)
+	addSabotageAcceptedReport(state, suspect, trusted)
+	b := "B"
+	d := "D"
+	state.CurrentVotes = map[int64]VoteState{
+		suspect.UserID: {UserID: suspect.UserID, Decision: &b},
+		trusted.UserID: {UserID: trusted.UserID, Decision: &d},
+	}
+
+	engine := &Engine{botSimulationRollouts: 8}
+	if decision := engine.chooseBotMajorDecision(state, bot); decision == "B" {
+		t.Fatalf("expected Monte Carlo policy to avoid following suspicious vote B")
+	}
+}
+
+func TestMonteCarloMolePrefersSabotageOrTarget(t *testing.T) {
+	mole := &PlayerState{UserID: -1, Name: "Mole", IsBot: true, Role: "mole", ShareBPS: 2500, AuthorityBPS: InitialAuthorityBPS}
+	state := baseBotSuspicionTestState(mole)
+	state.MoleUserID = mole.UserID
+	state.MoleTargets = []string{"A", "C", "F"}
+	state.MoleSabotage = "H"
+	state.MajorVoteOptions = []string{"B", "C", "D", "H"}
+
+	engine := &Engine{botSimulationRollouts: 8}
+	if decision := engine.chooseBotMajorDecision(state, mole); decision != "H" {
+		t.Fatalf("expected mole to prefer sabotage H over target/clean choices, got %s", decision)
+	}
+}
+
 func botSuspicionPlayers() (*PlayerState, *PlayerState, *PlayerState) {
 	bot := &PlayerState{UserID: -1, Name: "Bot", IsBot: true, Role: "player", ShareBPS: 2500, AuthorityBPS: InitialAuthorityBPS}
 	suspect := &PlayerState{UserID: -2, Name: "Suspect", IsBot: true, Role: "player", ShareBPS: 3500, AuthorityBPS: InitialAuthorityBPS}

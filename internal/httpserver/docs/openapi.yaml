@@ -487,7 +487,7 @@ paths:
   /admin/simulations/bot-games:
     post:
       summary: Run fast all-bot game simulations
-      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`. Set `bot_memorandum_count` above 1 to give simulation-only director bots extra hidden memorandum cards and stronger mathematical inference without changing normal games. Use `bot_memorandum_type` to force every simulation memorandum to `opportunity` or `risk`; omitted/`mixed` alternates types.
+      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`. Simulations run in parallel across a bounded worker pool and use Monte Carlo bot policy scoring. Set `bot_memorandum_count` above 1 to give simulation-only director bots extra hidden memorandum cards and stronger mathematical inference without changing normal games. Use `bot_memorandum_type` to force every simulation memorandum to `opportunity` or `risk`; omitted/`mixed` alternates types.
       security:
         - adminToken: []
       requestBody:
@@ -550,6 +550,17 @@ components:
           enum: [mixed, opportunity, risk]
           default: mixed
           description: Type policy for simulation bot memorandums. `opportunity` or `risk` forces all cards to that type. `mixed` preserves the default alternating opportunity/risk behavior.
+        workers:
+          type: integer
+          minimum: 0
+          maximum: 64
+          description: Number of parallel simulation workers. Omitted or 0 uses min(runtime.GOMAXPROCS, games).
+        monte_carlo_rollouts:
+          type: integer
+          default: 32
+          minimum: 0
+          maximum: 512
+          description: Number of Monte Carlo samples used by bot policy scoring for major votes and governance choices.
 
     BotSimulationGameResult:
       type: object
@@ -594,6 +605,16 @@ components:
         bot_memorandum_type:
           type: string
           enum: [mixed, opportunity, risk]
+        workers:
+          type: integer
+        monte_carlo_rollouts:
+          type: integer
+        duration_ms:
+          type: integer
+          format: int64
+        games_per_second:
+          type: number
+          format: double
         mole_wins:
           type: integer
         players_wins:

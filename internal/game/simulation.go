@@ -4,16 +4,21 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"agentbackend/internal/models"
 )
 
 const (
-	MaxBotSimulationGames           = 1000
-	MaxBotSimulationMemorandumCount = 50
-	maxSimulationSteps              = 5000
+	MaxBotSimulationGames                  = 1000
+	MaxBotSimulationMemorandumCount        = 50
+	MaxBotSimulationWorkers                = 64
+	MaxBotSimulationMonteCarloRollouts     = 512
+	DefaultBotSimulationMonteCarloRollouts = 32
+	maxSimulationSteps                     = 5000
 )
 
 type BotSimulationMemorandumType string
@@ -31,6 +36,8 @@ type BotSimulationRequest struct {
 	IncludeGames       bool                        `json:"include_games"`
 	BotMemorandumCount int                         `json:"bot_memorandum_count,omitempty"`
 	BotMemorandumType  BotSimulationMemorandumType `json:"bot_memorandum_type,omitempty"`
+	Workers            int                         `json:"workers,omitempty"`
+	MonteCarloRollouts int                         `json:"monte_carlo_rollouts,omitempty"`
 }
 
 type BotSimulationResponse struct {
@@ -39,6 +46,10 @@ type BotSimulationResponse struct {
 	Seed                         int64                       `json:"seed"`
 	BotMemorandumCount           int                         `json:"bot_memorandum_count"`
 	BotMemorandumType            BotSimulationMemorandumType `json:"bot_memorandum_type"`
+	Workers                      int                         `json:"workers"`
+	MonteCarloRollouts           int                         `json:"monte_carlo_rollouts"`
+	DurationMS                   int64                       `json:"duration_ms"`
+	GamesPerSecond               float64                     `json:"games_per_second"`
 	MoleWins                     int                         `json:"mole_wins"`
 	PlayersWins                  int                         `json:"players_wins"`
 	MoleWinrate                  float64                     `json:"mole_winrate"`
@@ -66,62 +77,77 @@ type BotSimulationGameResult struct {
 	AcceptedDecisions     []string `json:"accepted_decisions,omitempty"`
 }
 
+type botSimulationConfig struct {
+	Games              int
+	Players            int
+	Seed               int64
+	IncludeGames       bool
+	BotMemorandumCount int
+	BotMemorandumType  BotSimulationMemorandumType
+	Workers            int
+	MonteCarloRollouts int
+}
+
 func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, error) {
-	games := request.Games
-	if games == 0 {
-		games = 1
-	}
-	if games < 0 || games > MaxBotSimulationGames {
-		return BotSimulationResponse{}, fmt.Errorf("games must be between 1 and %d", MaxBotSimulationGames)
-	}
-	players := request.Players
-	if players == 0 {
-		players = 6
-	}
-	if players < MinPlayers || players > MaxPlayers {
-		return BotSimulationResponse{}, fmt.Errorf("players must be between %d and %d", MinPlayers, MaxPlayers)
-	}
-	botMemorandumCount := request.BotMemorandumCount
-	if botMemorandumCount == 0 {
-		botMemorandumCount = 1
-	}
-	if botMemorandumCount < 0 || botMemorandumCount > MaxBotSimulationMemorandumCount {
-		return BotSimulationResponse{}, fmt.Errorf("bot_memorandum_count must be between 1 and %d", MaxBotSimulationMemorandumCount)
-	}
-	botMemorandumType := request.BotMemorandumType
-	if botMemorandumType == "" {
-		botMemorandumType = BotSimulationMemorandumTypeMixed
-	}
-	if !isBotSimulationMemorandumType(botMemorandumType) {
-		return BotSimulationResponse{}, errors.New("bot_memorandum_type must be one of mixed, opportunity, risk")
+	start := time.Now()
+	config, err := normalizeBotSimulationRequest(request)
+	if err != nil {
+		return BotSimulationResponse{}, err
 	}
 
-	seed := time.Now().UTC().UnixNano()
-	if request.Seed != nil {
-		seed = *request.Seed
+	results := make([]BotSimulationGameResult, config.Games)
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var firstErr error
+
+	for worker := 0; worker < config.Workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				engine := newBotSimulationEngine(config, index)
+				result, err := engine.simulateBotGame(index, config.Players)
+				if err != nil {
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					errMu.Unlock()
+					continue
+				}
+				results[index-1] = result
+			}
+		}()
 	}
-	engine := &Engine{
-		rng:                          rand.New(rand.NewSource(seed)),
-		botSimulationMemorandumCount: botMemorandumCount,
-		botSimulationMemorandumType:  botMemorandumType,
-		botSimulationMemorandums:     map[int64][]MemorandumState{},
+
+	for i := 1; i <= config.Games; i++ {
+		jobs <- i
 	}
+	close(jobs)
+	wg.Wait()
+
+	errMu.Lock()
+	err = firstErr
+	errMu.Unlock()
+	if err != nil {
+		return BotSimulationResponse{}, err
+	}
+
 	response := BotSimulationResponse{
-		Games:              games,
-		Players:            players,
-		Seed:               seed,
-		BotMemorandumCount: botMemorandumCount,
-		BotMemorandumType:  botMemorandumType,
+		Games:              config.Games,
+		Players:            config.Players,
+		Seed:               config.Seed,
+		BotMemorandumCount: config.BotMemorandumCount,
+		BotMemorandumType:  config.BotMemorandumType,
+		Workers:            config.Workers,
+		MonteCarloRollouts: config.MonteCarloRollouts,
 	}
-	if request.IncludeGames {
-		response.Results = make([]BotSimulationGameResult, 0, games)
+	if config.IncludeGames {
+		response.Results = make([]BotSimulationGameResult, 0, config.Games)
 	}
 
-	for i := 1; i <= games; i++ {
-		result, err := engine.simulateBotGame(i, players)
-		if err != nil {
-			return BotSimulationResponse{}, err
-		}
+	for _, result := range results {
 		if result.Winner == "mole" {
 			response.MoleWins++
 		} else if result.Winner == "players" {
@@ -131,21 +157,111 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		response.AcceptedCleanCount += result.AcceptedCleanCount
 		response.AcceptedTargetCount += result.AcceptedTargetCount
 		response.AcceptedSabotageCount += result.AcceptedSabotageCount
-		if request.IncludeGames {
+		if config.IncludeGames {
 			response.Results = append(response.Results, result)
 		}
 	}
 
-	if games > 0 {
-		response.MoleWinrate = float64(response.MoleWins) / float64(games)
-		response.PlayersWinrate = float64(response.PlayersWins) / float64(games)
-		response.AverageRounds /= float64(games)
-		response.AverageAcceptedCleanCount = float64(response.AcceptedCleanCount) / float64(games)
-		response.AverageAcceptedTargetCount = float64(response.AcceptedTargetCount) / float64(games)
-		response.AverageAcceptedSabotageCount = float64(response.AcceptedSabotageCount) / float64(games)
+	if config.Games > 0 {
+		response.MoleWinrate = float64(response.MoleWins) / float64(config.Games)
+		response.PlayersWinrate = float64(response.PlayersWins) / float64(config.Games)
+		response.AverageRounds /= float64(config.Games)
+		response.AverageAcceptedCleanCount = float64(response.AcceptedCleanCount) / float64(config.Games)
+		response.AverageAcceptedTargetCount = float64(response.AcceptedTargetCount) / float64(config.Games)
+		response.AverageAcceptedSabotageCount = float64(response.AcceptedSabotageCount) / float64(config.Games)
+	}
+	response.DurationMS = time.Since(start).Milliseconds()
+	if elapsed := time.Since(start).Seconds(); elapsed > 0 {
+		response.GamesPerSecond = float64(config.Games) / elapsed
 	}
 
 	return response, nil
+}
+
+func normalizeBotSimulationRequest(request BotSimulationRequest) (botSimulationConfig, error) {
+	games := request.Games
+	if games == 0 {
+		games = 1
+	}
+	if games < 0 || games > MaxBotSimulationGames {
+		return botSimulationConfig{}, fmt.Errorf("games must be between 1 and %d", MaxBotSimulationGames)
+	}
+	players := request.Players
+	if players == 0 {
+		players = 6
+	}
+	if players < MinPlayers || players > MaxPlayers {
+		return botSimulationConfig{}, fmt.Errorf("players must be between %d and %d", MinPlayers, MaxPlayers)
+	}
+	botMemorandumCount := request.BotMemorandumCount
+	if botMemorandumCount == 0 {
+		botMemorandumCount = 1
+	}
+	if botMemorandumCount < 0 || botMemorandumCount > MaxBotSimulationMemorandumCount {
+		return botSimulationConfig{}, fmt.Errorf("bot_memorandum_count must be between 1 and %d", MaxBotSimulationMemorandumCount)
+	}
+	botMemorandumType := request.BotMemorandumType
+	if botMemorandumType == "" {
+		botMemorandumType = BotSimulationMemorandumTypeMixed
+	}
+	if !isBotSimulationMemorandumType(botMemorandumType) {
+		return botSimulationConfig{}, errors.New("bot_memorandum_type must be one of mixed, opportunity, risk")
+	}
+	workers := request.Workers
+	if workers == 0 {
+		workers = minInt(runtime.GOMAXPROCS(0), games)
+	}
+	if workers < 0 || workers > MaxBotSimulationWorkers {
+		return botSimulationConfig{}, fmt.Errorf("workers must be between 1 and %d", MaxBotSimulationWorkers)
+	}
+	if workers == 0 {
+		workers = 1
+	}
+	if workers > games {
+		workers = games
+	}
+	monteCarloRollouts := request.MonteCarloRollouts
+	if monteCarloRollouts == 0 {
+		monteCarloRollouts = DefaultBotSimulationMonteCarloRollouts
+	}
+	if monteCarloRollouts < 0 || monteCarloRollouts > MaxBotSimulationMonteCarloRollouts {
+		return botSimulationConfig{}, fmt.Errorf("monte_carlo_rollouts must be between 1 and %d", MaxBotSimulationMonteCarloRollouts)
+	}
+
+	seed := time.Now().UTC().UnixNano()
+	if request.Seed != nil {
+		seed = *request.Seed
+	}
+	return botSimulationConfig{
+		Games:              games,
+		Players:            players,
+		Seed:               seed,
+		IncludeGames:       request.IncludeGames,
+		BotMemorandumCount: botMemorandumCount,
+		BotMemorandumType:  botMemorandumType,
+		Workers:            workers,
+		MonteCarloRollouts: monteCarloRollouts,
+	}, nil
+}
+
+func newBotSimulationEngine(config botSimulationConfig, index int) *Engine {
+	return &Engine{
+		rng:                          rand.New(rand.NewSource(botSimulationGameSeed(config.Seed, index))),
+		botSimulationMemorandumCount: config.BotMemorandumCount,
+		botSimulationMemorandumType:  config.BotMemorandumType,
+		botSimulationMemorandums:     map[int64][]MemorandumState{},
+		botSimulationRollouts:        config.MonteCarloRollouts,
+	}
+}
+
+func botSimulationGameSeed(baseSeed int64, index int) int64 {
+	x := uint64(baseSeed) + uint64(index)*0x9e3779b97f4a7c15
+	x ^= x >> 30
+	x *= 0xbf58476d1ce4e5b9
+	x ^= x >> 27
+	x *= 0x94d049bb133111eb
+	x ^= x >> 31
+	return int64(x)
 }
 
 func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResult, error) {

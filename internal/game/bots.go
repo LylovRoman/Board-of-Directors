@@ -334,6 +334,13 @@ func (e *Engine) chooseBotMoleObjectives() ([]string, string) {
 }
 
 func (e *Engine) chooseBotMajorDecision(state *GameState, bot *PlayerState) string {
+	if decision, ok := e.chooseBotMajorDecisionByPolicy(state, bot); ok {
+		return decision
+	}
+	return e.chooseBotMajorDecisionFast(state, bot)
+}
+
+func (e *Engine) chooseBotMajorDecisionFast(state *GameState, bot *PlayerState) string {
 	options := currentMajorOptions(state)
 	if len(options) == 0 {
 		return ""
@@ -647,6 +654,13 @@ func (e *Engine) currentVoteSuspicionPressure(state *GameState, bot *PlayerState
 }
 
 func (e *Engine) chooseBotGovernanceProposal(state *GameState, bot *PlayerState) (SubmitGovernanceProposalActionPayload, bool) {
+	if payload, ok, handled := e.chooseBotGovernanceProposalByPolicy(state, bot); handled {
+		return payload, ok
+	}
+	return e.chooseBotGovernanceProposalFast(state, bot)
+}
+
+func (e *Engine) chooseBotGovernanceProposalFast(state *GameState, bot *PlayerState) (SubmitGovernanceProposalActionPayload, bool) {
 	if bot.Role == "mole" {
 		if state.TreasuryShareBPS > 0 {
 			return SubmitGovernanceProposalActionPayload{ProposalType: GovernanceProposalTreasuryGrant, TargetUserID: bot.UserID}, true
@@ -707,6 +721,13 @@ func (e *Engine) chooseBotGovernanceProposal(state *GameState, bot *PlayerState)
 }
 
 func (e *Engine) chooseBotGovernanceVote(state *GameState, bot *PlayerState) (int, bool) {
+	if proposalID, abstain, ok := e.chooseBotGovernanceVoteByPolicy(state, bot); ok {
+		return proposalID, abstain
+	}
+	return e.chooseBotGovernanceVoteFast(state, bot)
+}
+
+func (e *Engine) chooseBotGovernanceVoteFast(state *GameState, bot *PlayerState) (int, bool) {
 	bestProposalID := 0
 	bestScore := -1 << 30
 	for _, proposalID := range state.GovernanceProposalOrder {
