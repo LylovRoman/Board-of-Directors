@@ -219,6 +219,8 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 	e.shufflePlayers(shuffledPlayers)
 	mole := shuffledPlayers[0]
 	ceo := shuffledPlayers[1%len(shuffledPlayers)]
+	nonMoles := append([]*PlayerState(nil), shuffledPlayers[1:]...)
+	compliance := nonMoles[e.randInt(len(nonMoles))]
 
 	events := []models.Event{{
 		GameID:     state.GameID,
@@ -232,6 +234,12 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 		ActorName:  actor.Name,
 		EventType:  models.EventMoleSelected,
 		EventValue: mustJSON(MoleSelectedPayload{UserID: mole.UserID}),
+	}, {
+		GameID:     state.GameID,
+		UserID:     &actor.ID,
+		ActorName:  actor.Name,
+		EventType:  models.EventComplianceSelected,
+		EventValue: mustJSON(ComplianceSelectedPayload{UserID: compliance.UserID}),
 	}}
 
 	for i, player := range shuffledPlayers {
@@ -277,7 +285,7 @@ func (e *Engine) handleChooseMemorandum(state *GameState, actor *models.User, ra
 	if player == nil {
 		return nil, errors.New("only active players can choose a memorandum")
 	}
-	if player.Role == "mole" {
+	if player.Role == RoleMole {
 		return nil, errors.New("mole cannot choose a memorandum")
 	}
 	if len(state.MoleTargets) > 0 || state.MoleSabotage != "" {
@@ -345,6 +353,51 @@ func (e *Engine) handleSelectMoleObjectives(state *GameState, actor *models.User
 		EventValue: mustJSON(VotingRoundStartedPayload{Round: 1, ShowcaseDecisions: showcase, UnlockedAt: &unlockedAt}),
 	})
 	return events, nil
+}
+
+func (e *Engine) handlePlaceComplianceWatch(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
+	if state.Status != GameStatusStarted || state.IsFinished {
+		return nil, errors.New("game is not active")
+	}
+	if state.Phase != GamePhaseMajorVoting {
+		return nil, errors.New("compliance watch is only active during major voting")
+	}
+	player := activePlayerByID(state, actor.ID)
+	if player == nil {
+		return nil, errors.New("only active players can place compliance watch")
+	}
+	if player.Role != RoleCompliance {
+		return nil, errors.New("only compliance can place a watch")
+	}
+	if state.ComplianceWatches[state.CurrentRound].TargetUserID != 0 {
+		return nil, errors.New("compliance watch already placed")
+	}
+
+	var payload PlaceComplianceWatchActionPayload
+	if err := decodeActionPayload(raw, &payload); err != nil {
+		return nil, err
+	}
+	if payload.TargetUserID == 0 {
+		return nil, errors.New("target_user_id is required")
+	}
+	if payload.TargetUserID == actor.ID {
+		return nil, errors.New("compliance cannot watch themselves")
+	}
+	if activePlayerByID(state, payload.TargetUserID) == nil {
+		return nil, errors.New("target player is not active")
+	}
+
+	return []models.Event{{
+		GameID:    state.GameID,
+		UserID:    &actor.ID,
+		ActorName: actor.Name,
+		EventType: models.EventComplianceWatchPlaced,
+		EventValue: mustJSON(ComplianceWatchPlacedPayload{
+			RoundNumber:      state.CurrentRound,
+			ComplianceUserID: actor.ID,
+			TargetUserID:     payload.TargetUserID,
+		}),
+	}}, nil
 }
 
 func (e *Engine) handleVote(state *GameState, actor *models.User, raw json.RawMessage) ([]models.Event, error) {
@@ -571,6 +624,34 @@ func (e *Engine) resolveRound(state *GameState, actor *models.User) []models.Eve
 		nextState := cloneState(state)
 		nextState.AcceptedOrder = append(nextState.AcceptedOrder, decision)
 		delete(nextState.Available, decision)
+		if catch, ok := complianceCatchForAcceptedDecision(state, decision); ok {
+			events = append(events, systemChatPayloadEvents(state.GameID, actor.ID, complianceCaughtMoleSystemMessage(state, catch))...)
+			events = append(events, models.Event{
+				GameID:    state.GameID,
+				UserID:    &actor.ID,
+				ActorName: actor.Name,
+				EventType: models.EventMoleExposedByCompliance,
+				EventValue: mustJSON(MoleExposedByCompliancePayload{
+					RoundNumber:      catch.RoundNumber,
+					ComplianceUserID: catch.ComplianceUserID,
+					MoleUserID:       catch.MoleUserID,
+					AcceptedDecision: catch.AcceptedDecision,
+					Reason:           catch.Reason,
+				}),
+			})
+			nextState.ComplianceCatch = &catch
+			nextState.Winner = "players"
+			nextState.WinnerReason = WinnerReasonMoleCaughtByCompliance
+			events = append(events, models.Event{
+				GameID:     state.GameID,
+				UserID:     &actor.ID,
+				ActorName:  actor.Name,
+				EventType:  models.EventGameFinished,
+				EventValue: mustJSON(GameFinishedPayload{Winner: "players", Reason: WinnerReasonMoleCaughtByCompliance}),
+			})
+			events = append(events, systemChatPayloadEvents(state.GameID, actor.ID, moleRevealSystemMessage(nextState))...)
+			return events
+		}
 		if winner, reason := detectWinner(nextState); winner != "" {
 			events = append(events, models.Event{
 				GameID:     state.GameID,
@@ -647,6 +728,27 @@ func majorDecisionRewardEvents(state *GameState, actor *models.User, decision st
 		})
 	}
 	return events
+}
+
+func complianceCatchForAcceptedDecision(state *GameState, decision string) (ComplianceCatchState, bool) {
+	if state == nil || decision == "" || decision != state.MoleSabotage {
+		return ComplianceCatchState{}, false
+	}
+	watch := state.ComplianceWatches[state.CurrentRound]
+	if watch.TargetUserID == 0 || watch.TargetUserID != state.MoleUserID {
+		return ComplianceCatchState{}, false
+	}
+	vote, ok := state.CurrentVotes[state.MoleUserID]
+	if !ok || vote.Abstain || vote.Decision == nil || *vote.Decision != decision {
+		return ComplianceCatchState{}, false
+	}
+	return ComplianceCatchState{
+		RoundNumber:      state.CurrentRound,
+		ComplianceUserID: watch.ComplianceUserID,
+		MoleUserID:       state.MoleUserID,
+		AcceptedDecision: decision,
+		Reason:           ComplianceCatchReasonDirectSabotage,
+	}, true
 }
 
 type majorReward struct {
@@ -1366,6 +1468,23 @@ func sabotageAcceptedSystemMessage(state *GameState, decision string) ChatMessag
 	}
 }
 
+func complianceCaughtMoleSystemMessage(state *GameState, catch ComplianceCatchState) ChatMessageSentPayload {
+	moleName := playerNameForChat(state, catch.MoleUserID)
+	summary := "Служба комплаенса зафиксировала прямое участие Крота в проведении Диверсии."
+	return ChatMessageSentPayload{
+		Title:   "Саботаж раскрыт",
+		Summary: summary,
+		Message: summary,
+		Details: []string{
+			fmt.Sprintf("%s был пойман в момент поддержки решения %s, которое оказалось Диверсией.", moleName, decisionLabelForChat(catch.AcceptedDecision)),
+			"Совет директоров немедленно прекращает заседание и объявляет победу.",
+		},
+		SystemEventType: "mole_exposed_by_compliance",
+		Tone:            "success",
+		Collapsible:     true,
+	}
+}
+
 func moleRevealSystemMessage(state *GameState) ChatMessageSentPayload {
 	companyName := companyNameForChat(state)
 	moleName := playerNameForChat(state, state.MoleUserID)
@@ -1671,10 +1790,10 @@ func isMemorandumType(value MemorandumType) bool {
 func detectWinner(state *GameState) (string, string) {
 	molePoints, playersPoints := victoryPoints(state)
 	if molePoints >= 3 {
-		return "mole", "mole_targets_collected"
+		return "mole", WinnerReasonMoleTargetsCollected
 	}
 	if playersPoints >= 3 {
-		return "players", "three_clean_decisions_collected"
+		return "players", WinnerReasonCleanDecisionsCollected
 	}
 	return "", ""
 }
@@ -1747,6 +1866,14 @@ func cloneState(state *GameState) *GameState {
 	cloned.CurrentVotes = make(map[int64]VoteState, len(state.CurrentVotes))
 	for k, v := range state.CurrentVotes {
 		cloned.CurrentVotes[k] = v
+	}
+	cloned.ComplianceWatches = make(map[int]ComplianceWatchState, len(state.ComplianceWatches))
+	for k, v := range state.ComplianceWatches {
+		cloned.ComplianceWatches[k] = v
+	}
+	if state.ComplianceCatch != nil {
+		catch := *state.ComplianceCatch
+		cloned.ComplianceCatch = &catch
 	}
 	cloned.MemorandumPreferences = make(map[int64]MemorandumType, len(state.MemorandumPreferences))
 	for k, v := range state.MemorandumPreferences {

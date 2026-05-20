@@ -75,7 +75,13 @@ export function phaseLabel(phase?: GamePhase): string {
 }
 
 export function roleLabel(role?: string): string {
-  return role === "mole" ? "Крот" : "Директор";
+  if (role === "mole") {
+    return "Крот";
+  }
+  if (role === "compliance") {
+    return "Комплаенс";
+  }
+  return "Директор";
 }
 
 export function winnerLabel(winner?: string): string {

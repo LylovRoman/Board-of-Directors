@@ -18,9 +18,23 @@ const (
 	ActionStartGame                ActionType = "start_game"
 	ActionChooseMemorandum         ActionType = "choose_memorandum"
 	ActionSelectMoleObjectives     ActionType = "select_mole_objectives"
+	ActionPlaceComplianceWatch     ActionType = "place_compliance_watch"
 	ActionVote                     ActionType = "vote"
 	ActionSubmitGovernanceProposal ActionType = "submit_governance_proposal"
 	ActionSkipGovernanceProposal   ActionType = "skip_governance_proposal"
+)
+
+const (
+	RolePlayer     = "player"
+	RoleMole       = "mole"
+	RoleCompliance = "compliance"
+)
+
+const (
+	WinnerReasonMoleTargetsCollected    = "mole_targets_collected"
+	WinnerReasonCleanDecisionsCollected = "three_clean_decisions_collected"
+	WinnerReasonMoleCaughtByCompliance  = "mole_caught_by_compliance"
+	ComplianceCatchReasonDirectSabotage = "direct_sabotage_vote"
 )
 
 type GameStatus string
@@ -141,13 +155,17 @@ type GameState struct {
 	Phase              GamePhase  `json:"phase"`
 	IsFinished         bool       `json:"is_finished"`
 	Winner             string     `json:"winner,omitempty"`
+	WinnerReason       string     `json:"winner_reason,omitempty"`
 	StartedPlayerCount int        `json:"started_player_count,omitempty"`
 
 	HostUserID              int64
 	CEOUserID               int64
 	MoleUserID              int64
+	ComplianceUserID        int64
 	MoleTargets             []string
 	MoleSabotage            string
+	ComplianceWatches       map[int]ComplianceWatchState
+	ComplianceCatch         *ComplianceCatchState
 	MemorandumPreferences   map[int64]MemorandumType
 	Memorandums             map[int64]MemorandumState
 	CurrentRound            int
@@ -191,6 +209,20 @@ type VoteState struct {
 	UserID   int64   `json:"user_id"`
 	Decision *string `json:"decision,omitempty"`
 	Abstain  bool    `json:"abstain"`
+}
+
+type ComplianceWatchState struct {
+	RoundNumber      int   `json:"round_number"`
+	ComplianceUserID int64 `json:"compliance_user_id"`
+	TargetUserID     int64 `json:"target_user_id"`
+}
+
+type ComplianceCatchState struct {
+	RoundNumber      int    `json:"round_number"`
+	ComplianceUserID int64  `json:"compliance_user_id"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+	Reason           string `json:"reason"`
 }
 
 type GovernanceProposalState struct {
@@ -254,6 +286,7 @@ type PublicGameState struct {
 	Phase                 GamePhase                    `json:"phase"`
 	IsFinished            bool                         `json:"is_finished"`
 	Winner                string                       `json:"winner,omitempty"`
+	WinnerReason          string                       `json:"winner_reason,omitempty"`
 	StartedPlayerCount    int                          `json:"started_player_count,omitempty"`
 	CurrentRound          int                          `json:"current_round"`
 	GovernanceRound       int                          `json:"governance_round"`
@@ -279,6 +312,7 @@ type PublicGameState struct {
 	MoleSabotage          string                       `json:"mole_sabotage,omitempty"`
 	MemorandumPreference  MemorandumType               `json:"memorandum_preference,omitempty"`
 	Memorandum            *PublicMemorandum            `json:"memorandum,omitempty"`
+	ComplianceWatch       *PublicComplianceWatch       `json:"compliance_watch,omitempty"`
 	MoleVictoryPoints     *int                         `json:"mole_victory_points,omitempty"`
 	PlayersVictoryPoints  *int                         `json:"players_victory_points,omitempty"`
 	FinalSummary          *PublicFinalSummary          `json:"final_summary,omitempty"`
@@ -336,6 +370,12 @@ type PublicChatMessage struct {
 type PublicMemorandum struct {
 	Type      MemorandumType `json:"type"`
 	Decisions []string       `json:"decisions"`
+}
+
+type PublicComplianceWatch struct {
+	RoundNumber      int   `json:"round_number"`
+	ComplianceUserID int64 `json:"compliance_user_id"`
+	TargetUserID     int64 `json:"target_user_id"`
 }
 
 type PublicGovernanceProposal struct {
@@ -458,14 +498,25 @@ type PublicDecisionVoterReport struct {
 
 type PublicFinalSummary struct {
 	Winner              string                   `json:"winner"`
+	WinnerReason        string                   `json:"winner_reason,omitempty"`
 	WinnerUserIDs       []int64                  `json:"winner_user_ids"`
 	MoleUserID          int64                    `json:"mole_user_id"`
+	ComplianceUserID    int64                    `json:"compliance_user_id,omitempty"`
+	ComplianceCatch     *PublicComplianceCatch   `json:"compliance_catch,omitempty"`
 	MoleTargets         []string                 `json:"mole_targets"`
 	MoleSabotage        string                   `json:"mole_sabotage"`
 	MolePoints          int                      `json:"mole_points"`
 	PlayersPoints       int                      `json:"players_points"`
 	LeastMistakeUserIDs []int64                  `json:"least_mistake_user_ids"`
 	PlayerStats         []PublicFinalPlayerStats `json:"player_stats"`
+}
+
+type PublicComplianceCatch struct {
+	RoundNumber      int    `json:"round_number"`
+	ComplianceUserID int64  `json:"compliance_user_id"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+	Reason           string `json:"reason"`
 }
 
 type PublicFinalPlayerStats struct {
@@ -487,16 +538,18 @@ type XPAward struct {
 }
 
 type PublicReplayStep struct {
-	ID       string                    `json:"id"`
-	Kind     string                    `json:"kind"`
-	Title    string                    `json:"title"`
-	Summary  string                    `json:"summary"`
-	Round    int                       `json:"round,omitempty"`
-	Outcome  string                    `json:"outcome,omitempty"`
-	Decision string                    `json:"decision,omitempty"`
-	Proposal *PublicGovernanceProposal `json:"proposal,omitempty"`
-	Winner   string                    `json:"winner,omitempty"`
-	Votes    []PublicReplayVote        `json:"votes,omitempty"`
+	ID           string                    `json:"id"`
+	Kind         string                    `json:"kind"`
+	Title        string                    `json:"title"`
+	Summary      string                    `json:"summary"`
+	Round        int                       `json:"round,omitempty"`
+	Outcome      string                    `json:"outcome,omitempty"`
+	Decision     string                    `json:"decision,omitempty"`
+	Proposal     *PublicGovernanceProposal `json:"proposal,omitempty"`
+	Winner       string                    `json:"winner,omitempty"`
+	WinnerReason string                    `json:"winner_reason,omitempty"`
+	Reason       string                    `json:"reason,omitempty"`
+	Votes        []PublicReplayVote        `json:"votes,omitempty"`
 }
 
 type PublicReplayVote struct {
@@ -555,6 +608,10 @@ type MoleSelectedPayload struct {
 	UserID int64 `json:"user_id"`
 }
 
+type ComplianceSelectedPayload struct {
+	UserID int64 `json:"user_id"`
+}
+
 type MoleTargetsGeneratedPayload struct {
 	Targets []string `json:"targets"`
 }
@@ -609,6 +666,20 @@ type VoteSubmittedPayload struct {
 	UserID   int64   `json:"user_id"`
 	Decision *string `json:"decision,omitempty"`
 	Abstain  bool    `json:"abstain"`
+}
+
+type ComplianceWatchPlacedPayload struct {
+	RoundNumber      int   `json:"round_number"`
+	ComplianceUserID int64 `json:"compliance_user_id"`
+	TargetUserID     int64 `json:"target_user_id"`
+}
+
+type MoleExposedByCompliancePayload struct {
+	RoundNumber      int    `json:"round_number"`
+	ComplianceUserID int64  `json:"compliance_user_id"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+	Reason           string `json:"reason"`
 }
 
 type GovernanceProposalPhaseStartedPayload struct {
@@ -729,6 +800,10 @@ type SelectMoleObjectivesActionPayload struct {
 
 type ChooseMemorandumActionPayload struct {
 	Type MemorandumType `json:"type"`
+}
+
+type PlaceComplianceWatchActionPayload struct {
+	TargetUserID int64 `json:"target_user_id"`
 }
 
 type VoteActionPayload struct {

@@ -475,7 +475,19 @@ func TestBotMoleAutomaticallySelectsObjectives(t *testing.T) {
 		t.Fatalf("BuildState: %v", err)
 	}
 
-	events, err := NewEngine(&stubStore{}).botTurnEvents(state, time.Now().UTC())
+	now := time.Now().UTC().Add(BotActionDelay + time.Hour)
+	if !botsMayAct(state, now) {
+		t.Fatalf("expected bots to be ready at %v after started=%v", now, state.PhaseStartedAt)
+	}
+	engine := NewEngine(&stubStore{})
+	nextEvents, nextErr := engine.nextBotTurnEvents(state, now)
+	if nextErr != nil {
+		t.Fatalf("next bot turn: %v", nextErr)
+	}
+	if len(nextEvents) == 0 {
+		t.Fatalf("expected next bot turn to place watch, got none phase=%s bot=%+v", state.Phase, activePlayerByID(state, -1))
+	}
+	events, err := engine.botTurnEvents(state, now)
 	if err != nil {
 		t.Fatalf("bot turns: %v", err)
 	}
@@ -1480,6 +1492,206 @@ func TestSabotageAcceptedRevealsScoreToDirectors(t *testing.T) {
 	}
 }
 
+func TestComplianceCatchWinsBeforeMoleScoreVictory(t *testing.T) {
+	store := complianceTestStore([]models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"A"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"A"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":3,"decision":"A"}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"A"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":2,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":2,"compliance_user_id":1,"target_user_id":3}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":2,"user_id":1,"decision":"D"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":2,"user_id":2,"decision":"D"}`},
+	})
+
+	state, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionVote,
+		Payload: []byte(`{"decision":"D"}`),
+	})
+	if err != nil {
+		t.Fatalf("mole sabotage vote: %v", err)
+	}
+	if !eventsContainType(events, models.EventMoleExposedByCompliance) {
+		t.Fatalf("expected compliance exposure event, got %+v", events)
+	}
+	if !state.IsFinished || state.Winner != "players" || state.WinnerReason != WinnerReasonMoleCaughtByCompliance {
+		t.Fatalf("expected immediate players win by compliance, got winner=%q reason=%q finished=%v", state.Winner, state.WinnerReason, state.IsFinished)
+	}
+	if len(state.AcceptedDecisions) == 0 || state.AcceptedDecisions[len(state.AcceptedDecisions)-1] != "D" {
+		t.Fatalf("expected accepted sabotage to remain in history, got %+v", state.AcceptedDecisions)
+	}
+	if state.FinalSummary == nil || state.FinalSummary.WinnerReason != WinnerReasonMoleCaughtByCompliance || state.FinalSummary.ComplianceUserID != 1 || state.FinalSummary.ComplianceCatch == nil {
+		t.Fatalf("expected final summary compliance fields, got %+v", state.FinalSummary)
+	}
+	if state.MoleVictoryPoints == nil || *state.MoleVictoryPoints < 3 {
+		t.Fatalf("expected mole score consequence to be visible, got %+v", state.MoleVictoryPoints)
+	}
+}
+
+func TestComplianceCatchNegativeConditions(t *testing.T) {
+	baseState := func() *GameState {
+		return &GameState{
+			CurrentRound:      2,
+			MoleUserID:        3,
+			MoleSabotage:      "D",
+			ComplianceWatches: map[int]ComplianceWatchState{2: {RoundNumber: 2, ComplianceUserID: 1, TargetUserID: 3}},
+			CurrentVotes:      map[int64]VoteState{},
+			Players:           map[int64]*PlayerState{1: {UserID: 1, Role: RoleCompliance}, 2: {UserID: 2, Role: RolePlayer}, 3: {UserID: 3, Role: RoleMole}},
+		}
+	}
+	decisionD := "D"
+	decisionB := "B"
+
+	cases := []struct {
+		name   string
+		mutate func(*GameState)
+		check  string
+	}{
+		{
+			name: "mole voted clean",
+			mutate: func(state *GameState) {
+				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionB}
+			},
+			check: "D",
+		},
+		{
+			name: "watched director",
+			mutate: func(state *GameState) {
+				state.ComplianceWatches[2] = ComplianceWatchState{RoundNumber: 2, ComplianceUserID: 1, TargetUserID: 2}
+				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionD}
+			},
+			check: "D",
+		},
+		{
+			name: "accepted target not sabotage",
+			mutate: func(state *GameState) {
+				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionB}
+			},
+			check: "B",
+		},
+		{
+			name: "watch absent",
+			mutate: func(state *GameState) {
+				state.ComplianceWatches = map[int]ComplianceWatchState{}
+				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionD}
+			},
+			check: "D",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := baseState()
+			tc.mutate(state)
+			if _, caught := complianceCatchForAcceptedDecision(state, tc.check); caught {
+				t.Fatalf("did not expect compliance catch")
+			}
+		})
+	}
+}
+
+func TestComplianceWatchValidationAndPrivacy(t *testing.T) {
+	store := complianceTestStore([]models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+	})
+	engine := NewEngine(store)
+
+	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 2, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":3}`)}); err == nil || !strings.Contains(err.Error(), "only compliance") {
+		t.Fatalf("expected non-compliance error, got %v", err)
+	}
+	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":1}`)}); err == nil || !strings.Contains(err.Error(), "cannot watch themselves") {
+		t.Fatalf("expected self-target error, got %v", err)
+	}
+	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":99}`)}); err == nil || !strings.Contains(err.Error(), "target player is not active") {
+		t.Fatalf("expected inactive target error, got %v", err)
+	}
+	state, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":3}`)})
+	if err != nil {
+		t.Fatalf("place watch: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventComplianceWatchPlaced {
+		t.Fatalf("expected watch event, got %+v", events)
+	}
+	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":2}`)}); err == nil || !strings.Contains(err.Error(), "already placed") {
+		t.Fatalf("expected repeat watch error, got %v", err)
+	}
+
+	if state.ComplianceWatch == nil || state.ComplianceWatch.TargetUserID != 3 {
+		t.Fatalf("expected compliance action response to see own watch, got %+v", state.ComplianceWatch)
+	}
+	internalState, err := BuildState(1, "Mafia", store.events[1])
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	otherView, err := ProjectStateForViewer(internalState, 2)
+	if err != nil {
+		t.Fatalf("project director: %v", err)
+	}
+	if otherView.ComplianceWatch != nil {
+		t.Fatalf("expected director viewer not to see watch, got %+v", otherView.ComplianceWatch)
+	}
+
+	outOfPhaseStore := complianceTestStore(nil)
+	if _, _, err := NewEngine(outOfPhaseStore).HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":3}`)}); err == nil || !strings.Contains(err.Error(), "major voting") {
+		t.Fatalf("expected out-of-phase error, got %v", err)
+	}
+}
+
+func TestComplianceWatchRestoreIsRoundScoped(t *testing.T) {
+	state, err := BuildState(1, "Mafia", append(complianceBaseEvents(), []models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":1,"compliance_user_id":1,"target_user_id":3}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"A"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":2,"showcase_decisions":["A","B","D","E"]}`},
+	}...))
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if state.ComplianceWatches[1].TargetUserID != 3 {
+		t.Fatalf("expected restored round 1 watch, got %+v", state.ComplianceWatches)
+	}
+	publicState, err := ProjectStateForViewer(state, 1)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer: %v", err)
+	}
+	if publicState.ComplianceWatch != nil {
+		t.Fatalf("round 1 watch must not leak into round 2, got %+v", publicState.ComplianceWatch)
+	}
+}
+
+func TestComplianceBotPlacesWatchBeforeMajorVote(t *testing.T) {
+	state, err := BuildState(1, "Mafia", []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Compliance","is_bot":true}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+		{EventType: models.EventComplianceSelected, EventValue: `{"user_id":-1}`},
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":-1,"share_bps":2000}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+	})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	events, err := NewEngine(&stubStore{}).botTurnEvents(state, time.Now().UTC().Add(BotActionDelay+time.Hour))
+	if err != nil {
+		t.Fatalf("bot turn: %v", err)
+	}
+	if len(events) == 0 || events[0].EventType != models.EventComplianceWatchPlaced {
+		t.Fatalf("expected compliance watch before vote, got %+v phase=%s status=%s finished=%v bot=%+v players=%+v watch=%+v started=%v", events, state.Phase, state.Status, state.IsFinished, activePlayerByID(state, -1), activePlayers(state), state.ComplianceWatches, state.PhaseStartedAt)
+	}
+}
+
 func TestMajorRevoteOverwritesCurrentVote(t *testing.T) {
 	store := &stubStore{
 		users: map[int64]models.User{
@@ -1989,6 +2201,36 @@ func governanceProposalStoreWithShares(treasuryBPS int, shares map[int64]int) *s
 		},
 		games:  map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
 		events: map[int64][]models.Event{1: events},
+	}
+}
+
+func complianceBaseEvents() []models.Event {
+	return []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":3}`},
+		{EventType: models.EventComplianceSelected, EventValue: `{"user_id":1}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":3,"share_bps":2000}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+	}
+}
+
+func complianceTestStore(extra []models.Event) *stubStore {
+	return &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+			3: {ID: 3, Name: "Carol"},
+		},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{
+			1: append(complianceBaseEvents(), extra...),
+		},
 	}
 }
 

@@ -294,6 +294,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleChooseMemorandum(state, actor, action.Payload)
 	case ActionSelectMoleObjectives:
 		return e.handleSelectMoleObjectives(state, actor, action.Payload)
+	case ActionPlaceComplianceWatch:
+		return e.handlePlaceComplianceWatch(state, actor, action.Payload)
 	case ActionVote:
 		return e.handleVote(state, actor, action.Payload)
 	case ActionSubmitGovernanceProposal:

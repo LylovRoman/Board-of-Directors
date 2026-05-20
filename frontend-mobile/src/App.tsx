@@ -65,6 +65,7 @@ const ACTION_SFX: Partial<Record<ActionType, SfxName>> = {
   start_game: "start",
   choose_memorandum: "success",
   select_mole_objectives: "success",
+  place_compliance_watch: "success",
   vote: "vote",
   submit_governance_proposal: "success",
   skip_governance_proposal: "close",

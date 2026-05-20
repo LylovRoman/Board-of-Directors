@@ -110,7 +110,7 @@ func (e *Engine) nextBotTurnEvents(state *GameState, now time.Time) ([]models.Ev
 	switch state.Phase {
 	case GamePhaseMoleObjectiveSelection:
 		for _, bot := range activeBots(state) {
-			if bot.Role != "mole" && state.MemorandumPreferences[bot.UserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
+			if bot.Role != RoleMole && state.MemorandumPreferences[bot.UserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
 				return []models.Event{e.botMemorandumPreferenceEvent(state, bot)}, nil
 			}
 		}
@@ -120,6 +120,11 @@ func (e *Engine) nextBotTurnEvents(state *GameState, now time.Time) ([]models.Ev
 			}
 		}
 	case GamePhaseMajorVoting:
+		for _, bot := range activeBots(state) {
+			if bot.Role == RoleCompliance && state.ComplianceWatches[state.CurrentRound].TargetUserID == 0 {
+				return e.botComplianceWatchEvents(state, bot), nil
+			}
+		}
 		if state.MajorVoteUnlockedAt != nil && now.Before(*state.MajorVoteUnlockedAt) {
 			return nil, nil
 		}
@@ -195,6 +200,61 @@ func (e *Engine) botMoleObjectiveEvents(state *GameState, bot *PlayerState, now 
 		}),
 	})
 	return events
+}
+
+func (e *Engine) botComplianceWatchEvents(state *GameState, bot *PlayerState) []models.Event {
+	target := e.chooseBotComplianceWatchTarget(state, bot)
+	if target == nil {
+		return nil
+	}
+	actor := botActor(bot)
+	return []models.Event{{
+		GameID:    state.GameID,
+		ActorName: actor.Name,
+		EventType: models.EventComplianceWatchPlaced,
+		EventValue: mustJSON(ComplianceWatchPlacedPayload{
+			RoundNumber:      state.CurrentRound,
+			ComplianceUserID: bot.UserID,
+			TargetUserID:     target.UserID,
+		}),
+	}}
+}
+
+func (e *Engine) chooseBotComplianceWatchTarget(state *GameState, bot *PlayerState) *PlayerState {
+	if state == nil || bot == nil {
+		return nil
+	}
+	profile := e.botSuspicionProfile(state, bot)
+	if suspect := mostSuspiciousPlayer(state, bot, profile, 1, func(player *PlayerState) bool {
+		return player.UserID != bot.UserID
+	}); suspect != nil {
+		return suspect
+	}
+	candidates := []*PlayerState{}
+	for _, player := range activePlayers(state) {
+		if player.UserID != bot.UserID {
+			candidates = append(candidates, player)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	return candidates[complianceWatchFallbackIndex(state, bot, len(candidates))]
+}
+
+func complianceWatchFallbackIndex(state *GameState, bot *PlayerState, count int) int {
+	if count <= 0 || state == nil || bot == nil {
+		return 0
+	}
+	x := uint64(state.GameID)*0x9e3779b97f4a7c15 ^
+		uint64(state.CurrentRound)*0xbf58476d1ce4e5b9 ^
+		uint64(bot.UserID)*0x94d049bb133111eb
+	x ^= x >> 30
+	x *= 0xbf58476d1ce4e5b9
+	x ^= x >> 27
+	x *= 0x94d049bb133111eb
+	x ^= x >> 31
+	return int(x % uint64(count))
 }
 
 func (e *Engine) botMajorVoteEvents(state *GameState, bot *PlayerState) []models.Event {

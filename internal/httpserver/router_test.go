@@ -818,6 +818,12 @@ func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 	if hasEventType(resp.Events, models.EventMoleSelected) {
 		t.Fatalf("response must not expose %s: %+v", models.EventMoleSelected, resp.Events)
 	}
+	if !hasEventType(store.events, models.EventComplianceSelected) {
+		t.Fatalf("expected stored event %s", models.EventComplianceSelected)
+	}
+	if hasEventType(resp.Events, models.EventComplianceSelected) {
+		t.Fatalf("response must not expose %s: %+v", models.EventComplianceSelected, resp.Events)
+	}
 	if !hasEventType(resp.Events, models.EventGameStarted) {
 		t.Fatalf("expected public response event %s", models.EventGameStarted)
 	}
@@ -835,8 +841,8 @@ func TestGameActionStartGameHidesPrivateEvents(t *testing.T) {
 			t.Fatalf("expected mole host to be able to select objectives, got %v", resp.State.AvailableActions)
 		}
 	} else {
-		if resp.State.Me.Role != "player" {
-			t.Fatalf("expected non-mole host role player, got %q", resp.State.Me.Role)
+		if resp.State.Me.Role != game.RolePlayer && resp.State.Me.Role != game.RoleCompliance {
+			t.Fatalf("expected non-mole host role player or compliance, got %q", resp.State.Me.Role)
 		}
 		if len(resp.State.MoleTargets) != 0 {
 			t.Fatalf("expected non-mole host to not see mole targets, got %v", resp.State.MoleTargets)
@@ -856,11 +862,15 @@ func hasAction(actions []game.ActionType, action game.ActionType) bool {
 func TestPublicActionEventsHidesMoleObjectivesSelected(t *testing.T) {
 	events := []models.Event{
 		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","C","F"],"sabotage":"H"}`},
+		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":1,"compliance_user_id":1,"target_user_id":2}`},
 		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1}`},
 	}
 	publicEvents := publicActionEvents(events)
 	if hasEventType(publicEvents, models.EventMoleObjectivesSelected) {
 		t.Fatalf("response must not expose %s: %+v", models.EventMoleObjectivesSelected, publicEvents)
+	}
+	if hasEventType(publicEvents, models.EventComplianceWatchPlaced) {
+		t.Fatalf("response must not expose %s: %+v", models.EventComplianceWatchPlaced, publicEvents)
 	}
 	if !hasEventType(publicEvents, models.EventVotingRoundStarted) {
 		t.Fatalf("expected public response event %s", models.EventVotingRoundStarted)

@@ -574,6 +574,8 @@ func isPrivateActionEvent(eventType string) bool {
 	case models.EventMoleSelected,
 		models.EventMoleTargetsGenerated,
 		models.EventMoleObjectivesSelected,
+		models.EventComplianceSelected,
+		models.EventComplianceWatchPlaced,
 		models.EventMemorandumPreferenceSelected,
 		models.EventMemorandumAssigned,
 		models.EventVoteSubmitted,

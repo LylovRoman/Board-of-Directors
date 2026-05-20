@@ -18,6 +18,7 @@ func BuildState(gameID int64, title string, events []models.Event) (*GameState, 
 		Status:                GameStatusLobby,
 		Players:               map[int64]*PlayerState{},
 		CurrentVotes:          map[int64]VoteState{},
+		ComplianceWatches:     map[int]ComplianceWatchState{},
 		MemorandumPreferences: map[int64]MemorandumType{},
 		Memorandums:           map[int64]MemorandumState{},
 		GovernanceProposals:   map[int]*GovernanceProposalState{},
@@ -153,8 +154,20 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if state.CEOUserID == payload.UserID || payload.IsCEO {
 			state.CEOUserID = payload.BotUserID
 		}
-		if state.MoleUserID == payload.UserID || payload.Role == "mole" {
+		if state.MoleUserID == payload.UserID || payload.Role == RoleMole {
 			state.MoleUserID = payload.BotUserID
+		}
+		if state.ComplianceUserID == payload.UserID || payload.Role == RoleCompliance {
+			state.ComplianceUserID = payload.BotUserID
+			for round, watch := range state.ComplianceWatches {
+				if watch.ComplianceUserID == payload.UserID {
+					watch.ComplianceUserID = payload.BotUserID
+					state.ComplianceWatches[round] = watch
+				}
+			}
+			if state.ComplianceCatch != nil && state.ComplianceCatch.ComplianceUserID == payload.UserID {
+				state.ComplianceCatch.ComplianceUserID = payload.BotUserID
+			}
 		}
 	case models.EventChatMessageSent:
 		var payload ChatMessageSentPayload
@@ -205,6 +218,12 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			return err
 		}
 		state.MoleUserID = payload.UserID
+	case models.EventComplianceSelected:
+		var payload ComplianceSelectedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.ComplianceUserID = payload.UserID
 	case models.EventMoleTargetsGenerated:
 		var payload MoleTargetsGeneratedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -303,6 +322,31 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			UserID:   payload.UserID,
 			Decision: payload.Decision,
 			Abstain:  payload.Abstain,
+		}
+	case models.EventComplianceWatchPlaced:
+		var payload ComplianceWatchPlacedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		if state.ComplianceWatches == nil {
+			state.ComplianceWatches = map[int]ComplianceWatchState{}
+		}
+		state.ComplianceWatches[payload.RoundNumber] = ComplianceWatchState{
+			RoundNumber:      payload.RoundNumber,
+			ComplianceUserID: payload.ComplianceUserID,
+			TargetUserID:     payload.TargetUserID,
+		}
+	case models.EventMoleExposedByCompliance:
+		var payload MoleExposedByCompliancePayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.ComplianceCatch = &ComplianceCatchState{
+			RoundNumber:      payload.RoundNumber,
+			ComplianceUserID: payload.ComplianceUserID,
+			MoleUserID:       payload.MoleUserID,
+			AcceptedDecision: payload.AcceptedDecision,
+			Reason:           payload.Reason,
 		}
 	case models.EventDecisionAccepted:
 		var payload DecisionAcceptedPayload
@@ -466,6 +510,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.Status = GameStatusFinished
 		state.IsFinished = true
 		state.Winner = payload.Winner
+		state.WinnerReason = payload.Reason
 		state.PhaseDeadlineAt = nil
 	case models.EventChatReactionToggled:
 		var payload ChatReactionToggledPayload
@@ -495,9 +540,11 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		player.IsHost = player.UserID == state.HostUserID
 		player.IsCEO = player.UserID == state.CEOUserID
 		if player.UserID == state.MoleUserID {
-			player.Role = "mole"
+			player.Role = RoleMole
+		} else if player.UserID == state.ComplianceUserID {
+			player.Role = RoleCompliance
 		} else {
-			player.Role = "player"
+			player.Role = RolePlayer
 		}
 	}
 

@@ -64,6 +64,8 @@ function systemChatTitle(message: PublicChatMessage): string {
       return title && !title.startsWith("Тревожный сигнал:") ? title : "Тревожный сигнал";
     case "mole_revealed":
       return title && !title.startsWith("Крот раскрыт:") ? title : "Крот раскрыт";
+    case "mole_exposed_by_compliance":
+      return title || "Саботаж раскрыт";
     case "major_vote_accepted":
     case "major_vote_rejected": {
       const value = title.startsWith("Итоги major vote:") ? title.slice("Итоги major vote:".length).trim() : "";
@@ -99,6 +101,7 @@ export function ChatSheetContent(props: ChatSheetContentProps) {
       "governance_accepted",
       "governance_rejected",
       "sabotage_accepted",
+      "mole_exposed_by_compliance",
       "mole_revealed",
     ]);
     return props.messages.filter((message) => message.kind === "system" && historyTypes.has(message.system_event_type ?? ""));

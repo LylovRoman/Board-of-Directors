@@ -16,6 +16,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		Phase:                 state.Phase,
 		IsFinished:            state.IsFinished,
 		Winner:                state.Winner,
+		WinnerReason:          state.WinnerReason,
 		StartedPlayerCount:    state.StartedPlayerCount,
 		CurrentRound:          state.CurrentRound,
 		GovernanceRound:       state.GovernanceRound,
@@ -58,7 +59,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		if player.UserID == viewerUserID {
 			publicPlayer.Role = player.Role
 			publicState.Me = publicPlayer
-			if player.Role == "mole" {
+			if player.Role == RoleMole {
 				publicState.MoleTargets = append([]string(nil), state.MoleTargets...)
 				publicState.MoleSabotage = state.MoleSabotage
 				molePoints, playersPoints := victoryPoints(state)
@@ -70,6 +71,15 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 					publicState.Memorandum = &PublicMemorandum{
 						Type:      memorandum.Type,
 						Decisions: append([]string(nil), memorandum.Decisions...),
+					}
+				}
+				if player.Role == RoleCompliance {
+					if watch, ok := state.ComplianceWatches[state.CurrentRound]; ok && watch.TargetUserID != 0 {
+						publicState.ComplianceWatch = &PublicComplianceWatch{
+							RoundNumber:      watch.RoundNumber,
+							ComplianceUserID: watch.ComplianceUserID,
+							TargetUserID:     watch.TargetUserID,
+						}
 					}
 				}
 			}
@@ -355,14 +365,17 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 		}
 		switch state.Phase {
 		case GamePhaseMoleObjectiveSelection:
-			if player.Role == "mole" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
+			if player.Role == RoleMole && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
 				actions = append(actions, ActionSelectMoleObjectives)
 			}
-			if player.Role != "mole" && state.MemorandumPreferences[viewerUserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
+			if player.Role != RoleMole && state.MemorandumPreferences[viewerUserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
 				actions = append(actions, ActionChooseMemorandum)
 			}
 		case GamePhaseMajorVoting:
 			actions = append(actions, ActionVote)
+			if player.Role == RoleCompliance && state.ComplianceWatches[state.CurrentRound].TargetUserID == 0 {
+				actions = append(actions, ActionPlaceComplianceWatch)
+			}
 		case GamePhaseGovernanceProposal:
 			if _, ok := state.GovernanceSubmissions[viewerUserID]; !ok {
 				actions = append(actions, ActionSubmitGovernanceProposal, ActionSkipGovernanceProposal)
@@ -408,14 +421,25 @@ func publicFinalSummary(state *GameState) *PublicFinalSummary {
 	}
 	molePoints, playersPoints := victoryPoints(state)
 	summary := &PublicFinalSummary{
-		Winner:        state.Winner,
-		MoleUserID:    state.MoleUserID,
-		MoleTargets:   append([]string(nil), state.MoleTargets...),
-		MoleSabotage:  state.MoleSabotage,
-		MolePoints:    molePoints,
-		PlayersPoints: playersPoints,
-		PlayerStats:   make([]PublicFinalPlayerStats, 0, len(state.PlayerOrder)),
-		WinnerUserIDs: []int64{},
+		Winner:           state.Winner,
+		WinnerReason:     state.WinnerReason,
+		MoleUserID:       state.MoleUserID,
+		ComplianceUserID: state.ComplianceUserID,
+		MoleTargets:      append([]string(nil), state.MoleTargets...),
+		MoleSabotage:     state.MoleSabotage,
+		MolePoints:       molePoints,
+		PlayersPoints:    playersPoints,
+		PlayerStats:      make([]PublicFinalPlayerStats, 0, len(state.PlayerOrder)),
+		WinnerUserIDs:    []int64{},
+	}
+	if state.ComplianceCatch != nil {
+		summary.ComplianceCatch = &PublicComplianceCatch{
+			RoundNumber:      state.ComplianceCatch.RoundNumber,
+			ComplianceUserID: state.ComplianceCatch.ComplianceUserID,
+			MoleUserID:       state.ComplianceCatch.MoleUserID,
+			AcceptedDecision: state.ComplianceCatch.AcceptedDecision,
+			Reason:           state.ComplianceCatch.Reason,
+		}
 	}
 
 	minMistakes := -1
@@ -426,8 +450,8 @@ func publicFinalSummary(state *GameState) *PublicFinalSummary {
 			continue
 		}
 
-		won := (state.Winner == "mole" && player.Role == "mole") ||
-			(state.Winner == "players" && player.Role != "mole")
+		won := (state.Winner == "mole" && player.Role == RoleMole) ||
+			(state.Winner == "players" && player.Role != RoleMole)
 		if won {
 			summary.WinnerUserIDs = append(summary.WinnerUserIDs, player.UserID)
 		}
@@ -449,7 +473,7 @@ func publicFinalSummary(state *GameState) *PublicFinalSummary {
 					}
 					stat.MajorVotes++
 					isMoleObjective := targetSet[vote.Decision]
-					if (player.Role == "mole" && isMoleObjective) || (player.Role != "mole" && !isMoleObjective) {
+					if (player.Role == RoleMole && isMoleObjective) || (player.Role != RoleMole && !isMoleObjective) {
 						stat.AlignedVotes++
 					}
 				}
@@ -488,6 +512,9 @@ func publicReplaySteps(state *GameState) []PublicReplayStep {
 	governanceIndex := 0
 	for _, report := range state.RoundReports {
 		steps = append(steps, replayStepForRoundReport(report))
+		if state.ComplianceCatch != nil && state.ComplianceCatch.RoundNumber == report.Round {
+			steps = append(steps, replayStepForComplianceCatch(state, *state.ComplianceCatch))
+		}
 		if report.Outcome == "accepted" && governanceIndex < len(state.GovernanceReports) {
 			steps = append(steps, replayStepForGovernanceReport(state, state.GovernanceReports[governanceIndex]))
 			governanceIndex++
@@ -499,14 +526,31 @@ func publicReplaySteps(state *GameState) []PublicReplayStep {
 	}
 
 	molePoints, playersPoints := victoryPoints(state)
+	finalSummary := fmt.Sprintf("Победитель: %s. Счет: Крот %d/3, Совет %d/3.", state.Winner, molePoints, playersPoints)
+	if state.WinnerReason == WinnerReasonMoleCaughtByCompliance {
+		finalSummary = fmt.Sprintf("Совет директоров побеждает: Крот был пойман Комплаенсом в момент попытки провести Диверсию. Счет: Крот %d/3, Совет %d/3.", molePoints, playersPoints)
+	}
 	steps = append(steps, PublicReplayStep{
-		ID:      "final",
-		Kind:    "final",
-		Title:   "Финальное раскрытие",
-		Summary: fmt.Sprintf("Победитель: %s. Счет: Крот %d/3, Совет %d/3.", state.Winner, molePoints, playersPoints),
-		Winner:  state.Winner,
+		ID:           "final",
+		Kind:         "final",
+		Title:        "Финальное раскрытие",
+		Summary:      finalSummary,
+		Winner:       state.Winner,
+		WinnerReason: state.WinnerReason,
 	})
 	return steps
+}
+
+func replayStepForComplianceCatch(state *GameState, catch ComplianceCatchState) PublicReplayStep {
+	return PublicReplayStep{
+		ID:       fmt.Sprintf("compliance-%d", catch.RoundNumber),
+		Kind:     "compliance",
+		Title:    "Саботаж раскрыт",
+		Summary:  fmt.Sprintf("%s поймал Крота на поддержке Диверсии %s.", playerNameForChat(state, catch.ComplianceUserID), decisionLabelForChat(catch.AcceptedDecision)),
+		Round:    catch.RoundNumber,
+		Decision: catch.AcceptedDecision,
+		Reason:   catch.Reason,
+	}
 }
 
 func replayStepForRoundReport(report RoundReport) PublicReplayStep {

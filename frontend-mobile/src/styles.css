@@ -735,6 +735,60 @@ input:focus {
   font-weight: 900;
 }
 
+.compliance-role-card,
+.compliance-watch-card {
+  border: 1px solid rgba(216, 168, 79, 0.28);
+  background: rgba(247, 241, 231, 0.055);
+}
+
+.compliance-role-card span,
+.compliance-watch-card span {
+  color: var(--muted);
+}
+
+.compliance-watch-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.compliance-watch-card.confirmed {
+  border-color: rgba(101, 173, 125, 0.42);
+  background: rgba(101, 173, 125, 0.12);
+}
+
+.watch-target-list {
+  display: grid;
+  gap: 8px;
+}
+
+.watch-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(247, 241, 231, 0.1);
+  border-radius: 8px;
+  background: rgba(247, 241, 231, 0.055);
+  color: var(--ink);
+  text-align: left;
+}
+
+.watch-target span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-target.active {
+  border-color: rgba(216, 168, 79, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(216, 168, 79, 0.42);
+}
+
 .objective-mobile-card {
   display: grid;
   gap: 10px;

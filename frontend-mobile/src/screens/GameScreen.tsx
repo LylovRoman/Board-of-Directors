@@ -140,6 +140,16 @@ export function GameScreen(props: GameScreenProps) {
 
       <DirectorStrip players={activePlayers} onOpenProfile={props.onOpenProfile} />
 
+      {!state.is_finished && me?.role === "compliance" ? (
+        <section className="phase-card compliance-role-card">
+          <p className="eyebrow">роль</p>
+          <h2>Комплаенс</h2>
+          <p>
+            Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение. Если он окажется Кротом и лично проголосует за принятую Диверсию, Совет немедленно победит.
+          </p>
+        </section>
+      ) : null}
+
       {state.status === "lobby" ? (
         <LobbyPhase
           state={state}
@@ -475,6 +485,7 @@ function MajorVotingPhase(props: {
   const selectedDecision = props.state.my_current_vote?.decision;
   const moleTargets = new Set(normalizeList(props.state.mole_targets));
   const moleSabotage = props.state.mole_sabotage;
+  const canPlaceWatch = (props.state.available_actions ?? []).includes("place_compliance_watch");
 
   return (
     <section className="phase-card">
@@ -492,6 +503,15 @@ function MajorVotingPhase(props: {
           <span>{memorandumRule(props.state.memorandum.type)}</span>
           <div>{props.state.memorandum.decisions.map((decision) => <em key={decision}>{decision}</em>)}</div>
         </div>
+      ) : null}
+
+      {props.state.me?.role === "compliance" ? (
+        <ComplianceWatchCard
+          state={props.state}
+          canPlace={canPlaceWatch}
+          isSubmitting={props.isSubmitting}
+          onAction={props.onAction}
+        />
       ) : null}
 
       <div className="decision-grid">
@@ -516,6 +536,61 @@ function MajorVotingPhase(props: {
         })}
       </div>
     </section>
+  );
+}
+
+function ComplianceWatchCard(props: {
+  state: PublicGameState;
+  canPlace: boolean;
+  isSubmitting: boolean;
+  onAction: (type: ActionType, payload?: Record<string, unknown>) => void;
+}) {
+  const me = props.state.me;
+  const candidates = (props.state.players ?? []).filter((player) => player.user_id !== me?.user_id);
+  const watchedPlayer = props.state.compliance_watch
+    ? props.state.players.find((player) => player.user_id === props.state.compliance_watch?.target_user_id)
+    : undefined;
+  const [selectedTarget, setSelectedTarget] = useState<number | null>(null);
+  const effectiveTarget = selectedTarget && candidates.some((player) => player.user_id === selectedTarget)
+    ? selectedTarget
+    : candidates[0]?.user_id ?? null;
+
+  if (props.state.compliance_watch) {
+    return (
+      <div className="compliance-watch-card confirmed">
+        <strong>Негласное наблюдение</strong>
+        <span>Под наблюдением: {watchedPlayer?.name ?? `#${props.state.compliance_watch.target_user_id}`}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="compliance-watch-card">
+      <strong>Негласное наблюдение</strong>
+      <span>Выберите одного игрока, за которым Комплаенс установит наблюдение в этом раунде.</span>
+      <div className="watch-target-list">
+        {candidates.map((player) => (
+          <button
+            key={player.user_id}
+            className={effectiveTarget === player.user_id ? "watch-target active" : "watch-target"}
+            type="button"
+            disabled={!props.canPlace || props.isSubmitting}
+            onClick={() => setSelectedTarget(player.user_id)}
+          >
+            <Avatar name={player.name} avatarUrl={player.avatar_url} size="sm" />
+            <span>{player.name}</span>
+          </button>
+        ))}
+      </div>
+      <button
+        className="primary-action wide-action"
+        type="button"
+        disabled={!props.canPlace || props.isSubmitting || !effectiveTarget}
+        onClick={() => effectiveTarget ? props.onAction("place_compliance_watch", { target_user_id: effectiveTarget }) : undefined}
+      >
+        Установить наблюдение
+      </button>
+    </div>
   );
 }
 
@@ -730,11 +805,19 @@ function FinishPhase(props: { state: PublicGameState; me?: PublicPlayerState; on
   const myStat = summary?.player_stats.find((stat) => stat.user_id === props.me?.user_id);
   const playerWon =
     props.state.winner === "mole" ? props.me?.role === "mole" : props.state.winner === "players" && props.me?.role !== "mole";
+  const winnerReason = summary?.winner_reason ?? props.state.winner_reason;
+  const complianceVictory = winnerReason === "mole_caught_by_compliance";
 
   return (
     <section className="phase-card finish-card">
       <p className="eyebrow">финал</p>
-      <h2>{winnerLabel(props.state.winner)}</h2>
+      <h2>{complianceVictory ? "Совет поймал Крота" : winnerLabel(props.state.winner)}</h2>
+      {complianceVictory ? (
+        <div className="personal-result win">
+          <strong>Саботаж раскрыт</strong>
+          <span>Крот был пойман Комплаенсом в момент попытки провести Диверсию.</span>
+        </div>
+      ) : null}
       <div className={playerWon ? "personal-result win" : "personal-result lose"}>
         <strong>{playerWon ? "Ты в победившей стороне" : "Эта партия ушла другой стороне"}</strong>
         <span>{props.me?.role ? roleLabel(props.me.role) : "Роль неизвестна"}</span>
@@ -767,6 +850,7 @@ function FinishPhase(props: { state: PublicGameState; me?: PublicPlayerState; on
       {summary ? (
         <div className="final-reveal">
           <span>Крот: {playerName(props.state.players, summary.mole_user_id)}</span>
+          {summary.compliance_user_id ? <span>Комплаенс: {playerName(props.state.players, summary.compliance_user_id)}</span> : null}
           <span>Подкопы: {summary.mole_targets.map(decisionLabel).join(", ")}</span>
           <span>Диверсия: {decisionLabel(summary.mole_sabotage)}</span>
         </div>

@@ -9,6 +9,7 @@ export type ActionType =
   | "start_game"
   | "choose_memorandum"
   | "select_mole_objectives"
+  | "place_compliance_watch"
   | "vote"
   | "submit_governance_proposal"
   | "skip_governance_proposal";
@@ -135,6 +136,12 @@ export interface PublicMemorandum {
   decisions: string[];
 }
 
+export interface PublicComplianceWatch {
+  round_number: number;
+  compliance_user_id: number;
+  target_user_id: number;
+}
+
 export interface PublicGovernanceProposal {
   id: number;
   round: number;
@@ -205,14 +212,25 @@ export interface PublicRoundReport {
 
 export interface PublicFinalSummary {
   winner: string;
+  winner_reason?: string;
   winner_user_ids: number[];
   mole_user_id: number;
+  compliance_user_id?: number;
+  compliance_catch?: PublicComplianceCatch | null;
   mole_targets: string[];
   mole_sabotage: string;
   mole_points: number;
   players_points: number;
   least_mistake_user_ids: number[];
   player_stats: PublicFinalPlayerStats[];
+}
+
+export interface PublicComplianceCatch {
+  round_number: number;
+  compliance_user_id: number;
+  mole_user_id: number;
+  accepted_decision: string;
+  reason: string;
 }
 
 export interface PublicFinalPlayerStats {
@@ -243,6 +261,7 @@ export interface PublicReplayStep {
   decision?: string;
   proposal?: PublicGovernanceProposal;
   winner?: string;
+  winner_reason?: string;
   votes?: PublicReplayVote[] | null;
 }
 
@@ -262,6 +281,7 @@ export interface PublicGameState {
   phase?: GamePhase;
   is_finished: boolean;
   winner?: string;
+  winner_reason?: string;
   current_round: number;
   governance_round?: number;
   treasury_share_bps: number;
@@ -286,6 +306,7 @@ export interface PublicGameState {
   mole_sabotage?: string;
   memorandum_preference?: MemorandumType;
   memorandum?: PublicMemorandum | null;
+  compliance_watch?: PublicComplianceWatch | null;
   mole_victory_points?: number;
   players_victory_points?: number;
   final_summary?: PublicFinalSummary | null;

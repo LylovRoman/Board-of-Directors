@@ -570,11 +570,23 @@ components:
         winner:
           type: string
           enum: [mole, players]
+        winner_reason:
+          type: string
+          enum: [mole_targets_collected, three_clean_decisions_collected, mole_caught_by_compliance]
         rounds:
           type: integer
         mole_user_id:
           type: integer
           format: int64
+        compliance_user_id:
+          type: integer
+          format: int64
+        compliance_caught:
+          type: boolean
+        compliance_watches:
+          type: array
+          items:
+            $ref: "#/components/schemas/BotSimulationComplianceWatch"
         mole_points:
           type: integer
         players_points:
@@ -589,6 +601,18 @@ components:
           type: array
           items:
             type: string
+
+    BotSimulationComplianceWatch:
+      type: object
+      properties:
+        round_number:
+          type: integer
+        compliance_user_id:
+          type: integer
+          format: int64
+        target_user_id:
+          type: integer
+          format: int64
 
     BotSimulationResponse:
       type: object
@@ -634,6 +658,10 @@ components:
           type: integer
         accepted_sabotage_count:
           type: integer
+        compliance_catches_count:
+          type: integer
+        players_wins_by_compliance_count:
+          type: integer
         average_accepted_clean_count:
           type: number
           format: double
@@ -641,6 +669,9 @@ components:
           type: number
           format: double
         average_accepted_sabotage_count:
+          type: number
+          format: double
+        average_compliance_catches_per_game:
           type: number
           format: double
         results:
@@ -879,6 +910,7 @@ components:
             - start_game
             - choose_memorandum
             - select_mole_objectives
+            - place_compliance_watch
             - vote
             - submit_governance_proposal
             - skip_governance_proposal
@@ -887,6 +919,7 @@ components:
             - $ref: "#/components/schemas/SendChatMessagePayload"
             - $ref: "#/components/schemas/ChooseMemorandumPayload"
             - $ref: "#/components/schemas/SelectMoleObjectivesPayload"
+            - $ref: "#/components/schemas/PlaceComplianceWatchPayload"
             - $ref: "#/components/schemas/VotePayload"
             - $ref: "#/components/schemas/SubmitGovernanceProposalPayload"
             - $ref: "#/components/schemas/ReactChatMessagePayload"
@@ -929,6 +962,15 @@ components:
           type: string
           enum: [A, B, C, D, E, F, G, H]
       required: [targets, sabotage]
+
+    PlaceComplianceWatchPayload:
+      type: object
+      description: Private Compliance action during major_voting. The target must be an active player and cannot be the Compliance player themselves. The watch is hidden from public state and other viewers.
+      properties:
+        target_user_id:
+          type: integer
+          format: int64
+      required: [target_user_id]
 
     VotePayload:
       type: object
@@ -1009,6 +1051,8 @@ components:
           type: boolean
         role:
           type: string
+          enum: [player, mole, compliance]
+          description: Private. Present only on `me`; `compliance` is a hidden Council role.
 
     PublicVoteState:
       type: object
@@ -1205,6 +1249,9 @@ components:
       properties:
         winner:
           type: string
+        winner_reason:
+          type: string
+          enum: [mole_targets_collected, three_clean_decisions_collected, mole_caught_by_compliance]
         winner_user_ids:
           type: array
           items:
@@ -1213,6 +1260,12 @@ components:
         mole_user_id:
           type: integer
           format: int64
+        compliance_user_id:
+          type: integer
+          format: int64
+          description: Revealed in the final summary for every finished game.
+        compliance_catch:
+          $ref: "#/components/schemas/PublicComplianceCatch"
         mole_targets:
           type: array
           items:
@@ -1233,6 +1286,23 @@ components:
           items:
             $ref: "#/components/schemas/PublicFinalPlayerStats"
 
+    PublicComplianceCatch:
+      type: object
+      properties:
+        round_number:
+          type: integer
+        compliance_user_id:
+          type: integer
+          format: int64
+        mole_user_id:
+          type: integer
+          format: int64
+        accepted_decision:
+          type: string
+        reason:
+          type: string
+          enum: [direct_sabotage_vote]
+
     PublicFinalPlayerStats:
       type: object
       properties:
@@ -1243,6 +1313,7 @@ components:
           type: string
         role:
           type: string
+          enum: [player, mole, compliance]
         won:
           type: boolean
         major_votes:
@@ -1289,6 +1360,11 @@ components:
         proposal:
           $ref: "#/components/schemas/PublicGovernanceProposal"
         winner:
+          type: string
+        winner_reason:
+          type: string
+          enum: [mole_targets_collected, three_clean_decisions_collected, mole_caught_by_compliance]
+        reason:
           type: string
         votes:
           type: array
@@ -1388,6 +1464,20 @@ components:
             enum: [A, B, C, D, E, F, G, H]
       required: [type, decisions]
 
+    PublicComplianceWatch:
+      type: object
+      description: Private. Present only in the personalized state of the Compliance player for the current major round after they placed a watch.
+      properties:
+        round_number:
+          type: integer
+        compliance_user_id:
+          type: integer
+          format: int64
+        target_user_id:
+          type: integer
+          format: int64
+      required: [round_number, compliance_user_id, target_user_id]
+
     PublicGameState:
       type: object
       properties:
@@ -1411,6 +1501,9 @@ components:
           type: boolean
         winner:
           type: string
+        winner_reason:
+          type: string
+          enum: [mole_targets_collected, three_clean_decisions_collected, mole_caught_by_compliance]
         started_player_count:
           type: integer
           description: Number of active players when the game started.
@@ -1503,6 +1596,8 @@ components:
           description: Private. Present only for the viewing director during setup if they chose a memorandum type.
         memorandum:
           $ref: "#/components/schemas/PublicMemorandum"
+        compliance_watch:
+          $ref: "#/components/schemas/PublicComplianceWatch"
         mole_victory_points:
           type: integer
           description: Present for the Mole from setup; revealed to all players after the sabotage decision is accepted.
@@ -1519,3 +1614,18 @@ components:
           type: array
           items:
             type: string
+            enum:
+              - join_game
+              - leave_game
+              - kick_player
+              - ban_player
+              - add_bot
+              - send_chat_message
+              - react_chat_message
+              - start_game
+              - choose_memorandum
+              - select_mole_objectives
+              - place_compliance_watch
+              - vote
+              - submit_governance_proposal
+              - skip_governance_proposal

@@ -2,6 +2,7 @@ package game
 
 import (
 	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -31,6 +32,9 @@ func TestSimulateBotGamesAcceptsBotMemorandumCount(t *testing.T) {
 	}
 	if len(response.Results) != 1 {
 		t.Fatalf("expected included game result, got %+v", response.Results)
+	}
+	if response.Results[0].ComplianceUserID == 0 {
+		t.Fatalf("expected included game to reveal compliance user, got %+v", response.Results[0])
 	}
 }
 
@@ -64,7 +68,10 @@ func TestSimulateBotGamesDeterministicAcrossWorkerCounts(t *testing.T) {
 		left.AverageRounds != right.AverageRounds ||
 		left.AcceptedCleanCount != right.AcceptedCleanCount ||
 		left.AcceptedTargetCount != right.AcceptedTargetCount ||
-		left.AcceptedSabotageCount != right.AcceptedSabotageCount {
+		left.AcceptedSabotageCount != right.AcceptedSabotageCount ||
+		left.ComplianceCatchesCount != right.ComplianceCatchesCount ||
+		left.PlayersWinsByComplianceCount != right.PlayersWinsByComplianceCount ||
+		left.AverageComplianceCatchesPerGame != right.AverageComplianceCatchesPerGame {
 		t.Fatalf("expected deterministic aggregate across workers, left=%+v right=%+v", left, right)
 	}
 	if len(left.Results) != len(right.Results) {
@@ -74,9 +81,13 @@ func TestSimulateBotGamesDeterministicAcrossWorkerCounts(t *testing.T) {
 		if left.Results[i].Winner != right.Results[i].Winner ||
 			left.Results[i].Rounds != right.Results[i].Rounds ||
 			left.Results[i].MoleUserID != right.Results[i].MoleUserID ||
+			left.Results[i].ComplianceUserID != right.Results[i].ComplianceUserID ||
+			left.Results[i].WinnerReason != right.Results[i].WinnerReason ||
+			left.Results[i].ComplianceCaught != right.Results[i].ComplianceCaught ||
 			left.Results[i].MolePoints != right.Results[i].MolePoints ||
 			left.Results[i].PlayersPoints != right.Results[i].PlayersPoints ||
-			strings.Join(left.Results[i].AcceptedDecisions, ",") != strings.Join(right.Results[i].AcceptedDecisions, ",") {
+			strings.Join(left.Results[i].AcceptedDecisions, ",") != strings.Join(right.Results[i].AcceptedDecisions, ",") ||
+			complianceWatchSignature(left.Results[i].ComplianceWatches) != complianceWatchSignature(right.Results[i].ComplianceWatches) {
 			t.Fatalf("expected deterministic game %d, left=%+v right=%+v", i, left.Results[i], right.Results[i])
 		}
 	}
@@ -208,6 +219,14 @@ func TestMultiMemorandumInferenceScoresCleanIntersection(t *testing.T) {
 	if scoreB, scoreA := engine.scoreBotMajorDecision(state, bot, "B"), engine.scoreBotMajorDecision(state, bot, "A"); scoreB <= scoreA {
 		t.Fatalf("expected inferred-clean B to outscore A, scoreB=%d scoreA=%d", scoreB, scoreA)
 	}
+}
+
+func complianceWatchSignature(watches []BotSimulationComplianceWatch) string {
+	parts := make([]string, 0, len(watches))
+	for _, watch := range watches {
+		parts = append(parts, strconv.Itoa(watch.RoundNumber)+":"+strconv.FormatInt(watch.ComplianceUserID, 10)+">"+strconv.FormatInt(watch.TargetUserID, 10))
+	}
+	return strings.Join(parts, ",")
 }
 
 func BenchmarkSimulateBotGames100Workers1(b *testing.B) {

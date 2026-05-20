@@ -103,6 +103,7 @@ const ACTION_SFX: Partial<Record<ActionType, SfxName>> = {
   start_game: "start",
   choose_memorandum: "success",
   select_mole_objectives: "success",
+  place_compliance_watch: "success",
   vote: "vote",
   submit_governance_proposal: "success",
   skip_governance_proposal: "close",
@@ -149,7 +150,13 @@ function phaseLabel(phase?: GamePhase): string {
 }
 
 function roleLabel(role?: string): string {
-  return role === "mole" ? "Крот" : "Директор";
+  if (role === "mole") {
+    return "Крот";
+  }
+  if (role === "compliance") {
+    return "Комплаенс";
+  }
+  return "Директор";
 }
 
 function winnerLabel(winner?: string): string {
@@ -443,6 +450,7 @@ export default function PlayerApp() {
   const canVote = availableActions.includes("vote");
   const canSelectMoleObjectives = availableActions.includes("select_mole_objectives");
   const canChooseMemorandum = availableActions.includes("choose_memorandum");
+  const canPlaceComplianceWatch = availableActions.includes("place_compliance_watch");
   const canSubmitGovernanceProposal = availableActions.includes("submit_governance_proposal");
   const canSkipGovernanceProposal = availableActions.includes("skip_governance_proposal");
   const canJoin = availableActions.includes("join_game");
@@ -1448,12 +1456,14 @@ export default function PlayerApp() {
                 canVote={canVote}
                 canSelectMoleObjectives={canSelectMoleObjectives}
                 canChooseMemorandum={canChooseMemorandum}
+                canPlaceComplianceWatch={canPlaceComplianceWatch}
                 canSubmitGovernanceProposal={canSubmitGovernanceProposal}
                 canSkipGovernanceProposal={canSkipGovernanceProposal}
                 canSendChatMessage={canSendChatMessage}
                 isSubmitting={isSubmitting}
                 onSelectMoleObjectives={(payload) => void handleAction("select_mole_objectives", payload)}
                 onChooseMemorandum={(type) => void handleAction("choose_memorandum", { type })}
+                onPlaceComplianceWatch={(targetUserId) => void handleAction("place_compliance_watch", { target_user_id: targetUserId })}
                 onVote={(decision) => void handleAction("vote", { decision, abstain: false })}
                 onVoteProposal={(proposalId) => void handleAction("vote", { proposal_id: proposalId, abstain: false })}
                 onAbstain={() => void handleAction("vote", { abstain: true })}
@@ -1839,20 +1849,20 @@ function RulesDialog(props: { onClose: () => void }) {
     {
       id: "goal",
       label: "Цель",
-      text: "В партии участвуют от 3 до 8 директоров. Один игрок тайно становится Кротом, остальные играют за Совет.",
-      bullets: ["Совет побеждает, когда принимает 3 чистых решения.", "Крот побеждает, когда его цели дают 3 очка саботажа.", "Подкоп стоит 1 очко, Диверсия стоит 2 очка."],
+      text: "В партии участвуют от 3 до 8 директоров. Один игрок тайно становится Кротом, один не-Крот становится Комплаенсом, остальные играют за Совет.",
+      bullets: ["Совет побеждает, когда принимает 3 чистых решения.", "Крот побеждает, когда его цели дают 3 очка саботажа.", "Комплаенс может мгновенно принести победу Совету, если поймает Крота на принятой Диверсии."],
     },
     {
       id: "start",
       label: "Старт",
-      text: "Host создает комнату и запускает заседание, когда игроков достаточно. Случайным образом выбирается компания, доли, роли CEO и Крота.",
+      text: "Host создает комнату и запускает заседание, когда игроков достаточно. Случайным образом выбирается компания, доли, роли CEO, Крота и Комплаенса.",
       bullets: ["Доли дают силу в major vote.", "CEO получает бонус к полномочиям и решает ничьи."],
     },
     {
       id: "roles",
       label: "Роли",
-      text: "Директора ищут безопасные решения, а Крот выбирает 3 Подкопа и 1 Диверсию из решений A-H.",
-      bullets: ["Роль Крота скрыта до финала.", "Крот видит свои цели и счет.", "Директор видит только свой меморандум и публичные итоги голосований."],
+      text: "Директора ищут безопасные решения, Комплаенс тайно ставит наблюдение, а Крот выбирает 3 Подкопа и 1 Диверсию из решений A-H.",
+      bullets: ["Роли Крота и Комплаенса скрыты до финала.", "Крот видит свои цели и счет.", "Комплаенс видит свою цель наблюдения."],
     },
     {
       id: "memo",
@@ -1864,13 +1874,13 @@ function RulesDialog(props: { onClose: () => void }) {
       id: "major",
       label: "Major vote",
       text: "В major vote каждый выбирает одну карточку из витрины. Голос можно менять, пока раунд открыт.",
-      bullets: ["Сила major-голоса равна доле игрока.", "При равенстве важен голос CEO.", "После выбора целей Крота первый major vote на минуту блокируется для чтения меморандумов."],
+      bullets: ["Сила major-голоса равна доле игрока.", "Комплаенс один раз за раунд выбирает игрока под скрытое наблюдение.", "После выбора целей Крота первый major vote на минуту блокируется для чтения меморандумов."],
     },
     {
       id: "governance",
       label: "Governance",
       text: "После принятого major решения начинается корпоративный маневр: игроки предлагают изменения и голосуют за них.",
-      bullets: ["Можно передать долю, выдать грант из резерва или выкупить долю в резерв.", "Сила governance-голоса равна доле плюс полномочия.", "CEO не может воздержаться в governance vote."],
+      bullets: ["Участвуют максимум 4 предложения. В приоритете предложения игроков с наивысшим показателем полномочий.", "Можно передать долю, выдать грант из резерва или выкупить долю в резерв.", "Сила governance-голоса равна доле плюс полномочия.", "CEO не может воздержаться в governance vote."],
     },
     {
       id: "timers",
@@ -1881,8 +1891,8 @@ function RulesDialog(props: { onClose: () => void }) {
     {
       id: "win",
       label: "Финал",
-      text: "После финала раскрываются Крот, его цели, Диверсия, победитель и точность major-голосов.",
-      bullets: ["Точность показывает, насколько часто игрок голосовал в интересах своей стороны.", "Replay помогает восстановить цепочку решений.", "XP начисляется за участие, победу, CEO-бонус, точность и принятое governance-предложение."],
+      text: "После финала раскрываются Комплаенс, Крот, его цели, Диверсия, победитель и точность major-голосов.",
+      bullets: ["Финал наступает когда одна из команд набирает 3 победных очка.", "Если Комплаенс поймал Крота, то счёт не имеет значения. Победа сразу достаётся совету.", "Replay помогает восстановить цепочку решений."],
     },
   ];
   const [activeTab, setActiveTab] = useState(tabs[0].id);
@@ -1921,12 +1931,12 @@ function RulesDialog(props: { onClose: () => void }) {
 function TutorialDialog(props: { onClose: () => void }) {
   const steps = [
     { title: "1. Осмотрись в комнате", text: "Название комнаты показывает, куда ты вошел, а карточка компании задает сюжет партии. До старта Host может пригласить игроков или добавить ботов." },
-    { title: "2. Получи роль", text: "Директору нужно провести чистые решения, Кроту - замаскировать свои цели. Роль Крота скрыта, поэтому не верь одному голосованию без контекста." },
+    { title: "2. Получи роль", text: "Директору нужно провести чистые решения, Комплаенсу - тайно наблюдать за подозреваемыми, Кроту - замаскировать свои цели." },
     { title: "3. Выбери меморандум", text: "В тайном брифинге Директор выбирает подсказку про возможности или риски. Она не раскрывает истину напрямую, но сужает подозрительные решения." },
     { title: "4. Голосуй в major vote", text: "Выбирай решение из витрины и меняй голос, пока раунд открыт. Смотри на доли: большой акционер сильнее влияет на итог." },
     { title: "5. Разбирай governance", text: "После принятого решения можно менять доли, выдавать гранты или делать выкуп. Здесь сила голоса равна доле плюс полномочия." },
     { title: "6. Следи за таймером", text: "На фазу есть 3 минуты. Если игрок не делает обязательный ход, его место занимает бот-заместитель; обычные боты ждут 10 секунд перед автоходом." },
-    { title: "7. Читай финал", text: "В финале смотри победителя, цели Крота, точность major-голосов, XP и replay. Это лучший способ понять, где Совет свернул не туда." },
+    { title: "7. Читай финал", text: "В финале смотри победителя, цели Крота, Комплаенса, точность major-голосов, XP и replay. Это лучший способ понять, где Совет свернул не туда." },
   ];
   const [index, setIndex] = useState(0);
   const step = steps[index];
@@ -2079,12 +2089,14 @@ function StartedGameScreen(props: {
   canVote: boolean;
   canSelectMoleObjectives: boolean;
   canChooseMemorandum: boolean;
+  canPlaceComplianceWatch: boolean;
   canSubmitGovernanceProposal: boolean;
   canSkipGovernanceProposal: boolean;
   canSendChatMessage: boolean;
   isSubmitting: boolean;
   onSelectMoleObjectives: (payload: Record<string, unknown>) => void;
   onChooseMemorandum: (type: MemorandumType) => void;
+  onPlaceComplianceWatch: (targetUserId: number) => void;
   onVote: (decision: string) => void;
   onVoteProposal: (proposalId: number) => void;
   onAbstain: () => void;
@@ -2235,20 +2247,32 @@ function StartedGameScreen(props: {
                 </section>
             ) : (
                 <section className="secret-card">
-                  <p className="eyebrow">Меморандум</p>
-                  {props.memorandum ? (
+                  {props.me?.role === "compliance" ? (
                       <>
-                        <h3>{memorandumTitle(props.memorandum.type)}</h3>
-                        <p className="quiet-text">{memorandumRule(props.memorandum.type)}</p>
-                        <DecisionList values={props.memorandum.decisions} emptyText="Меморандум еще не получен." />
+                        <p className="eyebrow">Комплаенс</p>
+                        <p className="quiet-text">
+                          Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение. Если выбранный игрок окажется Кротом и лично проголосует за принятую Диверсию, Совет директоров немедленно победит не зависимо от текущего счёта.
+                        </p>
                       </>
-                  ) : (
-                      <p className="quiet-text">
-                        {props.memorandumPreference
-                            ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}.`
-                            : "Выбери тип меморандума, пока крот формирует цели."}
-                      </p>
-                  )}
+                  ) : null}
+                  {props.me?.role === "player" ? (
+                    <>
+                    <p className="eyebrow">Меморандум</p>
+                    {props.memorandum ? (
+                        <>
+                          <h3>{memorandumTitle(props.memorandum.type)}</h3>
+                          <p className="quiet-text">{memorandumRule(props.memorandum.type)}</p>
+                          <DecisionList values={props.memorandum.decisions} emptyText="Меморандум еще не получен." />
+                        </>
+                    ) : (
+                        <p className="quiet-text">
+                          {props.memorandumPreference
+                              ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}.`
+                              : "Выбери тип меморандума, пока крот формирует цели."}
+                        </p>
+                    )}
+                    </>
+                  ) : null}
                   {scoreRevealed ? (
                       <>
                         <p className="eyebrow">Счёт</p>
@@ -2315,6 +2339,17 @@ function StartedGameScreen(props: {
                     {majorVoteLocked ? <span className="wait-pill">Обсуждение: {majorVoteSecondsLeft}с</span> : props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
                   </div>
 
+                  {props.me?.role === "compliance" ? (
+                      <ComplianceWatchPanel
+                          players={props.players}
+                          currentUserId={props.currentUserId}
+                          watch={props.state.compliance_watch ?? null}
+                          canPlace={props.canPlaceComplianceWatch}
+                          isSubmitting={props.isSubmitting}
+                          onPlace={props.onPlaceComplianceWatch}
+                      />
+                  ) : null}
+
                   <div className="decision-grid">
                     {displayedMajorOptions.map((decision) => {
                       const isMoleTarget = props.me?.role === "mole" && props.moleTargets.includes(decision);
@@ -2357,6 +2392,72 @@ function StartedGameScreen(props: {
           </div>
         </div>
       </section>
+  );
+}
+
+function ComplianceWatchPanel(props: {
+  players: PublicPlayerState[];
+  currentUserId: number;
+  watch: PublicGameState["compliance_watch"] | null;
+  canPlace: boolean;
+  isSubmitting: boolean;
+  onPlace: (targetUserId: number) => void;
+}) {
+  const candidates = props.players.filter((player) => player.user_id !== props.currentUserId);
+  const watchedPlayer = props.watch
+      ? props.players.find((player) => player.user_id === props.watch?.target_user_id)
+      : undefined;
+  const [selectedTarget, setSelectedTarget] = useState<number | null>(() => candidates[0]?.user_id ?? null);
+
+  useEffect(() => {
+    if (selectedTarget && candidates.some((player) => player.user_id === selectedTarget)) {
+      return;
+    }
+    setSelectedTarget(candidates[0]?.user_id ?? null);
+  }, [candidates, selectedTarget]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!props.canPlace || props.isSubmitting || !selectedTarget || props.watch) {
+      return;
+    }
+    props.onPlace(selectedTarget);
+  }
+
+  return (
+      <form className="compliance-watch-panel" onSubmit={submit}>
+        <div>
+          <p className="eyebrow">Негласное наблюдение</p>
+          <p className="quiet-text">
+            Выберите одного игрока, за которым Комплаенс установит наблюдение в этом раунде.
+          </p>
+        </div>
+        {props.watch ? (
+            <div className="watch-confirmed">
+              Под наблюдением: <strong>{watchedPlayer?.name ?? `#${props.watch.target_user_id}`}</strong>
+            </div>
+        ) : (
+            <>
+              <div className="watch-player-grid">
+                {candidates.map((player) => (
+                    <button
+                        key={player.user_id}
+                        type="button"
+                        className={selectedTarget === player.user_id ? "watch-player-option selected" : "watch-player-option"}
+                        onClick={() => setSelectedTarget(player.user_id)}
+                        disabled={!props.canPlace || props.isSubmitting}
+                    >
+                      <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
+                      <span>{player.name}</span>
+                    </button>
+                ))}
+              </div>
+              <button className="primary-action" type="submit" disabled={!props.canPlace || props.isSubmitting || !selectedTarget}>
+                Установить наблюдение
+              </button>
+            </>
+        )}
+      </form>
   );
 }
 
@@ -2414,6 +2515,13 @@ function FinishScreen(props: {
           ),
       [acceptedReports],
   );
+  const winnerReason = summary?.winner_reason ?? props.state.winner_reason;
+  const complianceVictory = winnerReason === "mole_caught_by_compliance";
+  const complianceUserId = summary?.compliance_user_id;
+  const complianceName = complianceUserId
+      ? playerStats.find((stat) => stat.user_id === complianceUserId)?.name ??
+      props.state.players?.find((player) => player.user_id === complianceUserId)?.name
+      : "";
 
   return (
       <section className="finish-screen">
@@ -2427,6 +2535,16 @@ function FinishScreen(props: {
           <span>Крот {summary?.mole_points ?? props.state.mole_victory_points ?? 0}/3</span>
           <span>Совет {summary?.players_points ?? props.state.players_victory_points ?? 0}/3</span>
         </div>
+        {complianceVictory ? (
+            <section className="final-panel compliance-victory-panel">
+              <p className="eyebrow">Саботаж раскрыт</p>
+              <strong>Совет директоров побеждает</strong>
+              <p>
+                Крот был пойман Комплаенсом в момент попытки провести Диверсию
+                {summary?.compliance_catch?.accepted_decision ? ` ${decisionLabel(summary.compliance_catch.accepted_decision)}` : ""}.
+              </p>
+            </section>
+        ) : null}
         <div className="final-grid">
           {myFinalStats ? (
               <section className="final-panel xp-panel">
@@ -2463,6 +2581,7 @@ function FinishScreen(props: {
           <section className="final-panel">
             <p className="eyebrow">раскрытие</p>
             <p>Крот: {playerStats.find((stat) => stat.user_id === summary?.mole_user_id)?.name ?? "неизвестно"}</p>
+            {complianceUserId ? <p>Комплаенс: {complianceName || "неизвестно"}</p> : null}
             <p style={{ whiteSpace: 'pre-line' }}>
               Цели: {(summary?.mole_targets ?? []).map(decisionLabel).join("\n") || "нет данных"}
             </p>
@@ -2574,6 +2693,9 @@ function ReplayPanel(props: { state: PublicGameState; steps: NonNullable<PublicG
             <p>{step.summary}</p>
             {step.decision ? <p>Решение: {decisionLabel(step.decision)}</p> : null}
             {step.winner ? <p>Победитель: {winnerLabel(step.winner)}</p> : null}
+            {step.winner_reason === "mole_caught_by_compliance" ? (
+                <p>Совет победил, потому что Комплаенс поймал Крота на личной поддержке принятой Диверсии.</p>
+            ) : null}
             {step.votes?.length ? (
                 <div className="replay-votes">
                   {step.votes.map((vote) => (
@@ -3028,6 +3150,7 @@ function ChatPanel(props: {
       "governance_accepted",
       "governance_rejected",
       "sabotage_accepted",
+      "mole_exposed_by_compliance",
       "mole_revealed",
     ]);
     return props.messages.filter((message) => message.kind === "system" && historyTypes.has(message.system_event_type ?? ""));

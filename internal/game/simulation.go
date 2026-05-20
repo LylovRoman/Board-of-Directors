@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -41,40 +42,53 @@ type BotSimulationRequest struct {
 }
 
 type BotSimulationResponse struct {
-	Games                        int                         `json:"games"`
-	Players                      int                         `json:"players"`
-	Seed                         int64                       `json:"seed"`
-	BotMemorandumCount           int                         `json:"bot_memorandum_count"`
-	BotMemorandumType            BotSimulationMemorandumType `json:"bot_memorandum_type"`
-	Workers                      int                         `json:"workers"`
-	MonteCarloRollouts           int                         `json:"monte_carlo_rollouts"`
-	DurationMS                   int64                       `json:"duration_ms"`
-	GamesPerSecond               float64                     `json:"games_per_second"`
-	MoleWins                     int                         `json:"mole_wins"`
-	PlayersWins                  int                         `json:"players_wins"`
-	MoleWinrate                  float64                     `json:"mole_winrate"`
-	PlayersWinrate               float64                     `json:"players_winrate"`
-	AverageRounds                float64                     `json:"average_rounds"`
-	AcceptedCleanCount           int                         `json:"accepted_clean_count"`
-	AcceptedTargetCount          int                         `json:"accepted_target_count"`
-	AcceptedSabotageCount        int                         `json:"accepted_sabotage_count"`
-	AverageAcceptedCleanCount    float64                     `json:"average_accepted_clean_count"`
-	AverageAcceptedTargetCount   float64                     `json:"average_accepted_target_count"`
-	AverageAcceptedSabotageCount float64                     `json:"average_accepted_sabotage_count"`
-	Results                      []BotSimulationGameResult   `json:"results,omitempty"`
+	Games                           int                         `json:"games"`
+	Players                         int                         `json:"players"`
+	Seed                            int64                       `json:"seed"`
+	BotMemorandumCount              int                         `json:"bot_memorandum_count"`
+	BotMemorandumType               BotSimulationMemorandumType `json:"bot_memorandum_type"`
+	Workers                         int                         `json:"workers"`
+	MonteCarloRollouts              int                         `json:"monte_carlo_rollouts"`
+	DurationMS                      int64                       `json:"duration_ms"`
+	GamesPerSecond                  float64                     `json:"games_per_second"`
+	MoleWins                        int                         `json:"mole_wins"`
+	PlayersWins                     int                         `json:"players_wins"`
+	MoleWinrate                     float64                     `json:"mole_winrate"`
+	PlayersWinrate                  float64                     `json:"players_winrate"`
+	AverageRounds                   float64                     `json:"average_rounds"`
+	AcceptedCleanCount              int                         `json:"accepted_clean_count"`
+	AcceptedTargetCount             int                         `json:"accepted_target_count"`
+	AcceptedSabotageCount           int                         `json:"accepted_sabotage_count"`
+	ComplianceCatchesCount          int                         `json:"compliance_catches_count"`
+	PlayersWinsByComplianceCount    int                         `json:"players_wins_by_compliance_count"`
+	AverageAcceptedCleanCount       float64                     `json:"average_accepted_clean_count"`
+	AverageAcceptedTargetCount      float64                     `json:"average_accepted_target_count"`
+	AverageAcceptedSabotageCount    float64                     `json:"average_accepted_sabotage_count"`
+	AverageComplianceCatchesPerGame float64                     `json:"average_compliance_catches_per_game"`
+	Results                         []BotSimulationGameResult   `json:"results,omitempty"`
 }
 
 type BotSimulationGameResult struct {
-	Index                 int      `json:"index"`
-	Winner                string   `json:"winner"`
-	Rounds                int      `json:"rounds"`
-	MoleUserID            int64    `json:"mole_user_id"`
-	MolePoints            int      `json:"mole_points"`
-	PlayersPoints         int      `json:"players_points"`
-	AcceptedCleanCount    int      `json:"accepted_clean_count"`
-	AcceptedTargetCount   int      `json:"accepted_target_count"`
-	AcceptedSabotageCount int      `json:"accepted_sabotage_count"`
-	AcceptedDecisions     []string `json:"accepted_decisions,omitempty"`
+	Index                 int                            `json:"index"`
+	Winner                string                         `json:"winner"`
+	WinnerReason          string                         `json:"winner_reason,omitempty"`
+	Rounds                int                            `json:"rounds"`
+	MoleUserID            int64                          `json:"mole_user_id"`
+	ComplianceUserID      int64                          `json:"compliance_user_id,omitempty"`
+	ComplianceCaught      bool                           `json:"compliance_caught"`
+	ComplianceWatches     []BotSimulationComplianceWatch `json:"compliance_watches,omitempty"`
+	MolePoints            int                            `json:"mole_points"`
+	PlayersPoints         int                            `json:"players_points"`
+	AcceptedCleanCount    int                            `json:"accepted_clean_count"`
+	AcceptedTargetCount   int                            `json:"accepted_target_count"`
+	AcceptedSabotageCount int                            `json:"accepted_sabotage_count"`
+	AcceptedDecisions     []string                       `json:"accepted_decisions,omitempty"`
+}
+
+type BotSimulationComplianceWatch struct {
+	RoundNumber      int   `json:"round_number"`
+	ComplianceUserID int64 `json:"compliance_user_id"`
+	TargetUserID     int64 `json:"target_user_id"`
 }
 
 type botSimulationConfig struct {
@@ -157,6 +171,12 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		response.AcceptedCleanCount += result.AcceptedCleanCount
 		response.AcceptedTargetCount += result.AcceptedTargetCount
 		response.AcceptedSabotageCount += result.AcceptedSabotageCount
+		if result.ComplianceCaught {
+			response.ComplianceCatchesCount++
+		}
+		if result.WinnerReason == WinnerReasonMoleCaughtByCompliance {
+			response.PlayersWinsByComplianceCount++
+		}
 		if config.IncludeGames {
 			response.Results = append(response.Results, result)
 		}
@@ -169,6 +189,7 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		response.AverageAcceptedCleanCount = float64(response.AcceptedCleanCount) / float64(config.Games)
 		response.AverageAcceptedTargetCount = float64(response.AcceptedTargetCount) / float64(config.Games)
 		response.AverageAcceptedSabotageCount = float64(response.AcceptedSabotageCount) / float64(config.Games)
+		response.AverageComplianceCatchesPerGame = float64(response.ComplianceCatchesCount) / float64(config.Games)
 	}
 	response.DurationMS = time.Since(start).Milliseconds()
 	if elapsed := time.Since(start).Seconds(); elapsed > 0 {
@@ -304,8 +325,12 @@ func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResul
 	return BotSimulationGameResult{
 		Index:                 index,
 		Winner:                state.Winner,
+		WinnerReason:          state.WinnerReason,
 		Rounds:                state.CurrentRound,
 		MoleUserID:            state.MoleUserID,
+		ComplianceUserID:      state.ComplianceUserID,
+		ComplianceCaught:      state.ComplianceCatch != nil,
+		ComplianceWatches:     botSimulationComplianceWatches(state),
 		MolePoints:            molePoints,
 		PlayersPoints:         playersPoints,
 		AcceptedCleanCount:    clean,
@@ -313,6 +338,27 @@ func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResul
 		AcceptedSabotageCount: sabotage,
 		AcceptedDecisions:     append([]string(nil), state.AcceptedOrder...),
 	}, nil
+}
+
+func botSimulationComplianceWatches(state *GameState) []BotSimulationComplianceWatch {
+	if state == nil || len(state.ComplianceWatches) == 0 {
+		return nil
+	}
+	rounds := make([]int, 0, len(state.ComplianceWatches))
+	for round := range state.ComplianceWatches {
+		rounds = append(rounds, round)
+	}
+	sort.Ints(rounds)
+	out := make([]BotSimulationComplianceWatch, 0, len(rounds))
+	for _, round := range rounds {
+		watch := state.ComplianceWatches[round]
+		out = append(out, BotSimulationComplianceWatch{
+			RoundNumber:      watch.RoundNumber,
+			ComplianceUserID: watch.ComplianceUserID,
+			TargetUserID:     watch.TargetUserID,
+		})
+	}
+	return out
 }
 
 func (e *Engine) newBotSimulationState(index int, players int, now time.Time) (*GameState, error) {
@@ -379,7 +425,7 @@ func (e *Engine) rememberBotSimulationMemorandums(state *GameState, events []mod
 			return err
 		}
 		player := activePlayerByID(state, payload.UserID)
-		if player == nil || !player.IsBot || player.Role == "mole" {
+		if player == nil || !player.IsBot || player.Role == RoleMole {
 			continue
 		}
 

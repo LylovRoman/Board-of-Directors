@@ -1077,6 +1077,61 @@ code {
   line-height: 1.35;
 }
 
+.compliance-watch-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(217, 164, 65, 0.34);
+  border-radius: 8px;
+  background: rgba(246, 241, 232, 0.06);
+}
+
+.watch-player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.watch-player-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(246, 241, 232, 0.14);
+  border-radius: 8px;
+  background: rgba(18, 18, 17, 0.72);
+  color: var(--ink);
+  text-align: left;
+}
+
+.watch-player-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-player-option.selected,
+.watch-player-option:hover:not(:disabled) {
+  border-color: rgba(217, 164, 65, 0.70);
+  background: rgba(217, 164, 65, 0.14);
+}
+
+.watch-confirmed {
+  padding: 10px 12px;
+  border: 1px solid rgba(46, 204, 113, 0.34);
+  border-radius: 8px;
+  background: rgba(46, 204, 113, 0.10);
+}
+
+.compliance-victory-panel {
+  margin: 14px 0;
+  border-color: rgba(46, 204, 113, 0.42);
+  background: rgba(46, 204, 113, 0.10);
+}
+
 .waiting-selection {
   align-content: center;
 }
