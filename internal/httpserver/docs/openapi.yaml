@@ -487,7 +487,7 @@ paths:
   /admin/simulations/bot-games:
     post:
       summary: Run fast all-bot game simulations
-      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`.
+      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`. Set `bot_memorandum_count` above 1 to give simulation-only director bots extra hidden memorandum cards and stronger mathematical inference without changing normal games. Use `bot_memorandum_type` to force every simulation memorandum to `opportunity` or `risk`; omitted/`mixed` alternates types.
       security:
         - adminToken: []
       requestBody:
@@ -539,6 +539,17 @@ components:
         include_games:
           type: boolean
           default: false
+        bot_memorandum_count:
+          type: integer
+          default: 1
+          minimum: 1
+          maximum: 50
+          description: Number of private memorandum cards each non-Mole simulation bot receives. Extra cards are hidden inside the simulator for smarter balance testing; normal games still assign one memorandum per director.
+        bot_memorandum_type:
+          type: string
+          enum: [mixed, opportunity, risk]
+          default: mixed
+          description: Type policy for simulation bot memorandums. `opportunity` or `risk` forces all cards to that type. `mixed` preserves the default alternating opportunity/risk behavior.
 
     BotSimulationGameResult:
       type: object
@@ -578,6 +589,11 @@ components:
         seed:
           type: integer
           format: int64
+        bot_memorandum_count:
+          type: integer
+        bot_memorandum_type:
+          type: string
+          enum: [mixed, opportunity, risk]
         mole_wins:
           type: integer
         players_wins:

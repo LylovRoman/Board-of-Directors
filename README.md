@@ -401,8 +401,10 @@ curl -X POST http://localhost:8000/games/1/actions \
 curl -X POST http://localhost:8000/admin/simulations/bot-games \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: local-admin-token" \
-  -d '{"games":100,"players":6,"seed":12345,"include_games":false}'
+  -d '{"games":100,"players":6,"seed":12345,"include_games":false,"bot_memorandum_count":7,"bot_memorandum_type":"risk"}'
 ```
+
+`bot_memorandum_count` defaults to `1` and supports up to `50`. Values above `1` give only simulation director bots extra hidden memorandum cards; normal games and public game state still use one memorandum per Director. `bot_memorandum_type` can be `opportunity`, `risk`, or omitted/`mixed`; explicit types force every simulation memorandum to that type, while `mixed` alternates the two types.
 
 Симуляции выполняются в памяти, не создают записи в `users`, `games` и `events`, используют текущую логику ботов и возвращают агрегированную статистику баланса.
 

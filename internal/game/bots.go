@@ -366,7 +366,11 @@ func (e *Engine) scoreBotMajorDecision(state *GameState, bot *PlayerState, decis
 	}
 
 	score := 50
-	if memorandum, ok := state.Memorandums[bot.UserID]; ok {
+	memorandums := e.botKnownMemorandums(state, bot)
+	if inference, ok := e.botObjectiveInference(state, bot); ok {
+		score += inference.directorDecisionScore(decision)
+	} else if len(memorandums) > 0 {
+		memorandum := memorandums[0]
 		inMemo := stringSet(memorandum.Decisions)[decision]
 		if memorandum.Type == MemorandumTypeRisk {
 			if inMemo {
@@ -389,7 +393,257 @@ func (e *Engine) scoreBotMajorDecision(state *GameState, bot *PlayerState, decis
 	} else if bot.ShareBPS < 1500 || state.TreasuryShareBPS > 0 {
 		score += 8
 	}
+	score -= e.currentVoteSuspicionPressure(state, bot, decision) / 4
 	return score
+}
+
+type botObjectiveInference struct {
+	Total          int
+	TargetCounts   map[string]int
+	SabotageCounts map[string]int
+	CleanCounts    map[string]int
+}
+
+func (e *Engine) botObjectiveInference(state *GameState, bot *PlayerState) (botObjectiveInference, bool) {
+	memorandums := e.botKnownMemorandums(state, bot)
+	if len(memorandums) <= 1 {
+		return botObjectiveInference{}, false
+	}
+
+	inference := inferBotObjectives(state, memorandums, true)
+	if inference.Total == 0 {
+		inference = inferBotObjectives(state, memorandums, false)
+	}
+	return inference, inference.Total > 0
+}
+
+func (e *Engine) botKnownMemorandums(state *GameState, bot *PlayerState) []MemorandumState {
+	if bot == nil {
+		return nil
+	}
+	if len(e.botSimulationMemorandums[bot.UserID]) > 0 {
+		out := e.botSimulationMemorandums[bot.UserID]
+		return append([]MemorandumState(nil), out...)
+	}
+	if memorandum, ok := state.Memorandums[bot.UserID]; ok {
+		return []MemorandumState{memorandum}
+	}
+	return nil
+}
+
+func inferBotObjectives(state *GameState, memorandums []MemorandumState, useShowcaseConstraint bool) botObjectiveInference {
+	inference := botObjectiveInference{
+		TargetCounts:   map[string]int{},
+		SabotageCounts: map[string]int{},
+		CleanCounts:    map[string]int{},
+	}
+	options := currentMajorOptions(state)
+	constrainShowcase := useShowcaseConstraint && len(options) == 4
+	accepted := stringSet(state.AcceptedOrder)
+	knownSabotage := ""
+	if state.MoleSabotage != "" && accepted[state.MoleSabotage] {
+		knownSabotage = state.MoleSabotage
+	}
+
+	for _, sabotage := range allDecisions {
+		if knownSabotage != "" && sabotage != knownSabotage {
+			continue
+		}
+		if knownSabotage == "" && accepted[sabotage] {
+			continue
+		}
+		candidates := make([]string, 0, len(allDecisions)-1)
+		for _, decision := range allDecisions {
+			if decision != sabotage {
+				candidates = append(candidates, decision)
+			}
+		}
+		for i := 0; i < len(candidates); i++ {
+			for j := i + 1; j < len(candidates); j++ {
+				for k := j + 1; k < len(candidates); k++ {
+					targets := map[string]bool{
+						candidates[i]: true,
+						candidates[j]: true,
+						candidates[k]: true,
+					}
+					objectives := map[string]bool{sabotage: true}
+					for target := range targets {
+						objectives[target] = true
+					}
+					if constrainShowcase && countDecisionsInSet(options, objectives) != 2 {
+						continue
+					}
+					if !memorandumsMatchObjectives(memorandums, objectives) {
+						continue
+					}
+					if state.Status == GameStatusStarted && !state.IsFinished && hypothesisHasAlreadyWon(state.AcceptedOrder, targets, sabotage) {
+						continue
+					}
+
+					inference.Total++
+					for _, decision := range allDecisions {
+						if decision == sabotage {
+							inference.SabotageCounts[decision]++
+						} else if targets[decision] {
+							inference.TargetCounts[decision]++
+						} else {
+							inference.CleanCounts[decision]++
+						}
+					}
+				}
+			}
+		}
+	}
+	return inference
+}
+
+func (inference botObjectiveInference) directorDecisionScore(decision string) int {
+	if inference.Total <= 0 {
+		return 0
+	}
+	cleanBPS := inference.CleanCounts[decision] * 10000 / inference.Total
+	targetBPS := inference.TargetCounts[decision] * 10000 / inference.Total
+	sabotageBPS := inference.SabotageCounts[decision] * 10000 / inference.Total
+	riskBPS := targetBPS + 2*sabotageBPS
+	return (cleanBPS-5000)/70 - riskBPS/250
+}
+
+func memorandumsMatchObjectives(memorandums []MemorandumState, objectives map[string]bool) bool {
+	for _, memorandum := range memorandums {
+		if !memorandumMatches(memorandum.Decisions, objectives, memorandum.Type) {
+			return false
+		}
+	}
+	return true
+}
+
+func countDecisionsInSet(decisions []string, set map[string]bool) int {
+	count := 0
+	for _, decision := range decisions {
+		if set[decision] {
+			count++
+		}
+	}
+	return count
+}
+
+func hypothesisHasAlreadyWon(acceptedOrder []string, targets map[string]bool, sabotage string) bool {
+	molePoints := 0
+	playersPoints := 0
+	seen := map[string]bool{}
+	for _, decision := range acceptedOrder {
+		if seen[decision] {
+			continue
+		}
+		seen[decision] = true
+		switch {
+		case decision == sabotage:
+			molePoints += 2
+		case targets[decision]:
+			molePoints++
+		default:
+			playersPoints++
+		}
+		if molePoints >= 3 || playersPoints >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+type botSuspicionProfile struct {
+	Scores map[int64]int
+}
+
+func (e *Engine) botSuspicionProfile(state *GameState, bot *PlayerState) botSuspicionProfile {
+	profile := botSuspicionProfile{Scores: map[int64]int{}}
+	if state == nil || bot == nil || bot.Role == "mole" {
+		return profile
+	}
+	for _, player := range activePlayers(state) {
+		if player.UserID != bot.UserID {
+			profile.Scores[player.UserID] = 0
+		}
+	}
+
+	for _, report := range state.RoundReports {
+		acceptedSabotage := report.Outcome == "accepted" &&
+			report.Decision != "" &&
+			state.MoleSabotage != "" &&
+			report.Decision == state.MoleSabotage &&
+			decisionAccepted(state, report.Decision)
+
+		for _, vote := range report.Votes {
+			voteDecision := vote.Decision
+			if vote.Abstain || voteDecision == "" {
+				continue
+			}
+			for _, voter := range vote.Voters {
+				if voter.UserID == bot.UserID {
+					continue
+				}
+				if activePlayerByID(state, voter.UserID) == nil {
+					continue
+				}
+				switch {
+				case acceptedSabotage && voteDecision == report.Decision:
+					profile.Scores[voter.UserID] += 95
+				case acceptedSabotage:
+					profile.Scores[voter.UserID] -= 14
+				case report.Outcome == "accepted" && voteDecision == report.Decision:
+					profile.Scores[voter.UserID] += e.botDecisionSuspicionScore(state, bot, voteDecision)
+				case report.Outcome == "rejected":
+					profile.Scores[voter.UserID] += e.botDecisionSuspicionScore(state, bot, voteDecision) / 2
+				default:
+					profile.Scores[voter.UserID] += e.botDecisionSuspicionScore(state, bot, voteDecision) / 3
+				}
+			}
+		}
+	}
+
+	return profile
+}
+
+func (e *Engine) botDecisionSuspicionScore(state *GameState, bot *PlayerState, decision string) int {
+	if decision == "" {
+		return 0
+	}
+	if inference, ok := e.botObjectiveInference(state, bot); ok {
+		riskBPS := (inference.TargetCounts[decision] + 2*inference.SabotageCounts[decision]) * 10000 / inference.Total
+		cleanBPS := inference.CleanCounts[decision] * 10000 / inference.Total
+		return riskBPS/250 - cleanBPS/320
+	}
+	memorandums := e.botKnownMemorandums(state, bot)
+	if len(memorandums) == 0 {
+		return 0
+	}
+	memorandum := memorandums[0]
+	inMemo := stringSet(memorandum.Decisions)[decision]
+	if memorandum.Type == MemorandumTypeRisk {
+		if inMemo {
+			return 22
+		}
+		return -8
+	}
+	if inMemo {
+		return -12
+	}
+	return 4
+}
+
+func (e *Engine) currentVoteSuspicionPressure(state *GameState, bot *PlayerState, decision string) int {
+	if state == nil || bot == nil || bot.Role == "mole" || decision == "" {
+		return 0
+	}
+	profile := e.botSuspicionProfile(state, bot)
+	pressure := 0
+	for userID, vote := range state.CurrentVotes {
+		if userID == bot.UserID || vote.Abstain || vote.Decision == nil || *vote.Decision != decision {
+			continue
+		}
+		pressure += profile.Scores[userID]
+	}
+	return maxInt(-120, minInt(160, pressure))
 }
 
 func (e *Engine) chooseBotGovernanceProposal(state *GameState, bot *PlayerState) (SubmitGovernanceProposalActionPayload, bool) {
@@ -410,6 +664,13 @@ func (e *Engine) chooseBotGovernanceProposal(state *GameState, bot *PlayerState)
 		return SubmitGovernanceProposalActionPayload{}, false
 	}
 
+	profile := e.botSuspicionProfile(state, bot)
+	if suspect := mostSuspiciousPlayer(state, bot, profile, 45, func(player *PlayerState) bool {
+		return player.ShareBPS > MinPlayerShareBPS
+	}); suspect != nil {
+		return SubmitGovernanceProposalActionPayload{ProposalType: GovernanceProposalTreasuryBuyback, TargetUserID: suspect.UserID}, true
+	}
+
 	averageShare := averageActiveShareBPS(state)
 	if bot.ShareBPS <= averageShare && state.TreasuryShareBPS > 0 {
 		return SubmitGovernanceProposalActionPayload{ProposalType: GovernanceProposalTreasuryGrant, TargetUserID: bot.UserID}, true
@@ -420,16 +681,23 @@ func (e *Engine) chooseBotGovernanceProposal(state *GameState, bot *PlayerState)
 		return SubmitGovernanceProposalActionPayload{ProposalType: GovernanceProposalTreasuryBuyback, TargetUserID: leader.UserID}, true
 	}
 	if state.TreasuryShareBPS > 0 {
-		target := poorestPlayer(state, nil)
+		target := leastSuspiciousPlayer(state, bot, profile, func(player *PlayerState) bool {
+			return profile.Scores[player.UserID] < 35
+		})
 		if target == nil {
 			target = bot
 		}
 		return SubmitGovernanceProposalActionPayload{ProposalType: GovernanceProposalTreasuryGrant, TargetUserID: target.UserID}, true
 	}
-	donor := richestPlayer(state, func(player *PlayerState) bool {
-		return player.UserID != bot.UserID && player.ShareBPS > MinPlayerShareBPS
+	donor := mostSuspiciousPlayer(state, bot, profile, 20, func(player *PlayerState) bool {
+		return player.ShareBPS > MinPlayerShareBPS
 	})
-	recipient := poorestPlayer(state, func(player *PlayerState) bool {
+	if donor == nil {
+		donor = richestPlayer(state, func(player *PlayerState) bool {
+			return player.UserID != bot.UserID && player.ShareBPS > MinPlayerShareBPS
+		})
+	}
+	recipient := leastSuspiciousPlayer(state, bot, profile, func(player *PlayerState) bool {
 		return donor != nil && player.UserID != donor.UserID
 	})
 	if donor != nil && recipient != nil {
@@ -466,6 +734,11 @@ func (e *Engine) scoreBotGovernanceProposal(state *GameState, bot *PlayerState, 
 	if proposalAuthoredBy(proposal, bot.UserID) {
 		score += 40
 	}
+	profile := botSuspicionProfile{Scores: map[int64]int{}}
+	if bot.Role != "mole" {
+		profile = e.botSuspicionProfile(state, bot)
+		score -= proposalAuthorSuspicion(profile, proposal) / 5
+	}
 	switch proposal.ProposalType {
 	case GovernanceProposalShareTransfer:
 		if proposal.ToUserID == bot.UserID {
@@ -487,6 +760,8 @@ func (e *Engine) scoreBotGovernanceProposal(state *GameState, bot *PlayerState, 
 			if from != nil && to != nil && from.ShareBPS > to.ShareBPS {
 				score += 20
 			}
+			score += profile.Scores[proposal.FromUserID] / 2
+			score -= profile.Scores[proposal.ToUserID] / 2
 		}
 	case GovernanceProposalTreasuryGrant:
 		if proposal.TargetUserID == bot.UserID {
@@ -500,6 +775,7 @@ func (e *Engine) scoreBotGovernanceProposal(state *GameState, bot *PlayerState, 
 			if target != nil && target.ShareBPS <= averageActiveShareBPS(state) {
 				score += 18
 			}
+			score -= profile.Scores[proposal.TargetUserID] / 2
 		}
 	case GovernanceProposalTreasuryBuyback:
 		if proposal.TargetUserID == bot.UserID {
@@ -513,7 +789,57 @@ func (e *Engine) scoreBotGovernanceProposal(state *GameState, bot *PlayerState, 
 			if target != nil && target.ShareBPS > averageActiveShareBPS(state) {
 				score += 24
 			}
+			score += profile.Scores[proposal.TargetUserID] / 2
 		}
+	}
+	return score
+}
+
+func mostSuspiciousPlayer(state *GameState, bot *PlayerState, profile botSuspicionProfile, minimumScore int, include func(*PlayerState) bool) *PlayerState {
+	var best *PlayerState
+	bestScore := minimumScore - 1
+	for _, player := range activePlayers(state) {
+		if player.UserID == bot.UserID {
+			continue
+		}
+		if include != nil && !include(player) {
+			continue
+		}
+		score := profile.Scores[player.UserID]
+		if score > bestScore || (score == bestScore && best != nil && player.ShareBPS > best.ShareBPS) {
+			best = player
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func leastSuspiciousPlayer(state *GameState, bot *PlayerState, profile botSuspicionProfile, include func(*PlayerState) bool) *PlayerState {
+	var best *PlayerState
+	bestScore := 1 << 30
+	for _, player := range activePlayers(state) {
+		if include != nil && !include(player) {
+			continue
+		}
+		score := profile.Scores[player.UserID]
+		if player.UserID == bot.UserID {
+			score -= 6
+		}
+		if score < bestScore || (score == bestScore && best != nil && player.ShareBPS < best.ShareBPS) {
+			best = player
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func proposalAuthorSuspicion(profile botSuspicionProfile, proposal *GovernanceProposalState) int {
+	if proposal == nil {
+		return 0
+	}
+	score := profile.Scores[proposal.ProposerUserID]
+	for _, authorID := range proposal.AuthorUserIDs {
+		score = maxInt(score, profile.Scores[authorID])
 	}
 	return score
 }

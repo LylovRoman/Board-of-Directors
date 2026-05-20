@@ -25,6 +25,10 @@ type Engine struct {
 	rng   *rand.Rand
 	mu    sync.Mutex
 	rngMu sync.Mutex
+
+	botSimulationMemorandumCount int
+	botSimulationMemorandumType  BotSimulationMemorandumType
+	botSimulationMemorandums     map[int64][]MemorandumState
 }
 
 func NewEngine(store Store) *Engine {
