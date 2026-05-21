@@ -110,7 +110,7 @@ func (e *Engine) nextBotTurnEvents(state *GameState, now time.Time) ([]models.Ev
 	switch state.Phase {
 	case GamePhaseMoleObjectiveSelection:
 		for _, bot := range activeBots(state) {
-			if bot.Role != RoleMole && state.MemorandumPreferences[bot.UserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
+			if bot.Role != RoleMole && bot.Role != RoleCompliance && state.MemorandumPreferences[bot.UserID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == "" {
 				return []models.Event{e.botMemorandumPreferenceEvent(state, bot)}, nil
 			}
 		}
@@ -121,7 +121,7 @@ func (e *Engine) nextBotTurnEvents(state *GameState, now time.Time) ([]models.Ev
 		}
 	case GamePhaseMajorVoting:
 		for _, bot := range activeBots(state) {
-			if bot.Role == RoleCompliance && state.ComplianceWatches[state.CurrentRound].TargetUserID == 0 {
+			if bot.Role == RoleCompliance && complianceWatchAvailable(state) && state.ComplianceWatches[state.CurrentRound].TargetUserID == 0 {
 				return e.botComplianceWatchEvents(state, bot), nil
 			}
 		}

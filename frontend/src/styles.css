@@ -1080,7 +1080,6 @@ code {
 .compliance-watch-panel {
   display: grid;
   gap: 10px;
-  margin-bottom: 12px;
   padding: 12px;
   border: 1px solid rgba(217, 164, 65, 0.34);
   border-radius: 8px;
@@ -1127,7 +1126,6 @@ code {
 }
 
 .compliance-victory-panel {
-  margin: 14px 0;
   border-color: rgba(46, 204, 113, 0.42);
   background: rgba(46, 204, 113, 0.10);
 }
@@ -1402,7 +1400,6 @@ button.decision-card:disabled,
 
 .abstain-button {
   width: 100%;
-  margin-top: 10px;
 }
 
 .selected-abstain {

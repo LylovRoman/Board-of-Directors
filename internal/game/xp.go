@@ -57,6 +57,12 @@ func xpBreakdownForPlayer(state *GameState, player *PlayerState, stat PublicFina
 	if stat.MajorVotes >= 2 && stat.AccuracyBPS == TotalSharesBPS {
 		awards = append(awards, XPAward{Reason: "Идеальная точность", Points: 10})
 	}
+	if player.Role == RoleCompliance &&
+		state.WinnerReason == WinnerReasonMoleCaughtByCompliance &&
+		state.ComplianceCatch != nil &&
+		state.ComplianceCatch.ComplianceUserID == player.UserID {
+		awards = append(awards, XPAward{Reason: "Вычислил крота", Points: 25})
+	}
 	for _, report := range state.GovernanceReports {
 		if report.Outcome != "accepted" || !proposalAuthoredBy(report.Proposal, player.UserID) {
 			continue

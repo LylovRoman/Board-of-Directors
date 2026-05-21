@@ -1529,6 +1529,16 @@ func TestComplianceCatchWinsBeforeMoleScoreVictory(t *testing.T) {
 	if state.MoleVictoryPoints == nil || *state.MoleVictoryPoints < 3 {
 		t.Fatalf("expected mole score consequence to be visible, got %+v", state.MoleVictoryPoints)
 	}
+	var complianceStat *PublicFinalPlayerStats
+	for i := range state.FinalSummary.PlayerStats {
+		if state.FinalSummary.PlayerStats[i].UserID == 1 {
+			complianceStat = &state.FinalSummary.PlayerStats[i]
+			break
+		}
+	}
+	if complianceStat == nil || !xpBreakdownContains(complianceStat.XPBreakdown, "Вычислил крота", 25) {
+		t.Fatalf("expected compliance catch XP bonus, got %+v", complianceStat)
+	}
 }
 
 func TestComplianceCatchNegativeConditions(t *testing.T) {
@@ -1616,11 +1626,18 @@ func TestComplianceWatchValidationAndPrivacy(t *testing.T) {
 	if len(events) != 1 || events[0].EventType != models.EventComplianceWatchPlaced {
 		t.Fatalf("expected watch event, got %+v", events)
 	}
-	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":2}`)}); err == nil || !strings.Contains(err.Error(), "already placed") {
-		t.Fatalf("expected repeat watch error, got %v", err)
+	state, events, err = engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":2}`)})
+	if err != nil {
+		t.Fatalf("replace watch: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventComplianceWatchPlaced {
+		t.Fatalf("expected replacement watch event, got %+v", events)
+	}
+	if state.ComplianceWatch == nil || state.ComplianceWatch.TargetUserID != 2 {
+		t.Fatalf("expected compliance watch to be replaceable, got %+v", state.ComplianceWatch)
 	}
 
-	if state.ComplianceWatch == nil || state.ComplianceWatch.TargetUserID != 3 {
+	if state.ComplianceWatch == nil || state.ComplianceWatch.TargetUserID != 2 {
 		t.Fatalf("expected compliance action response to see own watch, got %+v", state.ComplianceWatch)
 	}
 	internalState, err := BuildState(1, "Mafia", store.events[1])
@@ -1638,6 +1655,138 @@ func TestComplianceWatchValidationAndPrivacy(t *testing.T) {
 	outOfPhaseStore := complianceTestStore(nil)
 	if _, _, err := NewEngine(outOfPhaseStore).HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":3}`)}); err == nil || !strings.Contains(err.Error(), "major voting") {
 		t.Fatalf("expected out-of-phase error, got %v", err)
+	}
+}
+
+func TestComplianceDoesNotReceiveStartingMemorandumButPreferenceStays(t *testing.T) {
+	store := complianceTestStore([]models.Event{
+		{EventType: models.EventMemorandumPreferenceSelected, EventValue: `{"user_id":1,"type":"risk"}`},
+	})
+	engine := NewEngine(store)
+	_, events, err := engine.HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionSelectMoleObjectives,
+		Payload: []byte(`{"targets":["A","B","C"],"sabotage":"D"}`),
+	})
+	if err != nil {
+		t.Fatalf("select objectives: %v", err)
+	}
+	if countMemorandumEventsFor(events, 1) != 0 || countMemorandumEventsFor(events, 2) != 1 {
+		t.Fatalf("expected only ordinary director to get starting memorandum, got %+v", events)
+	}
+
+	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListEventsByGameID: %v", err)
+	}
+	internalState, err := BuildState(1, "Mafia", allEvents)
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	complianceView, err := ProjectStateForViewer(internalState, 1)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer compliance: %v", err)
+	}
+	if complianceView.MemorandumPreference != MemorandumTypeRisk || complianceView.Memorandum != nil {
+		t.Fatalf("expected compliance preference without starting memorandum, got preference=%q memorandum=%+v", complianceView.MemorandumPreference, complianceView.Memorandum)
+	}
+	directorView, err := ProjectStateForViewer(internalState, 2)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer director: %v", err)
+	}
+	if directorView.Memorandum == nil {
+		t.Fatalf("expected ordinary director memorandum")
+	}
+}
+
+func TestCompliancePreferenceIsNotMandatoryForTimeout(t *testing.T) {
+	phaseStartedAt := time.Now().UTC().Add(-PhaseDuration - time.Second)
+	state, err := BuildState(1, "Mafia", append(complianceBaseEvents(), models.Event{
+		EventType:  models.EventGameStarted,
+		EventValue: `{}`,
+		CreatedAt:  phaseStartedAt,
+	}))
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if playerNeedsActionForPhase(state, 1) {
+		t.Fatalf("compliance memorandum preference must not be mandatory")
+	}
+}
+
+func TestComplianceReceivesLateMemorandumAfterSabotage(t *testing.T) {
+	store := complianceTestStore([]models.Event{
+		{EventType: models.EventMemorandumPreferenceSelected, EventValue: `{"user_id":1,"type":"risk"}`},
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":1,"compliance_user_id":1,"target_user_id":2}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"D"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"D"}`},
+	})
+
+	_, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionVote,
+		Payload: []byte(`{"decision":"D"}`),
+	})
+	if err != nil {
+		t.Fatalf("mole sabotage vote: %v", err)
+	}
+	if eventsContainType(events, models.EventGameFinished) {
+		t.Fatalf("did not expect sabotage alone to finish game, got %+v", events)
+	}
+	memo, ok := memorandumPayloadFor(events, 1)
+	if !ok {
+		t.Fatalf("expected late compliance memorandum event, got %+v", events)
+	}
+	if memo.Type != MemorandumTypeRisk || len(memo.Decisions) != 3 || stringSet(memo.Decisions)["D"] {
+		t.Fatalf("expected risk memorandum from remaining decisions without sabotage, got %+v", memo)
+	}
+	if !stringSet(memo.Decisions)["A"] && !stringSet(memo.Decisions)["B"] && !stringSet(memo.Decisions)["C"] {
+		t.Fatalf("expected risk memorandum to include a remaining Podkop, got %+v", memo)
+	}
+
+	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListEventsByGameID: %v", err)
+	}
+	internalState, err := BuildState(1, "Mafia", allEvents)
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	complianceView, err := ProjectStateForViewer(internalState, 1)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer compliance: %v", err)
+	}
+	if complianceView.Memorandum == nil || complianceView.Memorandum.Type != MemorandumTypeRisk {
+		t.Fatalf("expected compliance to see late memorandum, got %+v", complianceView.Memorandum)
+	}
+}
+
+func TestComplianceWatchUnavailableAfterAcceptedSabotage(t *testing.T) {
+	state, err := BuildState(1, "Mafia", append(complianceBaseEvents(), []models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":2,"showcase_decisions":["A","B","C","E"]}`},
+	}...))
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	publicState, err := ProjectStateForViewer(state, 1)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer: %v", err)
+	}
+	if actionListContains(publicState.AvailableActions, ActionPlaceComplianceWatch) {
+		t.Fatalf("did not expect compliance watch after accepted sabotage, got %v", publicState.AvailableActions)
+	}
+	if _, _, err := NewEngine(complianceTestStore([]models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":2,"showcase_decisions":["A","B","C","E"]}`},
+	})).HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionPlaceComplianceWatch, Payload: []byte(`{"target_user_id":3}`)}); err == nil || !strings.Contains(err.Error(), "no longer available") {
+		t.Fatalf("expected watch unavailable error, got %v", err)
 	}
 }
 
@@ -1689,6 +1838,35 @@ func TestComplianceBotPlacesWatchBeforeMajorVote(t *testing.T) {
 	}
 	if len(events) == 0 || events[0].EventType != models.EventComplianceWatchPlaced {
 		t.Fatalf("expected compliance watch before vote, got %+v phase=%s status=%s finished=%v bot=%+v players=%+v watch=%+v started=%v", events, state.Phase, state.Status, state.IsFinished, activePlayerByID(state, -1), activePlayers(state), state.ComplianceWatches, state.PhaseStartedAt)
+	}
+}
+
+func TestComplianceBotDoesNotWatchAfterSabotageAccepted(t *testing.T) {
+	state, err := BuildState(1, "Mafia", []models.Event{
+		{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		{EventType: models.EventPlayerJoined, EventValue: `{"user_id":-1,"name":"AI Compliance","is_bot":true}`},
+		{EventType: models.EventGameStarted, EventValue: `{}`},
+		{EventType: models.EventMoleSelected, EventValue: `{"user_id":2}`},
+		{EventType: models.EventComplianceSelected, EventValue: `{"user_id":-1}`},
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":1,"share_bps":3500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":2,"share_bps":2500}`},
+		{EventType: models.EventPlayerReceivedShare, EventValue: `{"user_id":-1,"share_bps":2000}`},
+		{EventType: models.EventCEOSelected, EventValue: `{"user_id":1}`},
+		{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":2,"showcase_decisions":["A","B","C","E"]}`},
+	})
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	events, err := NewEngine(&stubStore{}).botTurnEvents(state, time.Now().UTC().Add(BotActionDelay+time.Hour))
+	if err != nil {
+		t.Fatalf("bot turn: %v", err)
+	}
+	if len(events) > 0 && events[0].EventType == models.EventComplianceWatchPlaced {
+		t.Fatalf("bot compliance must not watch after sabotage, got %+v", events)
 	}
 }
 
@@ -2263,6 +2441,54 @@ func hasVoteFrom(events []models.Event, userID int64) bool {
 			continue
 		}
 		if payload.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func countMemorandumEventsFor(events []models.Event, userID int64) int {
+	count := 0
+	for _, event := range events {
+		payload := MemorandumAssignedPayload{}
+		if event.EventType != models.EventMemorandumAssigned || decodeEventValue(event.EventValue, &payload) != nil {
+			continue
+		}
+		if payload.UserID == userID {
+			count++
+		}
+	}
+	return count
+}
+
+func memorandumPayloadFor(events []models.Event, userID int64) (MemorandumAssignedPayload, bool) {
+	for _, event := range events {
+		if event.EventType != models.EventMemorandumAssigned {
+			continue
+		}
+		var payload MemorandumAssignedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			continue
+		}
+		if payload.UserID == userID {
+			return payload, true
+		}
+	}
+	return MemorandumAssignedPayload{}, false
+}
+
+func actionListContains(actions []ActionType, action ActionType) bool {
+	for _, candidate := range actions {
+		if candidate == action {
+			return true
+		}
+	}
+	return false
+}
+
+func xpBreakdownContains(awards []XPAward, reason string, points int) bool {
+	for _, award := range awards {
+		if award.Reason == reason && award.Points == points {
 			return true
 		}
 	}

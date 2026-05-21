@@ -939,7 +939,7 @@ components:
 
     ChooseMemorandumPayload:
       type: object
-      description: Private director choice during mole_objective_selection. The Mole cannot use it. If a director does not choose before objectives are selected, opportunity is used.
+      description: Private non-Mole choice during mole_objective_selection. Ordinary Directors receive a starting memorandum of the chosen type after Mole objectives are selected. Compliance may choose the same value as a preference, but does not receive a starting memorandum; the preference is used only for a late memorandum after an accepted Sabotage if the game continues. If no type is chosen, opportunity is used by default. Compliance preference is not mandatory for phase timeout/autoreplacement.
       properties:
         type:
           type: string
@@ -965,7 +965,7 @@ components:
 
     PlaceComplianceWatchPayload:
       type: object
-      description: Private Compliance action during major_voting. The target must be an active player and cannot be the Compliance player themselves. The watch is hidden from public state and other viewers.
+      description: Private Compliance action during major_voting before Sabotage has been accepted. The target must be an active player and cannot be the Compliance player themselves. Repeating the action in the same major round replaces the current target, like a revote. The watch is hidden from public state and other viewers. After an accepted Sabotage, if the game continues, this action is no longer available.
       properties:
         target_user_id:
           type: integer
@@ -1333,6 +1333,7 @@ components:
 
     XPAward:
       type: object
+      description: One final XP breakdown entry. Reasons include participation, winner/team bonuses, CEO win, accuracy, governance proposal rewards, and the Compliance catch bonus `Вычислил крота` worth 25 XP when winner_reason is `mole_caught_by_compliance`.
       properties:
         reason:
           type: string
@@ -1450,7 +1451,7 @@ components:
 
     PublicMemorandum:
       type: object
-      description: Private director hint. Present only for non-Mole directors after the Mole has selected objectives.
+      description: Private memorandum hint. Present for ordinary Directors after the Mole has selected objectives, and for Compliance only after an accepted Sabotage if the game continues. Players choose the memorandum type only; the 3-decision set is generated randomly by the backend. Starting Director memorandums test against the Mole's 3 Podkops plus 1 Sabotage. Late Compliance memorandums test against the remaining hidden Podkops and use the selected/default type.
       properties:
         type:
           type: string
@@ -1466,7 +1467,7 @@ components:
 
     PublicComplianceWatch:
       type: object
-      description: Private. Present only in the personalized state of the Compliance player for the current major round after they placed a watch.
+      description: Private. Present only in the personalized state of the Compliance player for the current major round after they placed a watch. Repeated place_compliance_watch actions replace the target until the current major_voting stage resolves. This object stops being available after an accepted Sabotage because Compliance can no longer watch players.
       properties:
         round_number:
           type: integer
@@ -1519,7 +1520,7 @@ components:
             type: string
         major_vote_options:
           type: array
-          description: Current 4-card major vote showcase. Falls back to available_decisions for legacy rounds.
+          description: Current 4-card major vote showcase. Usually contains 2 random remaining Mole objectives and 2 random clean decisions; only these options can be voted for in the current major_voting stage. Falls back to available_decisions for legacy rounds or depleted pools.
           items:
             type: string
         major_vote_unlocked_at:
@@ -1593,7 +1594,7 @@ components:
         memorandum_preference:
           type: string
           enum: [opportunity, risk]
-          description: Private. Present only for the viewing director during setup if they chose a memorandum type.
+          description: Private. Present only for the viewing Director or Compliance player during setup if they chose a memorandum type. For Compliance this is a preference for a possible late memorandum and does not imply a starting memorandum was assigned.
         memorandum:
           $ref: "#/components/schemas/PublicMemorandum"
         compliance_watch:
@@ -1612,6 +1613,7 @@ components:
             $ref: "#/components/schemas/PublicReplayStep"
         available_actions:
           type: array
+          description: Personalized action list for the viewer. `choose_memorandum` is available to non-Mole players during setup; Compliance uses it as a non-mandatory preference. `place_compliance_watch` is available only to Compliance during major_voting before accepted Sabotage and may be repeated to change the target.
           items:
             type: string
             enum:

@@ -369,8 +369,8 @@ func (e *Engine) handlePlaceComplianceWatch(state *GameState, actor *models.User
 	if player.Role != RoleCompliance {
 		return nil, errors.New("only compliance can place a watch")
 	}
-	if state.ComplianceWatches[state.CurrentRound].TargetUserID != 0 {
-		return nil, errors.New("compliance watch already placed")
+	if !complianceWatchAvailable(state) {
+		return nil, errors.New("compliance watch is no longer available")
 	}
 
 	var payload PlaceComplianceWatchActionPayload
@@ -662,6 +662,9 @@ func (e *Engine) resolveRound(state *GameState, actor *models.User) []models.Eve
 			})
 			events = append(events, systemChatPayloadEvents(state.GameID, actor.ID, moleRevealSystemMessage(nextState))...)
 			return events
+		}
+		if decision == state.MoleSabotage {
+			events = append(events, e.complianceMemorandumAfterSabotageEvent(nextState, actor)...)
 		}
 		events = append(events, models.Event{
 			GameID:     state.GameID,
@@ -1221,7 +1224,7 @@ func (e *Engine) majorShowcase(available map[string]bool, targets []string, sabo
 func (e *Engine) memorandumAssignmentEvents(state *GameState, actor *models.User, targets []string, sabotage string) []models.Event {
 	events := []models.Event{}
 	for _, player := range activePlayers(state) {
-		if player.UserID == state.MoleUserID {
+		if player.UserID == state.MoleUserID || player.UserID == state.ComplianceUserID {
 			continue
 		}
 		memorandumType := state.MemorandumPreferences[player.UserID]
@@ -1243,13 +1246,47 @@ func (e *Engine) memorandumAssignmentEvents(state *GameState, actor *models.User
 	return events
 }
 
+func (e *Engine) complianceMemorandumAfterSabotageEvent(state *GameState, actor *models.User) []models.Event {
+	if state == nil || state.ComplianceUserID == 0 || !decisionAccepted(state, state.MoleSabotage) {
+		return nil
+	}
+	compliance := activePlayerByID(state, state.ComplianceUserID)
+	if compliance == nil {
+		return nil
+	}
+	memorandumType := state.MemorandumPreferences[compliance.UserID]
+	if memorandumType == "" {
+		memorandumType = MemorandumTypeOpportunity
+	}
+	decisions := e.randomMemorandumDecisionsFromPool(memorandumType, sortedAvailableDecisions(state.Available), remainingMoleTargetSet(state))
+	return []models.Event{{
+		GameID:    state.GameID,
+		UserID:    &actor.ID,
+		ActorName: actor.Name,
+		EventType: models.EventMemorandumAssigned,
+		EventValue: mustJSON(MemorandumAssignedPayload{
+			UserID:    compliance.UserID,
+			Type:      memorandumType,
+			Decisions: decisions,
+		}),
+	}}
+}
+
 func (e *Engine) randomMemorandumDecisions(memorandumType MemorandumType, targets []string, sabotage string) []string {
-	targetSet := moleObjectiveSet(targets, sabotage)
+	return e.randomMemorandumDecisionsFromPool(memorandumType, allDecisions, moleObjectiveSet(targets, sabotage))
+}
+
+func (e *Engine) randomMemorandumDecisionsFromPool(memorandumType MemorandumType, decisions []string, targetSet map[string]bool) []string {
+	if len(decisions) <= 3 {
+		out := append([]string(nil), decisions...)
+		sort.Strings(out)
+		return out
+	}
 	candidates := [][]string{}
-	for i := 0; i < len(allDecisions); i++ {
-		for j := i + 1; j < len(allDecisions); j++ {
-			for k := j + 1; k < len(allDecisions); k++ {
-				trio := []string{allDecisions[i], allDecisions[j], allDecisions[k]}
+	for i := 0; i < len(decisions); i++ {
+		for j := i + 1; j < len(decisions); j++ {
+			for k := j + 1; k < len(decisions); k++ {
+				trio := []string{decisions[i], decisions[j], decisions[k]}
 				if memorandumMatches(trio, targetSet, memorandumType) {
 					candidates = append(candidates, trio)
 				}
@@ -1257,13 +1294,26 @@ func (e *Engine) randomMemorandumDecisions(memorandumType MemorandumType, target
 		}
 	}
 	if len(candidates) == 0 {
-		return randomDecisionSubset(e, allDecisions, 3)
+		return randomDecisionSubset(e, decisions, 3)
 	}
 	e.rngMu.Lock()
 	index := e.rng.Intn(len(candidates))
 	e.rngMu.Unlock()
 	out := append([]string(nil), candidates[index]...)
 	sort.Strings(out)
+	return out
+}
+
+func remainingMoleTargetSet(state *GameState) map[string]bool {
+	out := map[string]bool{}
+	if state == nil {
+		return out
+	}
+	for _, target := range state.MoleTargets {
+		if state.Available[target] {
+			out[target] = true
+		}
+	}
 	return out
 }
 

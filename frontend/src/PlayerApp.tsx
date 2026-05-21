@@ -1855,26 +1855,26 @@ function RulesDialog(props: { onClose: () => void }) {
     {
       id: "start",
       label: "Старт",
-      text: "Host создает комнату и запускает заседание, когда игроков достаточно. Случайным образом выбирается компания, доли, роли CEO, Крота и Комплаенса.",
-      bullets: ["Доли дают силу в major vote.", "CEO получает бонус к полномочиям и решает ничьи."],
+      text: "Host создает комнату и запускает заседание, когда игроков достаточно. Случайным образом выбирается компания, корпоративная ситуация, роли CEO, Крота и Комплаенса, а игроки получают стартовые доли. Суммарно игрокам раздается 80% компании, еще 20% остается в казначейском резерве для будущих бонусов и governance-маневров.",
+      bullets: ["Доли дают силу в major vote.", "CEO получает бонус к полномочиям и решает ничьи.", "Стартовый резерв компании: 20%."],
     },
     {
       id: "roles",
       label: "Роли",
-      text: "Директора ищут безопасные решения, Комплаенс тайно ставит наблюдение, а Крот выбирает 3 Подкопа и 1 Диверсию из решений A-H.",
-      bullets: ["Роли Крота и Комплаенса скрыты до финала.", "Крот видит свои цели и счет.", "Комплаенс видит свою цель наблюдения."],
+      text: "Директора ищут безопасные решения. Крот в начале партии сам выбирает 3 Подкопа и 1 Диверсию из решений A-H, затем пытается провести эти карточки как полезные инициативы. Комплаенс играет за Совет: до принятой Диверсии он в каждом major vote тайно выбирает подозреваемого под наблюдение и может менять цель, пока голосование не закрылось.",
+      bullets: ["Роли Крота и Комплаенса скрыты до финала.", "Крот видит свои цели и счет.", "После принятой Диверсии Комплаенс теряет наблюдение и получает приватный поздний меморандум, если партия продолжается."],
     },
     {
       id: "memo",
       label: "Меморандум",
-      text: "Пока Крот выбирает цели, каждый Директор выбирает тип подсказки: возможности или риски.",
-      bullets: ["Возможности: в тройке есть хотя бы одно чистое решение.", "Риски: в тройке есть хотя бы одна цель Крота.", "Если Директор не успел выбрать тип, будет использован стандартный вариант."],
+      text: "Пока Крот выбирает цели, обычный Директор выбирает тип стартовой подсказки: возможности или риски. Игрок выбирает только тип, а не конкретные карточки: тройка решений генерируется случайно и отдельно для каждого получателя. Комплаенс может выбрать такой же тип как предпочтение, но стартовый меморандум ему не выдается.",
+      bullets: ["Возможности: в тройке есть хотя бы одно чистое решение.", "Риски: в тройке есть хотя бы одна цель Крота.", "Если тип не выбран, используется opportunity."],
     },
     {
       id: "major",
       label: "Major vote",
-      text: "В major vote каждый выбирает одну карточку из витрины. Голос можно менять, пока раунд открыт.",
-      bullets: ["Сила major-голоса равна доле игрока.", "Комплаенс один раз за раунд выбирает игрока под скрытое наблюдение.", "После выбора целей Крота первый major vote на минуту блокируется для чтения меморандумов."],
+      text: "В major vote каждый выбирает одну карточку из текущей витрины. Витрина - это 4 случайно собранных решения: обычно 2 оставшиеся цели Крота и 2 чистые карточки. Остальные доступные решения в этом раунде выбрать нельзя. Голос можно менять, пока раунд открыт; наблюдение Комплаенса тоже можно переставлять до конца major vote.",
+      bullets: ["Сила major-голоса равна доле игрока.", "После принятой Диверсии наблюдение Комплаенса больше недоступно.", "Первый major vote на минуту блокируется для чтения меморандумов."],
     },
     {
       id: "governance",
@@ -1891,8 +1891,8 @@ function RulesDialog(props: { onClose: () => void }) {
     {
       id: "win",
       label: "Финал",
-      text: "После финала раскрываются Комплаенс, Крот, его цели, Диверсия, победитель и точность major-голосов.",
-      bullets: ["Финал наступает когда одна из команд набирает 3 победных очка.", "Если Комплаенс поймал Крота, то счёт не имеет значения. Победа сразу достаётся совету.", "Replay помогает восстановить цепочку решений."],
+      text: "После финала раскрываются Комплаенс, Крот, его Подкопы, Диверсия, победитель, точность major-голосов, XP и replay. Совет побеждает за 3 чистых решения или через поимку Крота Комплаенсом; Крот побеждает, когда его Подкопы и Диверсия набирают 3 очка саботажа.",
+      bullets: ["Подкоп дает Кроту 1 очко, Диверсия дает 2.", "Комплаенс получает +25 XP за победную поимку Крота.", "Replay помогает восстановить цепочку решений."],
     },
   ];
   const [activeTab, setActiveTab] = useState(tabs[0].id);
@@ -1931,12 +1931,12 @@ function RulesDialog(props: { onClose: () => void }) {
 function TutorialDialog(props: { onClose: () => void }) {
   const steps = [
     { title: "1. Осмотрись в комнате", text: "Название комнаты показывает, куда ты вошел, а карточка компании задает сюжет партии. До старта Host может пригласить игроков или добавить ботов." },
-    { title: "2. Получи роль", text: "Директору нужно провести чистые решения, Комплаенсу - тайно наблюдать за подозреваемыми, Кроту - замаскировать свои цели." },
-    { title: "3. Выбери меморандум", text: "В тайном брифинге Директор выбирает подсказку про возможности или риски. Она не раскрывает истину напрямую, но сужает подозрительные решения." },
-    { title: "4. Голосуй в major vote", text: "Выбирай решение из витрины и меняй голос, пока раунд открыт. Смотри на доли: большой акционер сильнее влияет на итог." },
+    { title: "2. Получи роль", text: "Директору нужно провести чистые решения, Кроту - замаскировать 3 Подкопа и 1 Диверсию, а Комплаенсу - тайно следить за подозреваемыми до принятой Диверсии." },
+    { title: "3. Выбери меморандум", text: "Обычный Директор выбирает стартовую подсказку про возможности или риски. Комплаенс выбирает только предпочтение: стартовый меморандум он не получает, зато этот тип используется для поздней подсказки после Диверсии, если партия продолжается." },
+    { title: "4. Голосуй в major vote", text: "Выбирай решение из витрины из 4 карточек и меняй голос, пока раунд открыт. Комплаенс кликом выбирает цель наблюдения и может переставить ее до закрытия major vote." },
     { title: "5. Разбирай governance", text: "После принятого решения можно менять доли, выдавать гранты или делать выкуп. Здесь сила голоса равна доле плюс полномочия." },
     { title: "6. Следи за таймером", text: "На фазу есть 3 минуты. Если игрок не делает обязательный ход, его место занимает бот-заместитель; обычные боты ждут 10 секунд перед автоходом." },
-    { title: "7. Читай финал", text: "В финале смотри победителя, цели Крота, Комплаенса, точность major-голосов, XP и replay. Это лучший способ понять, где Совет свернул не туда." },
+    { title: "7. Читай финал", text: "В финале смотри победителя, цели Крота, Комплаенса, точность major-голосов, XP и replay. За победную поимку Крота Комплаенс получает отдельный бонус +25 XP." },
   ];
   const [index, setIndex] = useState(0);
   const step = steps[index];
@@ -2251,13 +2251,15 @@ function StartedGameScreen(props: {
                       <>
                         <p className="eyebrow">Комплаенс</p>
                         <p className="quiet-text">
-                          Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение. Если выбранный игрок окажется Кротом и лично проголосует за принятую Диверсию, Совет директоров немедленно победит не зависимо от текущего счёта.
+                          {props.memorandum
+                              ? "Диверсия уже прошла, поэтому наблюдение больше недоступно. Теперь ваша приватная информация - меморандум выбранного типа."
+                              : "Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если выбранный игрок окажется Кротом и лично проголосует за принятую Диверсию, Совет директоров немедленно победит независимо от текущего счёта."}
                         </p>
                       </>
                   ) : null}
-                  {props.me?.role === "player" ? (
+                  {props.me?.role === "player" || props.me?.role === "compliance" ? (
                     <>
-                    <p className="eyebrow">Меморандум</p>
+                    <p className="eyebrow">{props.me?.role === "compliance" && props.memorandum ? "Меморандум после Диверсии" : "Меморандум"}</p>
                     {props.memorandum ? (
                         <>
                           <h3>{memorandumTitle(props.memorandum.type)}</h3>
@@ -2267,8 +2269,12 @@ function StartedGameScreen(props: {
                     ) : (
                         <p className="quiet-text">
                           {props.memorandumPreference
-                              ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}.`
-                              : "Выбери тип меморандума, пока крот формирует цели."}
+                              ? props.me?.role === "compliance"
+                                  ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}. Комплаенс получит меморандум только если Диверсия пройдет и партия продолжится.`
+                                  : `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}.`
+                              : props.me?.role === "compliance"
+                                  ? "Выберите тип подсказки заранее: он будет использован только если Диверсия пройдет и партия продолжится."
+                                  : "Выбери тип меморандума, пока крот формирует цели."}
                         </p>
                     )}
                     </>
@@ -2298,6 +2304,7 @@ function StartedGameScreen(props: {
             {props.phase === "mole_objective_selection" ? (
                 <MoleObjectiveSelectionPhase
                     isMole={props.me?.role === "mole"}
+                    viewerRole={props.me?.role}
                     canSelect={props.canSelectMoleObjectives}
                     canChooseMemorandum={props.canChooseMemorandum}
                     memorandumPreference={props.memorandumPreference}
@@ -2331,15 +2338,8 @@ function StartedGameScreen(props: {
                     onAbstain={props.onAbstain}
                 />
             ) : (
-                <section className="voting-board">
-                  <div className="section-heading compact-heading">
-                    <div>
-                      <p className="eyebrow">голосование</p>
-                    </div>
-                    {majorVoteLocked ? <span className="wait-pill">Обсуждение: {majorVoteSecondsLeft}с</span> : props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
-                  </div>
-
-                  {props.me?.role === "compliance" ? (
+                <>
+                {props.me?.role === "compliance" ? (
                       <ComplianceWatchPanel
                           players={props.players}
                           currentUserId={props.currentUserId}
@@ -2349,6 +2349,13 @@ function StartedGameScreen(props: {
                           onPlace={props.onPlaceComplianceWatch}
                       />
                   ) : null}
+                <section className="voting-board">
+                  <div className="section-heading compact-heading">
+                    <div>
+                      <p className="eyebrow">голосование</p>
+                    </div>
+                    {majorVoteLocked ? <span className="wait-pill">Обсуждение: {majorVoteSecondsLeft}с</span> : props.hasVoted ? <span className="wait-pill">Выбор сохранён, можно изменить</span> : null}
+                  </div>
 
                   <div className="decision-grid">
                     {displayedMajorOptions.map((decision) => {
@@ -2377,6 +2384,7 @@ function StartedGameScreen(props: {
                     })}
                   </div>
                 </section>
+                </>
             )}
 
             <ChatPanel
@@ -2407,57 +2415,35 @@ function ComplianceWatchPanel(props: {
   const watchedPlayer = props.watch
       ? props.players.find((player) => player.user_id === props.watch?.target_user_id)
       : undefined;
-  const [selectedTarget, setSelectedTarget] = useState<number | null>(() => candidates[0]?.user_id ?? null);
-
-  useEffect(() => {
-    if (selectedTarget && candidates.some((player) => player.user_id === selectedTarget)) {
-      return;
-    }
-    setSelectedTarget(candidates[0]?.user_id ?? null);
-  }, [candidates, selectedTarget]);
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!props.canPlace || props.isSubmitting || !selectedTarget || props.watch) {
-      return;
-    }
-    props.onPlace(selectedTarget);
-  }
+  const watchedUserId = props.watch?.target_user_id ?? null;
 
   return (
-      <form className="compliance-watch-panel" onSubmit={submit}>
+      <section className="compliance-watch-panel">
         <div>
           <p className="eyebrow">Негласное наблюдение</p>
           <p className="quiet-text">
-            Выберите одного игрока, за которым Комплаенс установит наблюдение в этом раунде.
+            {props.canPlace
+                ? watchedPlayer
+                    ? `Сейчас под наблюдением: ${watchedPlayer.name}. Нажмите другого игрока, чтобы сменить цель.`
+                    : "Нажмите на игрока, чтобы установить наблюдение в этом раунде."
+                : "После принятой Диверсии наблюдение больше недоступно."}
           </p>
         </div>
-        {props.watch ? (
-            <div className="watch-confirmed">
-              Под наблюдением: <strong>{watchedPlayer?.name ?? `#${props.watch.target_user_id}`}</strong>
-            </div>
-        ) : (
-            <>
-              <div className="watch-player-grid">
-                {candidates.map((player) => (
-                    <button
-                        key={player.user_id}
-                        type="button"
-                        className={selectedTarget === player.user_id ? "watch-player-option selected" : "watch-player-option"}
-                        onClick={() => setSelectedTarget(player.user_id)}
-                        disabled={!props.canPlace || props.isSubmitting}
-                    >
-                      <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
-                      <span>{player.name}</span>
-                    </button>
-                ))}
-              </div>
-              <button className="primary-action" type="submit" disabled={!props.canPlace || props.isSubmitting || !selectedTarget}>
-                Установить наблюдение
+        <div className="watch-player-grid">
+          {candidates.map((player) => (
+              <button
+                  key={player.user_id}
+                  type="button"
+                  className={watchedUserId === player.user_id ? "watch-player-option selected" : "watch-player-option"}
+                  onClick={() => props.onPlace(player.user_id)}
+                  disabled={!props.canPlace || props.isSubmitting}
+              >
+                <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
+                <span>{player.name}</span>
               </button>
-            </>
-        )}
-      </form>
+          ))}
+        </div>
+      </section>
   );
 }
 
@@ -2727,6 +2713,7 @@ function ReplayPanel(props: { state: PublicGameState; steps: NonNullable<PublicG
 
 function MoleObjectiveSelectionPhase(props: {
   isMole: boolean;
+  viewerRole?: PublicPlayerState["role"];
   canSelect: boolean;
   canChooseMemorandum: boolean;
   memorandumPreference?: MemorandumType;
@@ -2765,9 +2752,15 @@ function MoleObjectiveSelectionPhase(props: {
   }
 
   if (!props.isMole) {
+    const isCompliance = props.viewerRole === "compliance";
     return (
         <section className="objective-selection waiting-selection">
           <p className="eyebrow">подготовка</p>
+          <p className="quiet-text">
+            {isCompliance
+                ? "Выберите предпочтительный тип подсказки. Комплаенс не получает стартовый меморандум: этот выбор будет использован только для позднего меморандума после принятой Диверсии, если партия продолжится."
+                : "Выберите тип стартового меморандума. Конкретная тройка решений будет сгенерирована случайно после того, как Крот подтвердит цели."}
+          </p>
           {props.memorandumPreference ? (
               <div className="memorandum-choice selected">
                 <strong>{memorandumTitle(props.memorandumPreference)}</strong>

@@ -144,9 +144,22 @@ export function GameScreen(props: GameScreenProps) {
         <section className="phase-card compliance-role-card">
           <p className="eyebrow">роль</p>
           <h2>Комплаенс</h2>
-          <p>
-            Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение. Если он окажется Кротом и лично проголосует за принятую Диверсию, Совет немедленно победит.
-          </p>
+          {state.memorandum ? (
+            <p>
+              Диверсия уже прошла, поэтому наблюдение больше недоступно. Вам выдан приватный меморандум выбранного типа для дальнейшего анализа партии.
+            </p>
+          ) : (
+            <p>
+              Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если он окажется Кротом и лично проголосует за принятую Диверсию, Совет немедленно победит.
+            </p>
+          )}
+          {state.memorandum ? (
+            <div className="memorandum-card">
+              <strong>{memorandumTitle(state.memorandum.type)}</strong>
+              <span>{memorandumRule(state.memorandum.type)}</span>
+              <div>{state.memorandum.decisions.map((decision) => <em key={decision}>{decision}</em>)}</div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -396,10 +409,16 @@ function MoleObjectivePhase(props: {
 
   if (!isMole) {
     const preference = props.state.memorandum_preference;
+    const isCompliance = props.state.me?.role === "compliance";
     return (
       <section className="phase-card">
         <p className="eyebrow">тайный брифинг</p>
         <h2>Крот выбирает цели</h2>
+        <p className="muted">
+          {isCompliance
+            ? "Выберите предпочтительный тип подсказки. Комплаенс не получает стартовый меморандум: этот выбор понадобится только для позднего меморандума после принятой Диверсии, если партия продолжится."
+            : "Выберите тип стартового меморандума. Конкретная тройка решений будет сгенерирована случайно после того, как Крот подтвердит цели."}
+        </p>
         {preference ? (
           <div className="memorandum-card selected">
             <strong>{memorandumTitle(preference)}</strong>
@@ -550,46 +569,32 @@ function ComplianceWatchCard(props: {
   const watchedPlayer = props.state.compliance_watch
     ? props.state.players.find((player) => player.user_id === props.state.compliance_watch?.target_user_id)
     : undefined;
-  const [selectedTarget, setSelectedTarget] = useState<number | null>(null);
-  const effectiveTarget = selectedTarget && candidates.some((player) => player.user_id === selectedTarget)
-    ? selectedTarget
-    : candidates[0]?.user_id ?? null;
-
-  if (props.state.compliance_watch) {
-    return (
-      <div className="compliance-watch-card confirmed">
-        <strong>Негласное наблюдение</strong>
-        <span>Под наблюдением: {watchedPlayer?.name ?? `#${props.state.compliance_watch.target_user_id}`}</span>
-      </div>
-    );
-  }
+  const watchedUserId = props.state.compliance_watch?.target_user_id ?? null;
 
   return (
-    <div className="compliance-watch-card">
+    <div className={props.state.compliance_watch ? "compliance-watch-card confirmed" : "compliance-watch-card"}>
       <strong>Негласное наблюдение</strong>
-      <span>Выберите одного игрока, за которым Комплаенс установит наблюдение в этом раунде.</span>
+      <span>
+        {props.canPlace
+          ? watchedPlayer
+            ? `Сейчас под наблюдением: ${watchedPlayer.name}. Нажмите другого игрока, чтобы сменить цель.`
+            : "Нажмите на игрока, чтобы установить наблюдение в этом раунде."
+          : "После принятой Диверсии наблюдение больше недоступно."}
+      </span>
       <div className="watch-target-list">
         {candidates.map((player) => (
           <button
             key={player.user_id}
-            className={effectiveTarget === player.user_id ? "watch-target active" : "watch-target"}
+            className={watchedUserId === player.user_id ? "watch-target active" : "watch-target"}
             type="button"
             disabled={!props.canPlace || props.isSubmitting}
-            onClick={() => setSelectedTarget(player.user_id)}
+            onClick={() => props.onAction("place_compliance_watch", { target_user_id: player.user_id })}
           >
             <Avatar name={player.name} avatarUrl={player.avatar_url} size="sm" />
             <span>{player.name}</span>
           </button>
         ))}
       </div>
-      <button
-        className="primary-action wide-action"
-        type="button"
-        disabled={!props.canPlace || props.isSubmitting || !effectiveTarget}
-        onClick={() => effectiveTarget ? props.onAction("place_compliance_watch", { target_user_id: effectiveTarget }) : undefined}
-      >
-        Установить наблюдение
-      </button>
     </div>
   );
 }

@@ -373,7 +373,7 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 			}
 		case GamePhaseMajorVoting:
 			actions = append(actions, ActionVote)
-			if player.Role == RoleCompliance && state.ComplianceWatches[state.CurrentRound].TargetUserID == 0 {
+			if player.Role == RoleCompliance && complianceWatchAvailable(state) {
 				actions = append(actions, ActionPlaceComplianceWatch)
 			}
 		case GamePhaseGovernanceProposal:
@@ -664,4 +664,11 @@ func decisionAccepted(state *GameState, decision string) bool {
 		}
 	}
 	return false
+}
+
+func complianceWatchAvailable(state *GameState) bool {
+	return state != nil &&
+		state.Phase == GamePhaseMajorVoting &&
+		state.MoleSabotage != "" &&
+		!decisionAccepted(state, state.MoleSabotage)
 }

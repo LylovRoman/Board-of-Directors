@@ -108,6 +108,9 @@ func playerNeedsActionForPhase(state *GameState, userID int64) bool {
 		if player.Role == "mole" {
 			return len(state.MoleTargets) == 0 && state.MoleSabotage == ""
 		}
+		if player.Role == RoleCompliance {
+			return false
+		}
 		return state.MemorandumPreferences[userID] == "" && len(state.MoleTargets) == 0 && state.MoleSabotage == ""
 	case GamePhaseMajorVoting:
 		_, ok := state.CurrentVotes[userID]
