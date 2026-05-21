@@ -1048,6 +1048,16 @@ input:focus {
   padding: 12px;
 }
 
+.rules-download-card {
+  border-color: rgba(216, 168, 79, 0.4);
+}
+
+.rules-download {
+  width: 100%;
+  margin-top: 2px;
+  text-decoration: none;
+}
+
 .vote-bars {
   display: grid;
   gap: 7px;

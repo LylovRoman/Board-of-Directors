@@ -2172,6 +2172,20 @@ button.decision-card:disabled,
   padding: 18px;
 }
 
+.rules-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.rules-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .rule-body,
 .tutorial-card {
   margin-top: 14px;

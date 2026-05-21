@@ -2,6 +2,7 @@ package game
 
 import (
 	"context"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +103,60 @@ func TestCreateGameGeneratesCompanyScenarioAndProfilePosition(t *testing.T) {
 	}
 	if state.ChatMessages[0].Title != "Брифинг компании" || strings.Contains(state.ChatMessages[0].Title, state.CompanyName) {
 		t.Fatalf("expected company briefing title without company name, got %+v", state.ChatMessages[0])
+	}
+}
+
+func TestStartGameCanSelectMoleAsCEO(t *testing.T) {
+	seenMoleCEO := false
+	for seed := int64(1); seed <= 128; seed++ {
+		store := &stubStore{
+			users: map[int64]models.User{
+				1: {ID: 1, Name: "Alice"},
+				2: {ID: 2, Name: "Bob"},
+				3: {ID: 3, Name: "Carol"},
+			},
+			games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+			events: map[int64][]models.Event{1: {
+				{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+				{EventType: models.EventPlayerJoined, EventValue: `{"user_id":3,"name":"Carol"}`},
+			}},
+		}
+		engine := NewEngine(store)
+		engine.rng = rand.New(rand.NewSource(seed))
+
+		_, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionStartGame})
+		if err != nil {
+			t.Fatalf("start game with seed %d: %v", seed, err)
+		}
+
+		var moleUserID int64
+		var ceoUserID int64
+		for _, event := range events {
+			switch event.EventType {
+			case models.EventMoleSelected:
+				var payload MoleSelectedPayload
+				if err := decodeEventValue(event.EventValue, &payload); err != nil {
+					t.Fatalf("decode mole payload: %v", err)
+				}
+				moleUserID = payload.UserID
+			case models.EventCEOSelected:
+				var payload CEOSelectedPayload
+				if err := decodeEventValue(event.EventValue, &payload); err != nil {
+					t.Fatalf("decode ceo payload: %v", err)
+				}
+				ceoUserID = payload.UserID
+			}
+		}
+		if moleUserID != 0 && moleUserID == ceoUserID {
+			seenMoleCEO = true
+			break
+		}
+	}
+
+	if !seenMoleCEO {
+		t.Fatalf("expected at least one deterministic start where CEO is also the mole")
 	}
 }
 

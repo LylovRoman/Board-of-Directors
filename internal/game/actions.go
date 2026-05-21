@@ -218,7 +218,7 @@ func (e *Engine) handleStartGame(state *GameState, actor *models.User) ([]models
 	shuffledPlayers := append([]*PlayerState(nil), players...)
 	e.shufflePlayers(shuffledPlayers)
 	mole := shuffledPlayers[0]
-	ceo := shuffledPlayers[1%len(shuffledPlayers)]
+	ceo := shuffledPlayers[e.randInt(len(shuffledPlayers))]
 	nonMoles := append([]*PlayerState(nil), shuffledPlayers[1:]...)
 	compliance := nonMoles[e.randInt(len(nonMoles))]
 
