@@ -207,7 +207,7 @@ export function StartedGameScreen(props: {
                     {props.memorandum ? (
                         <>
                           <h3>{memorandumTitle(props.memorandum.type)}</h3>
-                          <p className="quiet-text">{memorandumRule(props.memorandum.type)}</p>
+                          <p className="quiet-text">{memorandumRule(props.memorandum.type, props.memorandum.variant)}</p>
                           <DecisionList values={props.memorandum.decisions} emptyText="Меморандум еще не получен." />
                         </>
                     ) : (

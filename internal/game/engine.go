@@ -26,10 +26,15 @@ type Engine struct {
 	mu    sync.Mutex
 	rngMu sync.Mutex
 
-	botSimulationMemorandumCount int
-	botSimulationMemorandumType  BotSimulationMemorandumType
-	botSimulationMemorandums     map[int64][]MemorandumState
-	botSimulationRollouts        int
+	botSimulationMemorandumCount   int
+	botSimulationMemorandumType    BotSimulationMemorandumType
+	botSimulationMemorandumVariant BotSimulationMemorandumVariant
+	botSimulationMemorandums       map[int64][]MemorandumState
+	botSimulationRollouts          int
+
+	botObjectiveInferenceCache map[string]botObjectiveInferenceCacheEntry
+	botBeliefCache             map[string]BotBelief
+	botSuspicionProfileCache   map[string]botSuspicionProfile
 }
 
 func NewEngine(store Store) *Engine {

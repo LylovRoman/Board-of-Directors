@@ -77,6 +77,13 @@ const (
 	MemorandumTypeRisk        MemorandumType = "risk"
 )
 
+type MemorandumVariant string
+
+const (
+	MemorandumVariantStandard MemorandumVariant = "standard"
+	MemorandumVariantAdvanced MemorandumVariant = "advanced"
+)
+
 const (
 	MinPlayers               = 3
 	MaxPlayers               = 8
@@ -250,9 +257,10 @@ type GovernanceVoteState struct {
 }
 
 type MemorandumState struct {
-	UserID    int64          `json:"user_id"`
-	Type      MemorandumType `json:"type"`
-	Decisions []string       `json:"decisions"`
+	UserID    int64             `json:"user_id"`
+	Type      MemorandumType    `json:"type"`
+	Variant   MemorandumVariant `json:"variant"`
+	Decisions []string          `json:"decisions"`
 }
 
 type ChatMessageState struct {
@@ -368,8 +376,9 @@ type PublicChatMessage struct {
 }
 
 type PublicMemorandum struct {
-	Type      MemorandumType `json:"type"`
-	Decisions []string       `json:"decisions"`
+	Type      MemorandumType    `json:"type"`
+	Variant   MemorandumVariant `json:"variant"`
+	Decisions []string          `json:"decisions"`
 }
 
 type PublicComplianceWatch struct {
@@ -627,9 +636,10 @@ type MemorandumPreferenceSelectedPayload struct {
 }
 
 type MemorandumAssignedPayload struct {
-	UserID    int64          `json:"user_id"`
-	Type      MemorandumType `json:"type"`
-	Decisions []string       `json:"decisions"`
+	UserID    int64             `json:"user_id"`
+	Type      MemorandumType    `json:"type"`
+	Variant   MemorandumVariant `json:"variant,omitempty"`
+	Decisions []string          `json:"decisions"`
 }
 
 type PlayerReceivedSharePayload struct {

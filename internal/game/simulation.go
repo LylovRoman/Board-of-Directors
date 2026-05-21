@@ -17,12 +17,14 @@ const (
 	MaxBotSimulationGames                  = 1000
 	MaxBotSimulationMemorandumCount        = 50
 	MaxBotSimulationWorkers                = 64
+	DefaultBotSimulationMaxWorkers         = 8
 	MaxBotSimulationMonteCarloRollouts     = 512
 	DefaultBotSimulationMonteCarloRollouts = 32
 	maxSimulationSteps                     = 5000
 )
 
 type BotSimulationMemorandumType string
+type BotSimulationMemorandumVariant string
 
 const (
 	BotSimulationMemorandumTypeMixed       BotSimulationMemorandumType = "mixed"
@@ -30,42 +32,51 @@ const (
 	BotSimulationMemorandumTypeRisk        BotSimulationMemorandumType = "risk"
 )
 
+const (
+	BotSimulationMemorandumVariantMixed    BotSimulationMemorandumVariant = "mixed"
+	BotSimulationMemorandumVariantStandard BotSimulationMemorandumVariant = "standard"
+	BotSimulationMemorandumVariantAdvanced BotSimulationMemorandumVariant = "advanced"
+)
+
 type BotSimulationRequest struct {
-	Games              int                         `json:"games"`
-	Players            int                         `json:"players"`
-	Seed               *int64                      `json:"seed,omitempty"`
-	IncludeGames       bool                        `json:"include_games"`
-	BotMemorandumCount int                         `json:"bot_memorandum_count,omitempty"`
-	BotMemorandumType  BotSimulationMemorandumType `json:"bot_memorandum_type,omitempty"`
-	Workers            int                         `json:"workers,omitempty"`
-	MonteCarloRollouts int                         `json:"monte_carlo_rollouts,omitempty"`
+	Games                int                            `json:"games"`
+	Players              int                            `json:"players"`
+	Seed                 *int64                         `json:"seed,omitempty"`
+	IncludeGames         bool                           `json:"include_games"`
+	BotMemorandumCount   int                            `json:"bot_memorandum_count,omitempty"`
+	BotMemorandumType    BotSimulationMemorandumType    `json:"bot_memorandum_type,omitempty"`
+	BotMemorandumVariant BotSimulationMemorandumVariant `json:"bot_memorandum_variant,omitempty"`
+	Variant              BotSimulationMemorandumVariant `json:"variant,omitempty"`
+	Workers              int                            `json:"workers,omitempty"`
+	MonteCarloRollouts   int                            `json:"monte_carlo_rollouts,omitempty"`
 }
 
 type BotSimulationResponse struct {
-	Games                           int                         `json:"games"`
-	Players                         int                         `json:"players"`
-	Seed                            int64                       `json:"seed"`
-	BotMemorandumCount              int                         `json:"bot_memorandum_count"`
-	BotMemorandumType               BotSimulationMemorandumType `json:"bot_memorandum_type"`
-	Workers                         int                         `json:"workers"`
-	MonteCarloRollouts              int                         `json:"monte_carlo_rollouts"`
-	DurationMS                      int64                       `json:"duration_ms"`
-	GamesPerSecond                  float64                     `json:"games_per_second"`
-	MoleWins                        int                         `json:"mole_wins"`
-	PlayersWins                     int                         `json:"players_wins"`
-	MoleWinrate                     float64                     `json:"mole_winrate"`
-	PlayersWinrate                  float64                     `json:"players_winrate"`
-	AverageRounds                   float64                     `json:"average_rounds"`
-	AcceptedCleanCount              int                         `json:"accepted_clean_count"`
-	AcceptedTargetCount             int                         `json:"accepted_target_count"`
-	AcceptedSabotageCount           int                         `json:"accepted_sabotage_count"`
-	ComplianceCatchesCount          int                         `json:"compliance_catches_count"`
-	PlayersWinsByComplianceCount    int                         `json:"players_wins_by_compliance_count"`
-	AverageAcceptedCleanCount       float64                     `json:"average_accepted_clean_count"`
-	AverageAcceptedTargetCount      float64                     `json:"average_accepted_target_count"`
-	AverageAcceptedSabotageCount    float64                     `json:"average_accepted_sabotage_count"`
-	AverageComplianceCatchesPerGame float64                     `json:"average_compliance_catches_per_game"`
-	Results                         []BotSimulationGameResult   `json:"results,omitempty"`
+	Games                           int                            `json:"games"`
+	Players                         int                            `json:"players"`
+	Seed                            int64                          `json:"seed"`
+	BotMemorandumCount              int                            `json:"bot_memorandum_count"`
+	BotMemorandumType               BotSimulationMemorandumType    `json:"bot_memorandum_type"`
+	BotMemorandumVariant            BotSimulationMemorandumVariant `json:"bot_memorandum_variant"`
+	Workers                         int                            `json:"workers"`
+	MonteCarloRollouts              int                            `json:"monte_carlo_rollouts"`
+	DurationMS                      int64                          `json:"duration_ms"`
+	GamesPerSecond                  float64                        `json:"games_per_second"`
+	MoleWins                        int                            `json:"mole_wins"`
+	PlayersWins                     int                            `json:"players_wins"`
+	MoleWinrate                     float64                        `json:"mole_winrate"`
+	PlayersWinrate                  float64                        `json:"players_winrate"`
+	AverageRounds                   float64                        `json:"average_rounds"`
+	AcceptedCleanCount              int                            `json:"accepted_clean_count"`
+	AcceptedTargetCount             int                            `json:"accepted_target_count"`
+	AcceptedSabotageCount           int                            `json:"accepted_sabotage_count"`
+	ComplianceCatchesCount          int                            `json:"compliance_catches_count"`
+	PlayersWinsByComplianceCount    int                            `json:"players_wins_by_compliance_count"`
+	AverageAcceptedCleanCount       float64                        `json:"average_accepted_clean_count"`
+	AverageAcceptedTargetCount      float64                        `json:"average_accepted_target_count"`
+	AverageAcceptedSabotageCount    float64                        `json:"average_accepted_sabotage_count"`
+	AverageComplianceCatchesPerGame float64                        `json:"average_compliance_catches_per_game"`
+	Results                         []BotSimulationGameResult      `json:"results,omitempty"`
 }
 
 type BotSimulationGameResult struct {
@@ -92,14 +103,15 @@ type BotSimulationComplianceWatch struct {
 }
 
 type botSimulationConfig struct {
-	Games              int
-	Players            int
-	Seed               int64
-	IncludeGames       bool
-	BotMemorandumCount int
-	BotMemorandumType  BotSimulationMemorandumType
-	Workers            int
-	MonteCarloRollouts int
+	Games                int
+	Players              int
+	Seed                 int64
+	IncludeGames         bool
+	BotMemorandumCount   int
+	BotMemorandumType    BotSimulationMemorandumType
+	BotMemorandumVariant BotSimulationMemorandumVariant
+	Workers              int
+	MonteCarloRollouts   int
 }
 
 func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, error) {
@@ -149,13 +161,14 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 	}
 
 	response := BotSimulationResponse{
-		Games:              config.Games,
-		Players:            config.Players,
-		Seed:               config.Seed,
-		BotMemorandumCount: config.BotMemorandumCount,
-		BotMemorandumType:  config.BotMemorandumType,
-		Workers:            config.Workers,
-		MonteCarloRollouts: config.MonteCarloRollouts,
+		Games:                config.Games,
+		Players:              config.Players,
+		Seed:                 config.Seed,
+		BotMemorandumCount:   config.BotMemorandumCount,
+		BotMemorandumType:    config.BotMemorandumType,
+		BotMemorandumVariant: config.BotMemorandumVariant,
+		Workers:              config.Workers,
+		MonteCarloRollouts:   config.MonteCarloRollouts,
 	}
 	if config.IncludeGames {
 		response.Results = make([]BotSimulationGameResult, 0, config.Games)
@@ -228,9 +241,23 @@ func normalizeBotSimulationRequest(request BotSimulationRequest) (botSimulationC
 	if !isBotSimulationMemorandumType(botMemorandumType) {
 		return botSimulationConfig{}, errors.New("bot_memorandum_type must be one of mixed, opportunity, risk")
 	}
+	botMemorandumVariant := request.BotMemorandumVariant
+	if botMemorandumVariant == "" {
+		botMemorandumVariant = request.Variant
+	}
+	if botMemorandumVariant == "" {
+		if botMemorandumType == BotSimulationMemorandumTypeMixed {
+			botMemorandumVariant = BotSimulationMemorandumVariantMixed
+		} else {
+			botMemorandumVariant = BotSimulationMemorandumVariantAdvanced
+		}
+	}
+	if !isBotSimulationMemorandumVariant(botMemorandumVariant) {
+		return botSimulationConfig{}, errors.New("bot_memorandum_variant/variant must be one of mixed, standard, advanced")
+	}
 	workers := request.Workers
 	if workers == 0 {
-		workers = minInt(runtime.GOMAXPROCS(0), games)
+		workers = minInt(minInt(runtime.GOMAXPROCS(0), DefaultBotSimulationMaxWorkers), games)
 	}
 	if workers < 0 || workers > MaxBotSimulationWorkers {
 		return botSimulationConfig{}, fmt.Errorf("workers must be between 1 and %d", MaxBotSimulationWorkers)
@@ -254,24 +281,26 @@ func normalizeBotSimulationRequest(request BotSimulationRequest) (botSimulationC
 		seed = *request.Seed
 	}
 	return botSimulationConfig{
-		Games:              games,
-		Players:            players,
-		Seed:               seed,
-		IncludeGames:       request.IncludeGames,
-		BotMemorandumCount: botMemorandumCount,
-		BotMemorandumType:  botMemorandumType,
-		Workers:            workers,
-		MonteCarloRollouts: monteCarloRollouts,
+		Games:                games,
+		Players:              players,
+		Seed:                 seed,
+		IncludeGames:         request.IncludeGames,
+		BotMemorandumCount:   botMemorandumCount,
+		BotMemorandumType:    botMemorandumType,
+		BotMemorandumVariant: botMemorandumVariant,
+		Workers:              workers,
+		MonteCarloRollouts:   monteCarloRollouts,
 	}, nil
 }
 
 func newBotSimulationEngine(config botSimulationConfig, index int) *Engine {
 	return &Engine{
-		rng:                          rand.New(rand.NewSource(botSimulationGameSeed(config.Seed, index))),
-		botSimulationMemorandumCount: config.BotMemorandumCount,
-		botSimulationMemorandumType:  config.BotMemorandumType,
-		botSimulationMemorandums:     map[int64][]MemorandumState{},
-		botSimulationRollouts:        config.MonteCarloRollouts,
+		rng:                            rand.New(rand.NewSource(botSimulationGameSeed(config.Seed, index))),
+		botSimulationMemorandumCount:   config.BotMemorandumCount,
+		botSimulationMemorandumType:    config.BotMemorandumType,
+		botSimulationMemorandumVariant: config.BotMemorandumVariant,
+		botSimulationMemorandums:       map[int64][]MemorandumState{},
+		botSimulationRollouts:          config.MonteCarloRollouts,
 	}
 }
 
@@ -409,7 +438,9 @@ func (e *Engine) rememberBotSimulationMemorandums(state *GameState, events []mod
 	if e.botSimulationMemorandumCount <= 0 {
 		return nil
 	}
-	if e.botSimulationMemorandumCount <= 1 && (e.botSimulationMemorandumType == "" || e.botSimulationMemorandumType == BotSimulationMemorandumTypeMixed) {
+	if e.botSimulationMemorandumCount <= 1 &&
+		(e.botSimulationMemorandumType == "" || e.botSimulationMemorandumType == BotSimulationMemorandumTypeMixed) &&
+		e.effectiveBotSimulationMemorandumVariant() == BotSimulationMemorandumVariantMixed {
 		return nil
 	}
 	if e.botSimulationMemorandums == nil {
@@ -432,14 +463,15 @@ func (e *Engine) rememberBotSimulationMemorandums(state *GameState, events []mod
 		memorandums := make([]MemorandumState, 0, e.botSimulationMemorandumCount)
 		for len(memorandums) < e.botSimulationMemorandumCount {
 			index := len(memorandums)
-			memorandumType := e.botSimulationMemorandumTypeAt(payload.Type, index)
-			decisions := e.randomMemorandumDecisions(memorandumType, state.MoleTargets, state.MoleSabotage)
-			if index == 0 && memorandumType == payload.Type {
+			memorandumType, variant := e.botSimulationMemorandumAt(payload.Type, payload.Variant, index)
+			decisions := e.randomMemorandumDecisionsForVariant(memorandumType, variant, state.MoleTargets, state.MoleSabotage)
+			if index == 0 && memorandumType == payload.Type && variant == normalizeMemorandumVariant(payload.Variant) {
 				decisions = append([]string(nil), payload.Decisions...)
 			}
 			memorandums = append(memorandums, MemorandumState{
 				UserID:    payload.UserID,
 				Type:      memorandumType,
+				Variant:   variant,
 				Decisions: decisions,
 			})
 		}
@@ -454,15 +486,45 @@ func isBotSimulationMemorandumType(value BotSimulationMemorandumType) bool {
 		value == BotSimulationMemorandumTypeRisk
 }
 
-func (e *Engine) botSimulationMemorandumTypeAt(defaultType MemorandumType, index int) MemorandumType {
+func isBotSimulationMemorandumVariant(value BotSimulationMemorandumVariant) bool {
+	return value == BotSimulationMemorandumVariantMixed ||
+		value == BotSimulationMemorandumVariantStandard ||
+		value == BotSimulationMemorandumVariantAdvanced
+}
+
+func (e *Engine) botSimulationMemorandumAt(defaultType MemorandumType, defaultVariant MemorandumVariant, index int) (MemorandumType, MemorandumVariant) {
+	memorandumType := defaultType
 	switch e.botSimulationMemorandumType {
 	case BotSimulationMemorandumTypeOpportunity:
-		return MemorandumTypeOpportunity
+		memorandumType = MemorandumTypeOpportunity
 	case BotSimulationMemorandumTypeRisk:
-		return MemorandumTypeRisk
-	default:
-		return alternatingMemorandumType(defaultType, index)
+		memorandumType = MemorandumTypeRisk
+	case BotSimulationMemorandumTypeMixed, "":
+		memorandumType = alternatingMemorandumType(defaultType, index)
 	}
+
+	switch e.effectiveBotSimulationMemorandumVariant() {
+	case BotSimulationMemorandumVariantStandard:
+		return memorandumType, MemorandumVariantStandard
+	case BotSimulationMemorandumVariantAdvanced:
+		return memorandumType, MemorandumVariantAdvanced
+	default:
+		if index == 0 {
+			return memorandumType, normalizeMemorandumVariant(defaultVariant)
+		}
+		return memorandumType, MemorandumVariantAdvanced
+	}
+}
+
+func (e *Engine) effectiveBotSimulationMemorandumVariant() BotSimulationMemorandumVariant {
+	if e.botSimulationMemorandumVariant != "" {
+		return e.botSimulationMemorandumVariant
+	}
+	if e.botSimulationMemorandumType == BotSimulationMemorandumTypeOpportunity ||
+		e.botSimulationMemorandumType == BotSimulationMemorandumTypeRisk {
+		return BotSimulationMemorandumVariantAdvanced
+	}
+	return BotSimulationMemorandumVariantMixed
 }
 
 func alternatingMemorandumType(first MemorandumType, index int) MemorandumType {

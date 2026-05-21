@@ -156,7 +156,7 @@ export function GameScreen(props: GameScreenProps) {
           {state.memorandum ? (
             <div className="memorandum-card">
               <strong>{memorandumTitle(state.memorandum.type)}</strong>
-              <span>{memorandumRule(state.memorandum.type)}</span>
+              <span>{memorandumRule(state.memorandum.type, state.memorandum.variant)}</span>
               <div>{state.memorandum.decisions.map((decision) => <em key={decision}>{decision}</em>)}</div>
             </div>
           ) : null}
@@ -410,6 +410,7 @@ function MoleObjectivePhase(props: {
   if (!isMole) {
     const preference = props.state.memorandum_preference;
     const isCompliance = props.state.me?.role === "compliance";
+    const preferenceVariant = isCompliance ? "advanced" : "standard";
     return (
       <section className="phase-card">
         <p className="eyebrow">тайный брифинг</p>
@@ -422,7 +423,7 @@ function MoleObjectivePhase(props: {
         {preference ? (
           <div className="memorandum-card selected">
             <strong>{memorandumTitle(preference)}</strong>
-            <span>{memorandumRule(preference)}</span>
+            <span>{memorandumRule(preference, preferenceVariant)}</span>
           </div>
         ) : (
           <div className="decision-grid two">
@@ -435,7 +436,7 @@ function MoleObjectivePhase(props: {
                 onClick={() => props.onAction("choose_memorandum", { type })}
               >
                 <strong>{memorandumTitle(type)}</strong>
-                <span>{memorandumRule(type)}</span>
+                <span>{memorandumRule(type, preferenceVariant)}</span>
               </button>
             ))}
           </div>
@@ -519,7 +520,7 @@ function MajorVotingPhase(props: {
       {props.state.memorandum ? (
         <div className="memorandum-card">
           <strong>{memorandumTitle(props.state.memorandum.type)}</strong>
-          <span>{memorandumRule(props.state.memorandum.type)}</span>
+          <span>{memorandumRule(props.state.memorandum.type, props.state.memorandum.variant)}</span>
           <div>{props.state.memorandum.decisions.map((decision) => <em key={decision}>{decision}</em>)}</div>
         </div>
       ) : null}

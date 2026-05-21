@@ -257,6 +257,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.Memorandums[payload.UserID] = MemorandumState{
 			UserID:    payload.UserID,
 			Type:      payload.Type,
+			Variant:   normalizeMemorandumVariant(payload.Variant),
 			Decisions: append([]string(nil), payload.Decisions...),
 		}
 	case models.EventPlayerReceivedShare:

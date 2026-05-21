@@ -487,7 +487,7 @@ paths:
   /admin/simulations/bot-games:
     post:
       summary: Run fast all-bot game simulations
-      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`. Simulations run in parallel across a bounded worker pool and use Monte Carlo bot policy scoring. Set `bot_memorandum_count` above 1 to give simulation-only director bots extra hidden memorandum cards and stronger mathematical inference without changing normal games. Use `bot_memorandum_type` to force every simulation memorandum to `opportunity` or `risk`; omitted/`mixed` alternates types.
+      description: Runs in-memory bot-only games for balance statistics. Requires `ADMIN_API_TOKEN` to be configured on the server and sent as `X-Admin-Token`. Simulations run in parallel across a bounded worker pool and use deterministic fast bot policy scoring so the same seed is reproducible across repeated runs and worker counts. Set `bot_memorandum_count` above 1 to give simulation-only director bots extra hidden memorandum cards and stronger mathematical inference without changing normal games. Use `bot_memorandum_type` to force `opportunity` or `risk`, and `variant`/`bot_memorandum_variant` to compare standard 3-decision memorandums with advanced 2-decision pairs.
       security:
         - adminToken: []
       requestBody:
@@ -549,18 +549,26 @@ components:
           type: string
           enum: [mixed, opportunity, risk]
           default: mixed
-          description: Type policy for simulation bot memorandums. `opportunity` or `risk` forces all cards to that type. `mixed` preserves the default alternating opportunity/risk behavior.
+          description: Base type policy for simulation bot memorandums. `opportunity` or `risk` forces that base type. `mixed` preserves the normal first base type and alternates extra opportunity/risk memorandums.
+        bot_memorandum_variant:
+          type: string
+          enum: [mixed, standard, advanced]
+          description: Variant policy for simulation bot memorandums. `standard` uses 3-decision memorandums, `advanced` uses 2-decision pairs, and `mixed` preserves the normal first memorandum while extra memorandums are advanced. If omitted, explicit `bot_memorandum_type` defaults to `advanced`; omitted/`mixed` type defaults to `mixed`.
+        variant:
+          type: string
+          enum: [mixed, standard, advanced]
+          description: Short alias for `bot_memorandum_variant`.
         workers:
           type: integer
           minimum: 0
           maximum: 64
-          description: Number of parallel simulation workers. Omitted or 0 uses min(runtime.GOMAXPROCS, games).
+          description: Number of parallel simulation workers. Omitted or 0 uses min(runtime.GOMAXPROCS, 8, games). Set explicitly for maximum throughput.
         monte_carlo_rollouts:
           type: integer
           default: 32
           minimum: 0
           maximum: 512
-          description: Number of Monte Carlo samples used by bot policy scoring for major votes and governance choices.
+          description: Compatibility option accepted and echoed for older balance scripts. Bot-game simulations currently use deterministic fast policy scoring instead of Monte Carlo rollouts.
 
     BotSimulationGameResult:
       type: object
@@ -629,6 +637,9 @@ components:
         bot_memorandum_type:
           type: string
           enum: [mixed, opportunity, risk]
+        bot_memorandum_variant:
+          type: string
+          enum: [mixed, standard, advanced]
         workers:
           type: integer
         monte_carlo_rollouts:
@@ -939,7 +950,7 @@ components:
 
     ChooseMemorandumPayload:
       type: object
-      description: Private non-Mole choice during mole_objective_selection. Ordinary Directors receive a starting memorandum of the chosen type after Mole objectives are selected. Compliance may choose the same value as a preference, but does not receive a starting memorandum; the preference is used only for a late memorandum after an accepted Sabotage if the game continues. If no type is chosen, opportunity is used by default. Compliance preference is not mandatory for phase timeout/autoreplacement.
+      description: Private non-Mole choice during mole_objective_selection. Ordinary Directors receive a standard 3-decision starting memorandum of the chosen base type after Mole objectives are selected. Compliance may choose the same value as a preference, but does not receive a starting memorandum; the preference is used only for an advanced 2-decision late memorandum after an accepted Sabotage if the game continues. If no type is chosen, opportunity is used by default. Compliance preference is not mandatory for phase timeout/autoreplacement.
       properties:
         type:
           type: string
@@ -1451,19 +1462,24 @@ components:
 
     PublicMemorandum:
       type: object
-      description: Private memorandum hint. Present for ordinary Directors after the Mole has selected objectives, and for Compliance only after an accepted Sabotage if the game continues. Players choose the memorandum type only; the 3-decision set is generated randomly by the backend. Starting Director memorandums test against the Mole's 3 Podkops plus 1 Sabotage. Late Compliance memorandums test against the remaining hidden Podkops and use the selected/default type.
+      description: Private memorandum hint. Present for ordinary Directors after the Mole has selected objectives, and for Compliance only after an accepted Sabotage if the game continues. Players choose the base memorandum type only; the decision set is generated randomly by the backend. `standard` memorandums contain 3 decisions, while `advanced` memorandums contain 2 decisions. Starting Director memorandums are standard and test against the Mole's 3 Podkops plus 1 Sabotage. Late Compliance memorandums are advanced and test against the remaining hidden Podkops with the selected/default base type.
       properties:
         type:
           type: string
           enum: [opportunity, risk]
+        variant:
+          type: string
+          enum: [standard, advanced]
+          description: `standard` is a 3-decision memorandum; `advanced` is a stronger 2-decision pair.
         decisions:
           type: array
-          minItems: 3
+          minItems: 2
           maxItems: 3
+          description: Contains 3 decisions for `standard` memorandums and 2 decisions for `advanced` memorandums.
           items:
             type: string
             enum: [A, B, C, D, E, F, G, H]
-      required: [type, decisions]
+      required: [type, variant, decisions]
 
     PublicComplianceWatch:
       type: object

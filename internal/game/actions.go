@@ -898,11 +898,15 @@ func (e *Engine) resolveGovernance(state *GameState, actor *models.User) []model
 
 func resolveDecision(state *GameState) (string, []string, bool) {
 	scores := map[string]int{}
-	for _, vote := range state.CurrentVotes {
+	for _, userID := range state.PlayerOrder {
+		vote, ok := state.CurrentVotes[userID]
+		if !ok {
+			continue
+		}
 		if vote.Abstain || vote.Decision == nil {
 			continue
 		}
-		player := activePlayerByID(state, vote.UserID)
+		player := activePlayerByID(state, userID)
 		if player == nil {
 			continue
 		}
@@ -942,11 +946,15 @@ func resolveDecision(state *GameState) (string, []string, bool) {
 
 func resolveGovernanceProposal(state *GameState) (int, bool) {
 	scores := map[int]int{}
-	for _, vote := range state.GovernanceVotes {
+	for _, userID := range state.PlayerOrder {
+		vote, ok := state.GovernanceVotes[userID]
+		if !ok {
+			continue
+		}
 		if vote.Abstain || vote.ProposalID == nil {
 			continue
 		}
-		player := activePlayerByID(state, vote.UserID)
+		player := activePlayerByID(state, userID)
 		if player == nil || state.GovernanceProposals[*vote.ProposalID] == nil {
 			continue
 		}
@@ -1239,6 +1247,7 @@ func (e *Engine) memorandumAssignmentEvents(state *GameState, actor *models.User
 			EventValue: mustJSON(MemorandumAssignedPayload{
 				UserID:    player.UserID,
 				Type:      memorandumType,
+				Variant:   MemorandumVariantStandard,
 				Decisions: e.randomMemorandumDecisions(memorandumType, targets, sabotage),
 			}),
 		})
@@ -1258,7 +1267,8 @@ func (e *Engine) complianceMemorandumAfterSabotageEvent(state *GameState, actor 
 	if memorandumType == "" {
 		memorandumType = MemorandumTypeOpportunity
 	}
-	decisions := e.randomMemorandumDecisionsFromPool(memorandumType, sortedAvailableDecisions(state.Available), remainingMoleTargetSet(state))
+	variant := MemorandumVariantAdvanced
+	decisions := e.randomMemorandumDecisionsFromPoolForVariant(memorandumType, variant, sortedAvailableDecisions(state.Available), remainingMoleTargetSet(state))
 	return []models.Event{{
 		GameID:    state.GameID,
 		UserID:    &actor.ID,
@@ -1267,6 +1277,7 @@ func (e *Engine) complianceMemorandumAfterSabotageEvent(state *GameState, actor 
 		EventValue: mustJSON(MemorandumAssignedPayload{
 			UserID:    compliance.UserID,
 			Type:      memorandumType,
+			Variant:   variant,
 			Decisions: decisions,
 		}),
 	}}
@@ -1277,30 +1288,61 @@ func (e *Engine) randomMemorandumDecisions(memorandumType MemorandumType, target
 }
 
 func (e *Engine) randomMemorandumDecisionsFromPool(memorandumType MemorandumType, decisions []string, targetSet map[string]bool) []string {
-	if len(decisions) <= 3 {
+	return e.randomMemorandumDecisionsFromPoolForVariant(memorandumType, MemorandumVariantStandard, decisions, targetSet)
+}
+
+func (e *Engine) randomMemorandumDecisionsForVariant(memorandumType MemorandumType, variant MemorandumVariant, targets []string, sabotage string) []string {
+	return e.randomMemorandumDecisionsFromPoolForVariant(memorandumType, variant, allDecisions, moleObjectiveSet(targets, sabotage))
+}
+
+func (e *Engine) randomMemorandumDecisionsFromPoolForVariant(memorandumType MemorandumType, variant MemorandumVariant, decisions []string, targetSet map[string]bool) []string {
+	variant = normalizeMemorandumVariant(variant)
+	count := 3
+	if variant == MemorandumVariantAdvanced {
+		count = 2
+	}
+	if len(decisions) <= count {
 		out := append([]string(nil), decisions...)
 		sort.Strings(out)
 		return out
 	}
 	candidates := [][]string{}
-	for i := 0; i < len(decisions); i++ {
-		for j := i + 1; j < len(decisions); j++ {
-			for k := j + 1; k < len(decisions); k++ {
-				trio := []string{decisions[i], decisions[j], decisions[k]}
-				if memorandumMatches(trio, targetSet, memorandumType) {
-					candidates = append(candidates, trio)
-				}
-			}
+	for _, candidate := range decisionCombinations(decisions, count) {
+		if memorandumMatches(candidate, targetSet, memorandumType) {
+			candidates = append(candidates, candidate)
 		}
 	}
 	if len(candidates) == 0 {
-		return randomDecisionSubset(e, decisions, 3)
+		return randomDecisionSubset(e, decisions, count)
 	}
 	e.rngMu.Lock()
 	index := e.rng.Intn(len(candidates))
 	e.rngMu.Unlock()
 	out := append([]string(nil), candidates[index]...)
 	sort.Strings(out)
+	return out
+}
+
+func decisionCombinations(decisions []string, count int) [][]string {
+	if count <= 0 || len(decisions) < count {
+		return nil
+	}
+	out := [][]string{}
+	current := make([]string, 0, count)
+	var walk func(start int)
+	walk = func(start int) {
+		if len(current) == count {
+			out = append(out, append([]string(nil), current...))
+			return
+		}
+		remaining := count - len(current)
+		for i := start; i <= len(decisions)-remaining; i++ {
+			current = append(current, decisions[i])
+			walk(i + 1)
+			current = current[:len(current)-1]
+		}
+	}
+	walk(0)
 	return out
 }
 
@@ -1835,6 +1877,13 @@ func isDecisionID(decision string) bool {
 
 func isMemorandumType(value MemorandumType) bool {
 	return value == MemorandumTypeOpportunity || value == MemorandumTypeRisk
+}
+
+func normalizeMemorandumVariant(value MemorandumVariant) MemorandumVariant {
+	if value == MemorandumVariantAdvanced {
+		return MemorandumVariantAdvanced
+	}
+	return MemorandumVariantStandard
 }
 
 func detectWinner(state *GameState) (string, string) {

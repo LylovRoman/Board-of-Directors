@@ -16,7 +16,9 @@ func (s *Server) handleBotGameSimulation(w http.ResponseWriter, r *http.Request)
 	}
 
 	var request game.BotSimulationRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}

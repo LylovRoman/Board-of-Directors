@@ -404,11 +404,11 @@ curl -X POST http://localhost:8000/admin/simulations/bot-games \
   -d '{"games":100,"players":6,"seed":12345,"include_games":false,"bot_memorandum_count":7,"bot_memorandum_type":"risk","workers":4,"monte_carlo_rollouts":32}'
 ```
 
-`bot_memorandum_count` defaults to `1` and supports up to `50`. Values above `1` give only simulation director bots extra hidden memorandum cards; normal games and public game state still use one memorandum per Director. `bot_memorandum_type` can be `opportunity`, `risk`, or omitted/`mixed`; explicit types force every simulation memorandum to that type, while `mixed` alternates the two types.
+`bot_memorandum_count` defaults to `1` and supports up to `50`. Values above `1` give only simulation director bots extra hidden memorandum cards; normal games and public game state still use one memorandum per Director. `bot_memorandum_type` can be `opportunity`, `risk`, or omitted/`mixed`; `variant` (or `bot_memorandum_variant`) can be `standard`, `advanced`, or `mixed`. Explicit `risk`/`opportunity` defaults to `advanced`, so old balance commands keep testing the new two-letter pair. Use `variant:"standard"` to compare against old three-letter memorandums.
 
-`workers` controls the parallel worker pool and defaults to `min(runtime.GOMAXPROCS, games)` when omitted or `0`; values above `64` are rejected. `monte_carlo_rollouts` defaults to `32` and supports up to `512`, trading CPU time for stronger bot decisions.
+`workers` controls the parallel worker pool and defaults to `min(runtime.GOMAXPROCS, 8, games)` when omitted or `0`; values above `64` are rejected. Set `workers` explicitly for maximum throughput. `monte_carlo_rollouts` is still accepted and echoed for compatibility with older balance scripts, but bot-game simulations now use deterministic fast scoring so seeded 100/1000-game sweeps stay reproducible and CPU-friendly.
 
-Симуляции выполняются в памяти, не создают записи в `users`, `games` и `events`, используют Monte Carlo логику ботов с моделями подозрения, доверия и коалиций, а также возвращают агрегированную статистику баланса и метрики скорости (`duration_ms`, `games_per_second`).
+Симуляции выполняются в памяти, не создают записи в `users`, `games` и `events`, используют детерминированную логику ботов с моделями подозрения, доверия и коалиций, а также возвращают агрегированную статистику баланса и метрики скорости (`duration_ms`, `games_per_second`).
 
 ## Примечания для разработки
 

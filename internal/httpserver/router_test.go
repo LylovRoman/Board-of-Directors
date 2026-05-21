@@ -1061,7 +1061,7 @@ func TestAdminBotSimulationRequiresTokenAndReturnsResult(t *testing.T) {
 	t.Setenv("ADMIN_API_TOKEN", "secret-admin-token")
 	router := NewRouter(&mockStorage{}, "test-secret")
 
-	body := []byte(`{"games":2,"players":3,"seed":12345,"include_games":true,"bot_memorandum_count":7,"bot_memorandum_type":"risk","workers":1,"monte_carlo_rollouts":4}`)
+	body := []byte(`{"games":2,"players":3,"seed":12345,"include_games":true,"bot_memorandum_count":7,"bot_memorandum_type":"risk","variant":"standard","workers":1,"monte_carlo_rollouts":4}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/simulations/bot-games", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -1083,11 +1083,29 @@ func TestAdminBotSimulationRequiresTokenAndReturnsResult(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Games != 2 || resp.Players != 3 || resp.Seed != 12345 || resp.BotMemorandumCount != 7 || resp.BotMemorandumType != game.BotSimulationMemorandumTypeRisk || resp.Workers != 1 || resp.MonteCarloRollouts != 4 || len(resp.Results) != 2 {
+	if resp.Games != 2 || resp.Players != 3 || resp.Seed != 12345 || resp.BotMemorandumCount != 7 || resp.BotMemorandumType != game.BotSimulationMemorandumTypeRisk || resp.BotMemorandumVariant != game.BotSimulationMemorandumVariantStandard || resp.Workers != 1 || resp.MonteCarloRollouts != 4 || len(resp.Results) != 2 {
 		t.Fatalf("unexpected simulation response: %+v", resp)
 	}
 	if resp.MoleWins+resp.PlayersWins != 2 {
 		t.Fatalf("expected every game to have a winner, got %+v", resp)
+	}
+}
+
+func TestAdminBotSimulationRejectsUnknownFields(t *testing.T) {
+	t.Setenv("ADMIN_API_TOKEN", "secret-admin-token")
+	router := NewRouter(&mockStorage{}, "test-secret")
+
+	body := []byte(`{"games":1,"players":3,"bot_memotandum_variant":"standard"}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/simulations/bot-games", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Admin-Token", "secret-admin-token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected typo field to fail, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "unknown field") {
+		t.Fatalf("expected unknown field error, got body=%s", rec.Body.String())
 	}
 }
 

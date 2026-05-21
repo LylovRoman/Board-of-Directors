@@ -24,7 +24,7 @@ func TestSimulateBotGamesAcceptsBotMemorandumCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SimulateBotGames: %v", err)
 	}
-	if response.Games != 1 || response.Players != 3 || response.Seed != seed || response.BotMemorandumCount != 7 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk || response.Workers != 1 || response.MonteCarloRollouts != 5 {
+	if response.Games != 1 || response.Players != 3 || response.Seed != seed || response.BotMemorandumCount != 7 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk || response.BotMemorandumVariant != BotSimulationMemorandumVariantAdvanced || response.Workers != 1 || response.MonteCarloRollouts != 5 {
 		t.Fatalf("unexpected response metadata: %+v", response)
 	}
 	if response.DurationMS < 0 || response.GamesPerSecond <= 0 {
@@ -35,6 +35,46 @@ func TestSimulateBotGamesAcceptsBotMemorandumCount(t *testing.T) {
 	}
 	if response.Results[0].ComplianceUserID == 0 {
 		t.Fatalf("expected included game to reveal compliance user, got %+v", response.Results[0])
+	}
+}
+
+func TestSimulateBotGamesAcceptsSingleForcedAdvancedMemorandumType(t *testing.T) {
+	seed := int64(12350)
+	response, err := SimulateBotGames(BotSimulationRequest{
+		Games:              1,
+		Players:            6,
+		Seed:               &seed,
+		IncludeGames:       false,
+		BotMemorandumCount: 1,
+		BotMemorandumType:  BotSimulationMemorandumTypeRisk,
+		Workers:            1,
+		MonteCarloRollouts: 4,
+	})
+	if err != nil {
+		t.Fatalf("SimulateBotGames: %v", err)
+	}
+	if response.Games != 1 || response.Players != 6 || response.Seed != seed || response.BotMemorandumCount != 1 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk || response.BotMemorandumVariant != BotSimulationMemorandumVariantAdvanced {
+		t.Fatalf("unexpected simulation response: %+v", response)
+	}
+}
+
+func TestSimulateBotGamesAcceptsVariantAlias(t *testing.T) {
+	seed := int64(12351)
+	response, err := SimulateBotGames(BotSimulationRequest{
+		Games:              1,
+		Players:            6,
+		Seed:               &seed,
+		BotMemorandumCount: 1,
+		BotMemorandumType:  BotSimulationMemorandumTypeRisk,
+		Variant:            BotSimulationMemorandumVariantStandard,
+		Workers:            1,
+		MonteCarloRollouts: 4,
+	})
+	if err != nil {
+		t.Fatalf("SimulateBotGames: %v", err)
+	}
+	if response.BotMemorandumVariant != BotSimulationMemorandumVariantStandard {
+		t.Fatalf("expected variant alias to select standard memorandums, got %+v", response)
 	}
 }
 
@@ -93,6 +133,66 @@ func TestSimulateBotGamesDeterministicAcrossWorkerCounts(t *testing.T) {
 	}
 }
 
+func TestSimulateBotGamesDeterministicAcrossRepeatedRuns(t *testing.T) {
+	tests := []struct {
+		name   string
+		index  int
+		config botSimulationConfig
+	}{
+		{
+			name:  "forced advanced risk",
+			index: 15,
+			config: botSimulationConfig{
+				Games:                100,
+				Players:              6,
+				Seed:                 22222,
+				BotMemorandumCount:   1,
+				BotMemorandumType:    BotSimulationMemorandumTypeRisk,
+				BotMemorandumVariant: BotSimulationMemorandumVariantAdvanced,
+				Workers:              1,
+				MonteCarloRollouts:   32,
+			},
+		},
+		{
+			name:  "mixed default",
+			index: 7,
+			config: botSimulationConfig{
+				Games:                8,
+				Players:              6,
+				Seed:                 9091,
+				BotMemorandumCount:   1,
+				BotMemorandumType:    BotSimulationMemorandumTypeMixed,
+				BotMemorandumVariant: BotSimulationMemorandumVariantMixed,
+				Workers:              1,
+				MonteCarloRollouts:   4,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left, err := newBotSimulationEngine(tt.config, tt.index).simulateBotGame(tt.index, tt.config.Players)
+			if err != nil {
+				t.Fatalf("simulate first game: %v", err)
+			}
+			right, err := newBotSimulationEngine(tt.config, tt.index).simulateBotGame(tt.index, tt.config.Players)
+			if err != nil {
+				t.Fatalf("simulate second game: %v", err)
+			}
+			if left.Winner != right.Winner ||
+				left.Rounds != right.Rounds ||
+				left.WinnerReason != right.WinnerReason ||
+				left.ComplianceCaught != right.ComplianceCaught ||
+				left.MolePoints != right.MolePoints ||
+				left.PlayersPoints != right.PlayersPoints ||
+				strings.Join(left.AcceptedDecisions, ",") != strings.Join(right.AcceptedDecisions, ",") ||
+				complianceWatchSignature(left.ComplianceWatches) != complianceWatchSignature(right.ComplianceWatches) {
+				t.Fatalf("expected deterministic game, left=%+v right=%+v", left, right)
+			}
+		})
+	}
+}
+
 func TestSimulateBotGamesValidatesBotMemorandumCount(t *testing.T) {
 	_, err := SimulateBotGames(BotSimulationRequest{
 		Games:              1,
@@ -112,6 +212,17 @@ func TestSimulateBotGamesValidatesBotMemorandumType(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected unsupported bot_memorandum_type to fail")
+	}
+}
+
+func TestSimulateBotGamesValidatesBotMemorandumVariant(t *testing.T) {
+	_, err := SimulateBotGames(BotSimulationRequest{
+		Games:                1,
+		Players:              3,
+		BotMemorandumVariant: "unknown",
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported bot_memorandum_variant to fail")
 	}
 }
 
@@ -168,6 +279,93 @@ func TestRememberBotSimulationMemorandumsUsesConfiguredType(t *testing.T) {
 		if memorandum.Type != MemorandumTypeRisk {
 			t.Fatalf("expected forced risk memorandums, got %+v", memorandums)
 		}
+		if memorandum.Variant != MemorandumVariantAdvanced || len(memorandum.Decisions) != 2 {
+			t.Fatalf("expected forced simulation memorandums to be advanced pairs, got %+v", memorandums)
+		}
+		if !memorandumMatches(memorandum.Decisions, moleObjectiveSet(state.MoleTargets, state.MoleSabotage), MemorandumTypeRisk) {
+			t.Fatalf("expected forced advanced risk pair to include a Mole target, got %+v", memorandum)
+		}
+	}
+}
+
+func TestRememberBotSimulationMemorandumsUsesAdvancedPairForSingleForcedType(t *testing.T) {
+	engine := &Engine{
+		rng:                          rand.New(rand.NewSource(2)),
+		botSimulationMemorandumCount: 1,
+		botSimulationMemorandumType:  BotSimulationMemorandumTypeRisk,
+		botSimulationMemorandums:     map[int64][]MemorandumState{},
+	}
+	state := &GameState{
+		Status:        GameStatusStarted,
+		MoleTargets:   []string{"A", "C", "F"},
+		MoleSabotage:  "H",
+		Players:       map[int64]*PlayerState{},
+		PlayerOrder:   []int64{-1},
+		Memorandums:   map[int64]MemorandumState{},
+		CurrentVotes:  map[int64]VoteState{},
+		Available:     map[string]bool{},
+		AcceptedOrder: nil,
+	}
+	for _, decision := range allDecisions {
+		state.Available[decision] = true
+	}
+	state.Players[-1] = &PlayerState{UserID: -1, IsBot: true, Role: "player"}
+
+	err := engine.rememberBotSimulationMemorandums(state, []models.Event{{
+		EventType:  models.EventMemorandumAssigned,
+		EventValue: mustJSON(MemorandumAssignedPayload{UserID: -1, Type: MemorandumTypeOpportunity, Variant: MemorandumVariantStandard, Decisions: []string{"B", "D", "E"}}),
+	}})
+	if err != nil {
+		t.Fatalf("remember memorandums: %v", err)
+	}
+	memorandums := engine.botSimulationMemorandums[-1]
+	if len(memorandums) != 1 {
+		t.Fatalf("expected 1 memorandum, got %+v", memorandums)
+	}
+	memorandum := memorandums[0]
+	if memorandum.Type != MemorandumTypeRisk || memorandum.Variant != MemorandumVariantAdvanced || len(memorandum.Decisions) != 2 {
+		t.Fatalf("expected single forced risk simulation memorandum to be an advanced pair, got %+v", memorandum)
+	}
+}
+
+func TestRememberBotSimulationMemorandumsUsesConfiguredStandardVariant(t *testing.T) {
+	engine := &Engine{
+		rng:                            rand.New(rand.NewSource(3)),
+		botSimulationMemorandumCount:   1,
+		botSimulationMemorandumType:    BotSimulationMemorandumTypeRisk,
+		botSimulationMemorandumVariant: BotSimulationMemorandumVariantStandard,
+		botSimulationMemorandums:       map[int64][]MemorandumState{},
+	}
+	state := &GameState{
+		Status:        GameStatusStarted,
+		MoleTargets:   []string{"A", "C", "F"},
+		MoleSabotage:  "H",
+		Players:       map[int64]*PlayerState{},
+		PlayerOrder:   []int64{-1},
+		Memorandums:   map[int64]MemorandumState{},
+		CurrentVotes:  map[int64]VoteState{},
+		Available:     map[string]bool{},
+		AcceptedOrder: nil,
+	}
+	for _, decision := range allDecisions {
+		state.Available[decision] = true
+	}
+	state.Players[-1] = &PlayerState{UserID: -1, IsBot: true, Role: "player"}
+
+	err := engine.rememberBotSimulationMemorandums(state, []models.Event{{
+		EventType:  models.EventMemorandumAssigned,
+		EventValue: mustJSON(MemorandumAssignedPayload{UserID: -1, Type: MemorandumTypeOpportunity, Variant: MemorandumVariantStandard, Decisions: []string{"B", "D", "E"}}),
+	}})
+	if err != nil {
+		t.Fatalf("remember memorandums: %v", err)
+	}
+	memorandums := engine.botSimulationMemorandums[-1]
+	if len(memorandums) != 1 {
+		t.Fatalf("expected 1 memorandum, got %+v", memorandums)
+	}
+	memorandum := memorandums[0]
+	if memorandum.Type != MemorandumTypeRisk || memorandum.Variant != MemorandumVariantStandard || len(memorandum.Decisions) != 3 {
+		t.Fatalf("expected forced standard risk simulation memorandum to be a trio, got %+v", memorandum)
 	}
 }
 

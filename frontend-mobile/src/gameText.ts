@@ -4,6 +4,7 @@ import type {
   GameStatus,
   GovernanceProposalType,
   MemorandumType,
+  MemorandumVariant,
   PublicGameState,
   PublicGovernanceProposal,
   PublicPlayerState,
@@ -121,10 +122,11 @@ export function memorandumTitle(type?: MemorandumType): string {
   return type === "risk" ? "Риски" : "Возможности";
 }
 
-export function memorandumRule(type?: MemorandumType): string {
+export function memorandumRule(type?: MemorandumType, variant: MemorandumVariant = "standard"): string {
+  const subject = variant === "advanced" ? "паре" : "тройке";
   return type === "risk"
-    ? "В тройке есть хотя бы одна цель Крота."
-    : "В тройке есть хотя бы одно чистое решение.";
+    ? `В этой ${subject} есть хотя бы одна цель Крота.`
+    : `В этой ${subject} есть хотя бы одно чистое решение.`;
 }
 
 export function playerName(players: PublicPlayerState[], userId?: number): string {

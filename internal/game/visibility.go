@@ -70,6 +70,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 				if memorandum, ok := state.Memorandums[player.UserID]; ok {
 					publicState.Memorandum = &PublicMemorandum{
 						Type:      memorandum.Type,
+						Variant:   normalizeMemorandumVariant(memorandum.Variant),
 						Decisions: append([]string(nil), memorandum.Decisions...),
 					}
 				}

@@ -93,6 +93,7 @@ export function MoleObjectiveSelectionPhase(props: {
 
   if (!props.isMole) {
     const isCompliance = props.viewerRole === "compliance";
+    const preferenceVariant = isCompliance ? "advanced" : "standard";
     return (
         <section className="objective-selection waiting-selection">
           <p className="eyebrow">подготовка</p>
@@ -104,7 +105,7 @@ export function MoleObjectiveSelectionPhase(props: {
           {props.memorandumPreference ? (
               <div className="memorandum-choice selected">
                 <strong>{memorandumTitle(props.memorandumPreference)}</strong>
-                <span>{memorandumRule(props.memorandumPreference)}</span>
+                <span>{memorandumRule(props.memorandumPreference, preferenceVariant)}</span>
               </div>
           ) : (
               <div className="memorandum-choice-grid">
@@ -115,7 +116,7 @@ export function MoleObjectiveSelectionPhase(props: {
                     onClick={() => props.onChooseMemorandum("opportunity")}
                 >
                   <strong>Принимая решения, я часто вижу возможности</strong>
-                  <span>{memorandumRule("opportunity")}</span>
+                  <span>{memorandumRule("opportunity", preferenceVariant)}</span>
                 </button>
                 <button
                     type="button"
@@ -124,7 +125,7 @@ export function MoleObjectiveSelectionPhase(props: {
                     onClick={() => props.onChooseMemorandum("risk")}
                 >
                   <strong>Принимая решения, я часто учитываю риски</strong>
-                  <span>{memorandumRule("risk")}</span>
+                  <span>{memorandumRule("risk", preferenceVariant)}</span>
                 </button>
               </div>
           )}

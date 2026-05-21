@@ -18,6 +18,7 @@ export type GamePhase = "mole_objective_selection" | "major_voting" | "governanc
 export type GovernanceProposalType = "share_transfer" | "treasury_grant" | "treasury_buyback" | "appoint_ceo";
 export type DecisionType = "growth" | "empowerment";
 export type MemorandumType = "opportunity" | "risk";
+export type MemorandumVariant = "standard" | "advanced";
 
 export interface User {
   id: number;
@@ -133,6 +134,7 @@ export interface PublicChatReaction {
 
 export interface PublicMemorandum {
   type: MemorandumType;
+  variant: MemorandumVariant;
   decisions: string[];
 }
 

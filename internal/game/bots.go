@@ -3,6 +3,8 @@ package game
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -409,9 +411,9 @@ func (e *Engine) chooseBotMajorDecisionFast(state *GameState, bot *PlayerState) 
 	bestDecision := options[0]
 	bestScore := -1 << 30
 	for _, decision := range options {
-		score := e.scoreBotMajorDecision(state, bot, decision) + e.randInt(21)
-		if e.chance(8) {
-			score += e.randInt(45)
+		score := e.scoreBotMajorDecision(state, bot, decision) + e.botRandInt(state, bot, "major:"+decision, 21)
+		if e.botChance(state, bot, "major-spike:"+decision, 8) {
+			score += e.botRandInt(state, bot, "major-spike-score:"+decision, 45)
 		}
 		if score > bestScore {
 			bestScore = score
@@ -471,17 +473,38 @@ type botObjectiveInference struct {
 	CleanCounts    map[string]int
 }
 
+type botObjectiveInferenceCacheEntry struct {
+	Inference botObjectiveInference
+	OK        bool
+}
+
 func (e *Engine) botObjectiveInference(state *GameState, bot *PlayerState) (botObjectiveInference, bool) {
 	memorandums := e.botKnownMemorandums(state, bot)
-	if len(memorandums) <= 1 {
+	if len(memorandums) == 0 {
 		return botObjectiveInference{}, false
+	}
+	if len(memorandums) == 1 && normalizeMemorandumVariant(memorandums[0].Variant) != MemorandumVariantAdvanced {
+		return botObjectiveInference{}, false
+	}
+	cacheKey := botKnowledgeCacheKey(state, bot, memorandums, "inference", false)
+	if cacheKey != "" && e.botObjectiveInferenceCache != nil {
+		if cached, ok := e.botObjectiveInferenceCache[cacheKey]; ok {
+			return cached.Inference, cached.OK
+		}
 	}
 
 	inference := inferBotObjectives(state, memorandums, true)
 	if inference.Total == 0 {
 		inference = inferBotObjectives(state, memorandums, false)
 	}
-	return inference, inference.Total > 0
+	ok := inference.Total > 0
+	if cacheKey != "" {
+		if e.botObjectiveInferenceCache == nil {
+			e.botObjectiveInferenceCache = map[string]botObjectiveInferenceCacheEntry{}
+		}
+		e.botObjectiveInferenceCache[cacheKey] = botObjectiveInferenceCacheEntry{Inference: inference, OK: ok}
+	}
+	return inference, ok
 }
 
 func (e *Engine) botKnownMemorandums(state *GameState, bot *PlayerState) []MemorandumState {
@@ -627,6 +650,12 @@ func (e *Engine) botSuspicionProfile(state *GameState, bot *PlayerState) botSusp
 	if state == nil || bot == nil || bot.Role == "mole" {
 		return profile
 	}
+	cacheKey := botKnowledgeCacheKey(state, bot, e.botKnownMemorandums(state, bot), "suspicion", true)
+	if cacheKey != "" && e.botSuspicionProfileCache != nil {
+		if cached, ok := e.botSuspicionProfileCache[cacheKey]; ok {
+			return cached
+		}
+	}
 	for _, player := range activePlayers(state) {
 		if player.UserID != bot.UserID {
 			profile.Scores[player.UserID] = 0
@@ -668,7 +697,96 @@ func (e *Engine) botSuspicionProfile(state *GameState, bot *PlayerState) botSusp
 		}
 	}
 
+	if cacheKey != "" {
+		if e.botSuspicionProfileCache == nil {
+			e.botSuspicionProfileCache = map[string]botSuspicionProfile{}
+		}
+		e.botSuspicionProfileCache[cacheKey] = profile
+	}
 	return profile
+}
+
+func botKnowledgeCacheKey(state *GameState, bot *PlayerState, memorandums []MemorandumState, scope string, includeRoundReports bool) string {
+	if state == nil || bot == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(256)
+	b.WriteString(scope)
+	b.WriteByte('|')
+	writeIntKey(&b, state.GameID)
+	b.WriteByte('|')
+	writeIntKey(&b, bot.UserID)
+	b.WriteByte('|')
+	b.WriteString(bot.Role)
+	b.WriteByte('|')
+	b.WriteString(string(state.Status))
+	b.WriteByte('|')
+	b.WriteString(string(state.Phase))
+	b.WriteByte('|')
+	writeIntKey(&b, int64(state.CurrentRound))
+	b.WriteByte('|')
+	writeIntKey(&b, int64(state.GovernanceRound))
+	b.WriteByte('|')
+	b.WriteString(state.MoleSabotage)
+	b.WriteByte('|')
+	writeStringListKey(&b, state.AcceptedOrder)
+	b.WriteByte('|')
+	writeStringListKey(&b, currentMajorOptions(state))
+	b.WriteByte('|')
+	writeMemorandumsKey(&b, memorandums)
+	if includeRoundReports {
+		b.WriteByte('|')
+		writeRoundReportsKey(&b, state.RoundReports)
+	}
+	return b.String()
+}
+
+func writeMemorandumsKey(b *strings.Builder, memorandums []MemorandumState) {
+	for _, memorandum := range memorandums {
+		writeIntKey(b, memorandum.UserID)
+		b.WriteByte(':')
+		b.WriteString(string(memorandum.Type))
+		b.WriteByte(':')
+		b.WriteString(string(normalizeMemorandumVariant(memorandum.Variant)))
+		b.WriteByte(':')
+		writeStringListKey(b, memorandum.Decisions)
+		b.WriteByte(';')
+	}
+}
+
+func writeRoundReportsKey(b *strings.Builder, reports []RoundReport) {
+	for _, report := range reports {
+		writeIntKey(b, int64(report.Round))
+		b.WriteByte(':')
+		b.WriteString(report.Outcome)
+		b.WriteByte(':')
+		b.WriteString(report.Decision)
+		b.WriteByte(':')
+		for _, vote := range report.Votes {
+			b.WriteString(vote.Decision)
+			if vote.Abstain {
+				b.WriteByte('A')
+			}
+			for _, voter := range vote.Voters {
+				b.WriteByte(',')
+				writeIntKey(b, voter.UserID)
+			}
+			b.WriteByte('/')
+		}
+		b.WriteByte(';')
+	}
+}
+
+func writeStringListKey(b *strings.Builder, values []string) {
+	for _, value := range values {
+		b.WriteString(value)
+		b.WriteByte(',')
+	}
+}
+
+func writeIntKey(b *strings.Builder, value int64) {
+	b.WriteString(strconv.FormatInt(value, 10))
 }
 
 func (e *Engine) botDecisionSuspicionScore(state *GameState, bot *PlayerState, decision string) int {
@@ -704,7 +822,11 @@ func (e *Engine) currentVoteSuspicionPressure(state *GameState, bot *PlayerState
 	}
 	profile := e.botSuspicionProfile(state, bot)
 	pressure := 0
-	for userID, vote := range state.CurrentVotes {
+	for _, userID := range state.PlayerOrder {
+		vote, ok := state.CurrentVotes[userID]
+		if !ok {
+			continue
+		}
 		if userID == bot.UserID || vote.Abstain || vote.Decision == nil || *vote.Decision != decision {
 			continue
 		}
@@ -795,7 +917,7 @@ func (e *Engine) chooseBotGovernanceVoteFast(state *GameState, bot *PlayerState)
 		if proposal == nil {
 			continue
 		}
-		score := e.scoreBotGovernanceProposal(state, bot, proposal) + e.randInt(17)
+		score := e.scoreBotGovernanceProposal(state, bot, proposal) + e.botRandInt(state, bot, "governance-vote:"+strconv.Itoa(proposalID), 17)
 		if score > bestScore {
 			bestScore = score
 			bestProposalID = proposalID
@@ -804,7 +926,7 @@ func (e *Engine) chooseBotGovernanceVoteFast(state *GameState, bot *PlayerState)
 	if bestProposalID == 0 {
 		return 0, true
 	}
-	if !bot.IsCEO && bestScore < -10 && e.chance(65) {
+	if !bot.IsCEO && bestScore < -10 && e.botChance(state, bot, "governance-vote-abstain", 65) {
 		return 0, true
 	}
 	return bestProposalID, false
@@ -1074,4 +1196,97 @@ func (e *Engine) randInt(n int) int {
 func (e *Engine) chance(percent int) bool {
 	percent = maxInt(0, minInt(100, percent))
 	return e.randInt(100) < percent
+}
+
+func (e *Engine) botRandInt(state *GameState, bot *PlayerState, scope string, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if !e.usesDeterministicBotJitter() {
+		return e.randInt(n)
+	}
+	return int(botJitterHash(state, bot, scope) % uint64(n))
+}
+
+func (e *Engine) botChance(state *GameState, bot *PlayerState, scope string, percent int) bool {
+	percent = maxInt(0, minInt(100, percent))
+	return e.botRandInt(state, bot, scope, 100) < percent
+}
+
+func (e *Engine) usesDeterministicBotJitter() bool {
+	return e.botSimulationMemorandumCount > 0 ||
+		e.botSimulationRollouts > 0 ||
+		e.botSimulationMemorandumType != "" ||
+		e.botSimulationMemorandumVariant != ""
+}
+
+func botJitterHash(state *GameState, bot *PlayerState, scope string) uint64 {
+	h := fnv.New64a()
+	if state != nil {
+		writeInt64Hash(h, state.GameID)
+		writeInt64Hash(h, int64(state.CurrentRound))
+		writeInt64Hash(h, int64(state.GovernanceRound))
+		writeHashString(h, string(state.Phase))
+		writeHashString(h, state.MoleSabotage)
+		writeHashStringList(h, state.MoleTargets)
+		writeHashStringList(h, state.AcceptedOrder)
+		writeHashStringList(h, currentMajorOptions(state))
+		for _, player := range activePlayers(state) {
+			writeInt64Hash(h, player.UserID)
+			writeInt64Hash(h, int64(player.ShareBPS))
+			writeInt64Hash(h, int64(effectiveAuthorityBPS(player)))
+			writeHashString(h, player.Role)
+		}
+		for _, userID := range state.PlayerOrder {
+			if vote, ok := state.CurrentVotes[userID]; ok {
+				writeInt64Hash(h, userID)
+				if vote.Abstain {
+					writeHashString(h, "abstain")
+				} else if vote.Decision != nil {
+					writeHashString(h, *vote.Decision)
+				}
+			}
+		}
+		for _, proposalID := range state.GovernanceProposalOrder {
+			proposal := state.GovernanceProposals[proposalID]
+			if proposal == nil {
+				continue
+			}
+			writeInt64Hash(h, int64(proposal.ID))
+			writeInt64Hash(h, proposal.ProposerUserID)
+			writeHashString(h, string(proposal.ProposalType))
+			writeInt64Hash(h, proposal.FromUserID)
+			writeInt64Hash(h, proposal.ToUserID)
+			writeInt64Hash(h, proposal.TargetUserID)
+			writeInt64Hash(h, int64(proposal.ShareBPS))
+		}
+		for _, userID := range state.PlayerOrder {
+			if vote, ok := state.GovernanceVotes[userID]; ok {
+				writeInt64Hash(h, userID)
+				if vote.Abstain {
+					writeHashString(h, "abstain")
+				} else if vote.ProposalID != nil {
+					writeInt64Hash(h, int64(*vote.ProposalID))
+				}
+			}
+		}
+	}
+	if bot != nil {
+		writeInt64Hash(h, bot.UserID)
+		writeHashString(h, bot.Role)
+	}
+	writeHashString(h, scope)
+	return h.Sum64()
+}
+
+func writeHashString(h interface{ Write([]byte) (int, error) }, value string) {
+	_, _ = h.Write([]byte(value))
+	_, _ = h.Write([]byte{0})
+}
+
+func writeHashStringList(h interface{ Write([]byte) (int, error) }, values []string) {
+	for _, value := range values {
+		writeHashString(h, value)
+	}
+	_, _ = h.Write([]byte{1})
 }

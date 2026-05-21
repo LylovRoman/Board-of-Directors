@@ -3,6 +3,7 @@ import type {
   GamePhase,
   GameStatus,
   MemorandumType,
+  MemorandumVariant,
   PublicChatMessage,
   PublicGameState,
   PublicGovernanceProposal,
@@ -113,10 +114,11 @@ export function memorandumTitle(type?: MemorandumType): string {
   return type === "risk" ? "Учитываю риски" : "Вижу возможности";
 }
 
-export function memorandumRule(type?: MemorandumType): string {
+export function memorandumRule(type?: MemorandumType, variant: MemorandumVariant = "standard"): string {
+  const subject = variant === "advanced" ? "паре" : "тройке";
   return type === "risk"
-      ? "В этой тройке по крайней мере одно решение является целью крота."
-      : "В этой тройке по крайней мере одно решение не является целью крота.";
+      ? `В этой ${subject} по крайней мере одно решение является целью крота.`
+      : `В этой ${subject} по крайней мере одно решение не является целью крота.`;
 }
 
 export function percentToBps(value: string): number {

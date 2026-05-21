@@ -124,11 +124,11 @@ export function FinishScreen(props: {
           <section className="final-panel">
             <p className="eyebrow">раскрытие</p>
             <p>Крот: {playerStats.find((stat) => stat.user_id === summary?.mole_user_id)?.name ?? "неизвестно"}</p>
-            {complianceUserId ? <p>Комплаенс: {complianceName || "неизвестно"}</p> : null}
             <p style={{ whiteSpace: 'pre-line' }}>
               Цели: {(summary?.mole_targets ?? []).map(decisionLabel).join("\n") || "нет данных"}
             </p>
             <p>Диверсия: {summary?.mole_sabotage ? decisionLabel(summary.mole_sabotage) : "нет данных"}</p>
+            {complianceUserId ? <p>Комплаенс: {complianceName || "неизвестно"}</p> : null}
           </section>
           {myRoundDecisions.length ? (
               <section className="final-panel">

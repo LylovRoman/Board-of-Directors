@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -140,6 +141,11 @@ func (e *Engine) chooseBotGovernanceVoteByPolicy(state *GameState, bot *PlayerSt
 }
 
 func (e *Engine) botPolicyRollouts() int {
+	if e.usesDeterministicBotJitter() {
+		// Bot-only balance runs use deterministic fast scoring so the same
+		// seed produces the same games across worker counts and repeated runs.
+		return 0
+	}
 	if e.botSimulationRollouts > 0 {
 		return e.botSimulationRollouts
 	}
@@ -167,11 +173,25 @@ func (e *Engine) botBelief(state *GameState, bot *PlayerState) BotBelief {
 	}
 
 	memorandums := e.botKnownMemorandums(state, bot)
+	cacheKey := botKnowledgeCacheKey(state, bot, memorandums, "belief", false)
+	if cacheKey != "" && e.botBeliefCache != nil {
+		if cached, ok := e.botBeliefCache[cacheKey]; ok {
+			return cached
+		}
+	}
 	worlds := enumerateBotBeliefWorlds(state, memorandums, true)
 	if len(worlds) == 0 {
 		worlds = enumerateBotBeliefWorlds(state, memorandums, false)
 	}
-	return BotBelief{Worlds: worlds}
+	sortBotObjectiveWorlds(worlds)
+	belief := BotBelief{Worlds: worlds}
+	if cacheKey != "" {
+		if e.botBeliefCache == nil {
+			e.botBeliefCache = map[string]BotBelief{}
+		}
+		e.botBeliefCache[cacheKey] = belief
+	}
+	return belief
 }
 
 func enumerateBotBeliefWorlds(state *GameState, memorandums []MemorandumState, useShowcaseConstraint bool) []BotObjectiveWorld {
@@ -233,6 +253,17 @@ func enumerateBotBeliefWorlds(state *GameState, memorandums []MemorandumState, u
 	return worlds
 }
 
+func sortBotObjectiveWorlds(worlds []BotObjectiveWorld) {
+	sort.Slice(worlds, func(i, j int) bool {
+		leftTargets := strings.Join(worlds[i].Targets, "")
+		rightTargets := strings.Join(worlds[j].Targets, "")
+		if leftTargets != rightTargets {
+			return leftTargets < rightTargets
+		}
+		return worlds[i].Sabotage < worlds[j].Sabotage
+	})
+}
+
 func (belief BotBelief) Sample(rng *rand.Rand) BotObjectiveWorld {
 	if len(belief.Worlds) == 0 {
 		return BotObjectiveWorld{}
@@ -250,6 +281,16 @@ func (belief BotBelief) Sample(rng *rand.Rand) BotObjectiveWorld {
 		}
 	}
 	world := belief.Worlds[len(belief.Worlds)-1]
+	world.Targets = append([]string(nil), world.Targets...)
+	return world
+}
+
+func (belief BotBelief) DeterministicSample(seed int64) BotObjectiveWorld {
+	if len(belief.Worlds) == 0 {
+		return BotObjectiveWorld{}
+	}
+	index := int(uint64(seed) % uint64(len(belief.Worlds)))
+	world := belief.Worlds[index]
 	world.Targets = append([]string(nil), world.Targets...)
 	return world
 }
@@ -350,6 +391,9 @@ func (e *Engine) monteCarloMajorDecisionScore(state *GameState, bot *PlayerState
 	for i := 0; i < rollouts; i++ {
 		rng := rand.New(rand.NewSource(botPolicySeed(state, bot.UserID, "major:"+decision, i)))
 		world := ctx.Belief.Sample(rng)
+		if e.usesDeterministicBotJitter() {
+			world = ctx.Belief.DeterministicSample(botPolicySeed(state, bot.UserID, "major:"+decision, i))
+		}
 		projected := cloneState(state)
 		applyBeliefWorld(projected, world)
 		projected.CurrentVotes[bot.UserID] = VoteState{UserID: bot.UserID, Decision: stringPtr(decision)}
@@ -369,6 +413,9 @@ func (e *Engine) monteCarloGovernanceVoteScore(state *GameState, bot *PlayerStat
 	for i := 0; i < rollouts; i++ {
 		rng := rand.New(rand.NewSource(botPolicySeed(state, bot.UserID, "govvote", i) + int64(proposalID)))
 		world := ctx.Belief.Sample(rng)
+		if e.usesDeterministicBotJitter() {
+			world = ctx.Belief.DeterministicSample(botPolicySeed(state, bot.UserID, "govvote:"+strconv.Itoa(proposalID), i))
+		}
 		projected := cloneState(state)
 		applyBeliefWorld(projected, world)
 		var proposalIDPtr *int
@@ -387,10 +434,15 @@ func (e *Engine) monteCarloGovernanceVoteScore(state *GameState, bot *PlayerStat
 
 func (e *Engine) rolloutEngine(rng *rand.Rand) *Engine {
 	return &Engine{
-		rng:                          rng,
-		botSimulationMemorandumCount: e.botSimulationMemorandumCount,
-		botSimulationMemorandumType:  e.botSimulationMemorandumType,
-		botSimulationMemorandums:     e.botSimulationMemorandums,
+		rng:                            rng,
+		botSimulationMemorandumCount:   e.botSimulationMemorandumCount,
+		botSimulationMemorandumType:    e.botSimulationMemorandumType,
+		botSimulationMemorandumVariant: e.botSimulationMemorandumVariant,
+		botSimulationMemorandums:       e.botSimulationMemorandums,
+		botSimulationRollouts:          e.botSimulationRollouts,
+		botObjectiveInferenceCache:     e.botObjectiveInferenceCache,
+		botBeliefCache:                 e.botBeliefCache,
+		botSuspicionProfileCache:       e.botSuspicionProfileCache,
 	}
 }
 
@@ -436,7 +488,12 @@ func (e *Engine) rolloutMajorDecision(state *GameState, perspective *PlayerState
 			}
 			score -= e.currentVoteSuspicionPressure(state, perspective, decision) / 5
 		}
-		score += rng.Intn(23)
+		if e.usesDeterministicBotJitter() {
+			scope := "rollout-major:" + strconv.FormatInt(perspective.UserID, 10) + ":" + decision
+			score += e.botRandInt(state, actor, scope, 23)
+		} else {
+			score += rng.Intn(23)
+		}
 		if score > bestScore {
 			bestScore = score
 			best = decision

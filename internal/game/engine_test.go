@@ -1729,6 +1729,10 @@ func TestComplianceDoesNotReceiveStartingMemorandumButPreferenceStays(t *testing
 	if countMemorandumEventsFor(events, 1) != 0 || countMemorandumEventsFor(events, 2) != 1 {
 		t.Fatalf("expected only ordinary director to get starting memorandum, got %+v", events)
 	}
+	directorMemo, ok := memorandumPayloadFor(events, 2)
+	if !ok || normalizeMemorandumVariant(directorMemo.Variant) != MemorandumVariantStandard || len(directorMemo.Decisions) != 3 {
+		t.Fatalf("expected ordinary director to get standard starting memorandum, got %+v", directorMemo)
+	}
 
 	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
 	if err != nil {
@@ -1751,6 +1755,9 @@ func TestComplianceDoesNotReceiveStartingMemorandumButPreferenceStays(t *testing
 	}
 	if directorView.Memorandum == nil {
 		t.Fatalf("expected ordinary director memorandum")
+	}
+	if directorView.Memorandum.Variant != MemorandumVariantStandard || len(directorView.Memorandum.Decisions) != 3 {
+		t.Fatalf("expected ordinary director public memorandum to stay standard, got %+v", directorView.Memorandum)
 	}
 }
 
@@ -1794,11 +1801,11 @@ func TestComplianceReceivesLateMemorandumAfterSabotage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected late compliance memorandum event, got %+v", events)
 	}
-	if memo.Type != MemorandumTypeRisk || len(memo.Decisions) != 3 || stringSet(memo.Decisions)["D"] {
-		t.Fatalf("expected risk memorandum from remaining decisions without sabotage, got %+v", memo)
+	if memo.Type != MemorandumTypeRisk || normalizeMemorandumVariant(memo.Variant) != MemorandumVariantAdvanced || len(memo.Decisions) != 2 || stringSet(memo.Decisions)["D"] {
+		t.Fatalf("expected advanced risk pair from remaining decisions without sabotage, got %+v", memo)
 	}
 	if !stringSet(memo.Decisions)["A"] && !stringSet(memo.Decisions)["B"] && !stringSet(memo.Decisions)["C"] {
-		t.Fatalf("expected risk memorandum to include a remaining Podkop, got %+v", memo)
+		t.Fatalf("expected advanced risk pair to include a remaining Podkop, got %+v", memo)
 	}
 
 	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
@@ -1813,8 +1820,49 @@ func TestComplianceReceivesLateMemorandumAfterSabotage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectStateForViewer compliance: %v", err)
 	}
-	if complianceView.Memorandum == nil || complianceView.Memorandum.Type != MemorandumTypeRisk {
+	if complianceView.Memorandum == nil || complianceView.Memorandum.Type != MemorandumTypeRisk || complianceView.Memorandum.Variant != MemorandumVariantAdvanced || len(complianceView.Memorandum.Decisions) != 2 {
 		t.Fatalf("expected compliance to see late memorandum, got %+v", complianceView.Memorandum)
+	}
+}
+
+func TestAdvancedMemorandumGenerationUsesPairs(t *testing.T) {
+	engine := &Engine{rng: rand.New(rand.NewSource(7))}
+	targets := []string{"A", "B", "C"}
+	sabotage := "D"
+
+	standard := engine.randomMemorandumDecisionsForVariant(MemorandumTypeRisk, MemorandumVariantStandard, targets, sabotage)
+	if len(standard) != 3 || !memorandumMatches(standard, moleObjectiveSet(targets, sabotage), MemorandumTypeRisk) {
+		t.Fatalf("expected standard risk trio to match objectives, got %+v", standard)
+	}
+
+	risk := engine.randomMemorandumDecisionsForVariant(MemorandumTypeRisk, MemorandumVariantAdvanced, targets, sabotage)
+	if len(risk) != 2 || !memorandumMatches(risk, moleObjectiveSet(targets, sabotage), MemorandumTypeRisk) {
+		t.Fatalf("expected advanced risk pair to include a Mole target, got %+v", risk)
+	}
+
+	opportunity := engine.randomMemorandumDecisionsForVariant(MemorandumTypeOpportunity, MemorandumVariantAdvanced, targets, sabotage)
+	if len(opportunity) != 2 || !memorandumMatches(opportunity, moleObjectiveSet(targets, sabotage), MemorandumTypeOpportunity) {
+		t.Fatalf("expected advanced opportunity pair to include a clean decision, got %+v", opportunity)
+	}
+}
+
+func TestLegacyMemorandumEventsDefaultToStandardVariant(t *testing.T) {
+	state, err := BuildState(1, "Mafia", append(complianceBaseEvents(), models.Event{
+		EventType:  models.EventMemorandumAssigned,
+		EventValue: `{"user_id":2,"type":"opportunity","decisions":["B","C","E"]}`,
+	}))
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	if state.Memorandums[2].Variant != MemorandumVariantStandard {
+		t.Fatalf("expected old memorandum event to restore as standard, got %+v", state.Memorandums[2])
+	}
+	publicState, err := ProjectStateForViewer(state, 2)
+	if err != nil {
+		t.Fatalf("ProjectStateForViewer: %v", err)
+	}
+	if publicState.Memorandum == nil || publicState.Memorandum.Variant != MemorandumVariantStandard {
+		t.Fatalf("expected old public memorandum to expose standard variant, got %+v", publicState.Memorandum)
 	}
 }
 
