@@ -140,6 +140,7 @@ export default function PlayerApp() {
   const canSelectMoleObjectives = availableActions.includes("select_mole_objectives");
   const canChooseMemorandum = availableActions.includes("choose_memorandum");
   const canPlaceComplianceWatch = availableActions.includes("place_compliance_watch");
+  const canBreakCase = availableActions.includes("break_case");
   const canSubmitGovernanceProposal = availableActions.includes("submit_governance_proposal");
   const canSkipGovernanceProposal = availableActions.includes("skip_governance_proposal");
   const canJoin = availableActions.includes("join_game");
@@ -148,6 +149,7 @@ export default function PlayerApp() {
   const canKick = availableActions.includes("kick_player");
   const canBan = availableActions.includes("ban_player");
   const canAddBot = availableActions.includes("add_bot");
+  const canUpdateGameSettings = availableActions.includes("update_game_settings");
   const canSendChatMessage = availableActions.includes("send_chat_message");
   const lobbyStats = useMemo(() => {
     const active = gameCards.filter(({ game }) => game.status === "started").length;
@@ -1146,6 +1148,7 @@ export default function PlayerApp() {
                 canSelectMoleObjectives={canSelectMoleObjectives}
                 canChooseMemorandum={canChooseMemorandum}
                 canPlaceComplianceWatch={canPlaceComplianceWatch}
+                canBreakCase={canBreakCase}
                 canSubmitGovernanceProposal={canSubmitGovernanceProposal}
                 canSkipGovernanceProposal={canSkipGovernanceProposal}
                 canSendChatMessage={canSendChatMessage}
@@ -1153,6 +1156,7 @@ export default function PlayerApp() {
                 onSelectMoleObjectives={(payload) => void handleAction("select_mole_objectives", payload)}
                 onChooseMemorandum={(type) => void handleAction("choose_memorandum", { type })}
                 onPlaceComplianceWatch={(targetUserId) => void handleAction("place_compliance_watch", { target_user_id: targetUserId })}
+                onBreakCase={(targetUserId) => void handleAction("break_case", { target_user_id: targetUserId })}
                 onVote={(decision) => void handleAction("vote", { decision, abstain: false })}
                 onVoteProposal={(proposalId) => void handleAction("vote", { proposal_id: proposalId, abstain: false })}
                 onAbstain={() => void handleAction("vote", { abstain: true })}
@@ -1175,6 +1179,8 @@ export default function PlayerApp() {
                 canKick={canKick}
                 canBan={canBan}
                 canAddBot={canAddBot}
+                canUpdateGameSettings={canUpdateGameSettings}
+                caseBreakdownEnabled={gameState?.case_breakdown_enabled ?? true}
                 hasMe={hasMe}
                 chatMessages={chatMessages}
                 canSendChatMessage={canSendChatMessage}
@@ -1184,6 +1190,7 @@ export default function PlayerApp() {
                 onLeave={() => void handleLeaveGame()}
                 onStart={() => void handleAction("start_game")}
                 onAddBot={() => void handleAction("add_bot")}
+                onUpdateGameSettings={(caseBreakdownEnabled) => void handleAction("update_game_settings", { case_breakdown_enabled: caseBreakdownEnabled })}
                 onKick={(userId) => void handleAction("kick_player", { user_id: userId })}
                 onBan={(userId) => void handleAction("ban_player", { user_id: userId })}
                 onSendChatMessage={(message) => handleAction("send_chat_message", { message })}

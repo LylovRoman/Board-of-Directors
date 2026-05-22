@@ -26,11 +26,12 @@ type Engine struct {
 	mu    sync.Mutex
 	rngMu sync.Mutex
 
-	botSimulationMemorandumCount   int
-	botSimulationMemorandumType    BotSimulationMemorandumType
-	botSimulationMemorandumVariant BotSimulationMemorandumVariant
-	botSimulationMemorandums       map[int64][]MemorandumState
-	botSimulationRollouts          int
+	botSimulationMemorandumCount      int
+	botSimulationMemorandumType       BotSimulationMemorandumType
+	botSimulationMemorandumVariant    BotSimulationMemorandumVariant
+	botSimulationCaseBreakdownEnabled bool
+	botSimulationMemorandums          map[int64][]MemorandumState
+	botSimulationRollouts             int
 
 	botObjectiveInferenceCache map[string]botObjectiveInferenceCacheEntry
 	botBeliefCache             map[string]BotBelief
@@ -293,6 +294,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleSendChatMessage(state, actor, action.Payload)
 	case ActionReactChatMessage:
 		return e.handleReactChatMessage(state, actor, action.Payload)
+	case ActionUpdateGameSettings:
+		return e.handleUpdateGameSettings(state, actor, action.Payload)
 	case ActionStartGame:
 		return e.handleStartGame(state, actor)
 	case ActionChooseMemorandum:
@@ -301,6 +304,8 @@ func (e *Engine) decideEvents(state *GameState, actor *models.User, action Actio
 		return e.handleSelectMoleObjectives(state, actor, action.Payload)
 	case ActionPlaceComplianceWatch:
 		return e.handlePlaceComplianceWatch(state, actor, action.Payload)
+	case ActionBreakCase:
+		return e.handleBreakCase(state, actor, action.Payload)
 	case ActionVote:
 		return e.handleVote(state, actor, action.Payload)
 	case ActionSubmitGovernanceProposal:

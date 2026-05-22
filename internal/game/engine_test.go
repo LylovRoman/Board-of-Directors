@@ -106,6 +106,39 @@ func TestCreateGameGeneratesCompanyScenarioAndProfilePosition(t *testing.T) {
 	}
 }
 
+func TestHostCanToggleCaseBreakdownInLobby(t *testing.T) {
+	store := &stubStore{
+		users: map[int64]models.User{
+			1: {ID: 1, Name: "Alice"},
+			2: {ID: 2, Name: "Bob"},
+		},
+		games: map[int64]models.Game{1: {ID: 1, Title: "Mafia"}},
+		events: map[int64][]models.Event{1: {
+			{EventType: models.EventGameCreated, EventValue: `{"host_user_id":1,"title":"Mafia"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":1,"name":"Alice"}`},
+			{EventType: models.EventPlayerJoined, EventValue: `{"user_id":2,"name":"Bob"}`},
+		}},
+	}
+	engine := NewEngine(store)
+
+	if _, _, err := engine.HandleAction(context.Background(), 1, Action{UserID: 2, Type: ActionUpdateGameSettings, Payload: []byte(`{"case_breakdown_enabled":false}`)}); err == nil || !strings.Contains(err.Error(), "only host") {
+		t.Fatalf("expected non-host update to fail, got %v", err)
+	}
+	state, events, err := engine.HandleAction(context.Background(), 1, Action{UserID: 1, Type: ActionUpdateGameSettings, Payload: []byte(`{"case_breakdown_enabled":false}`)})
+	if err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+	if len(events) != 1 || events[0].EventType != models.EventGameSettingsUpdated {
+		t.Fatalf("expected settings event, got %+v", events)
+	}
+	if state.CaseBreakdownEnabled {
+		t.Fatalf("expected public state setting to be disabled")
+	}
+	if !actionListContains(state.AvailableActions, ActionUpdateGameSettings) {
+		t.Fatalf("expected host to see update settings action, got %v", state.AvailableActions)
+	}
+}
+
 func TestStartGameCanSelectMoleAsCEO(t *testing.T) {
 	seenMoleCEO := false
 	for seed := int64(1); seed <= 128; seed++ {
@@ -1547,7 +1580,7 @@ func TestSabotageAcceptedRevealsScoreToDirectors(t *testing.T) {
 	}
 }
 
-func TestComplianceCatchWinsBeforeMoleScoreVictory(t *testing.T) {
+func TestComplianceCatchStartsCaseBreakdownBeforeMoleScoreVictory(t *testing.T) {
 	store := complianceTestStore([]models.Event{
 		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
 		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
@@ -1569,30 +1602,163 @@ func TestComplianceCatchWinsBeforeMoleScoreVictory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mole sabotage vote: %v", err)
 	}
-	if !eventsContainType(events, models.EventMoleExposedByCompliance) {
-		t.Fatalf("expected compliance exposure event, got %+v", events)
+	if !eventsContainType(events, models.EventMoleCaseBreakdownStarted) {
+		t.Fatalf("expected case breakdown event, got %+v", events)
 	}
-	if !state.IsFinished || state.Winner != "players" || state.WinnerReason != WinnerReasonMoleCaughtByCompliance {
-		t.Fatalf("expected immediate players win by compliance, got winner=%q reason=%q finished=%v", state.Winner, state.WinnerReason, state.IsFinished)
+	if eventsContainType(events, models.EventMoleExposedByCompliance) || eventsContainType(events, models.EventGameFinished) {
+		t.Fatalf("did not expect immediate exposure or finish, got %+v", events)
+	}
+	if state.IsFinished || state.Phase != GamePhaseMoleCaseBreakdown || state.CaseBreakdown == nil {
+		t.Fatalf("expected pending case breakdown, got phase=%s finished=%v case=%+v", state.Phase, state.IsFinished, state.CaseBreakdown)
 	}
 	if len(state.AcceptedDecisions) == 0 || state.AcceptedDecisions[len(state.AcceptedDecisions)-1] != "D" {
 		t.Fatalf("expected accepted sabotage to remain in history, got %+v", state.AcceptedDecisions)
 	}
-	if state.FinalSummary == nil || state.FinalSummary.WinnerReason != WinnerReasonMoleCaughtByCompliance || state.FinalSummary.ComplianceUserID != 1 || state.FinalSummary.ComplianceCatch == nil {
-		t.Fatalf("expected final summary compliance fields, got %+v", state.FinalSummary)
+	if state.CaseBreakdown.RoundNumber != 2 || state.CaseBreakdown.AcceptedDecision != "D" {
+		t.Fatalf("expected safe public case breakdown fields, got %+v", state.CaseBreakdown)
 	}
-	if state.MoleVictoryPoints == nil || *state.MoleVictoryPoints < 3 {
-		t.Fatalf("expected mole score consequence to be visible, got %+v", state.MoleVictoryPoints)
+	if state.MoleVictoryPoints == nil || *state.MoleVictoryPoints != 3 {
+		t.Fatalf("expected accepted sabotage score to be visible to mole, got %+v", state.MoleVictoryPoints)
 	}
-	var complianceStat *PublicFinalPlayerStats
-	for i := range state.FinalSummary.PlayerStats {
-		if state.FinalSummary.PlayerStats[i].UserID == 1 {
-			complianceStat = &state.FinalSummary.PlayerStats[i]
-			break
-		}
+	if !actionListContains(state.AvailableActions, ActionBreakCase) {
+		t.Fatalf("expected mole to receive break_case action, got %v", state.AvailableActions)
 	}
-	if complianceStat == nil || !xpBreakdownContains(complianceStat.XPBreakdown, "Вычислил крота", 25) {
-		t.Fatalf("expected compliance catch XP bonus, got %+v", complianceStat)
+	complianceView, err := ProjectStateForViewer(mustBuildStateFromStore(t, store), 1)
+	if err != nil {
+		t.Fatalf("project compliance: %v", err)
+	}
+	if actionListContains(complianceView.AvailableActions, ActionBreakCase) {
+		t.Fatalf("did not expect compliance to receive break_case action, got %v", complianceView.AvailableActions)
+	}
+}
+
+func TestAcceptedSabotageWithoutMoleVoteScoresOneAndDoesNotTriggerCatch(t *testing.T) {
+	store := complianceTestStore([]models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":1,"compliance_user_id":1,"target_user_id":3}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"D"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"D"}`},
+	})
+
+	state, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionVote,
+		Payload: []byte(`{"decision":"E"}`),
+	})
+	if err != nil {
+		t.Fatalf("mole clean vote: %v", err)
+	}
+	if eventsContainType(events, models.EventMoleCaseBreakdownStarted) || eventsContainType(events, models.EventMoleExposedByCompliance) {
+		t.Fatalf("did not expect compliance catch when mole did not support sabotage, got %+v", events)
+	}
+	if state.Phase != GamePhaseGovernanceProposal {
+		t.Fatalf("expected governance after accepted sabotage without catch, got %s", state.Phase)
+	}
+	if state.MoleVictoryPoints == nil || *state.MoleVictoryPoints != 1 {
+		t.Fatalf("expected sabotage without mole vote to score 1, got %+v", state.MoleVictoryPoints)
+	}
+}
+
+func TestComplianceCatchFinishesImmediatelyWhenCaseBreakdownDisabled(t *testing.T) {
+	store := complianceTestStore([]models.Event{
+		{EventType: models.EventGameSettingsUpdated, EventValue: `{"case_breakdown_enabled":false}`},
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":1,"compliance_user_id":1,"target_user_id":3}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"D"}`},
+		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"D"}`},
+	})
+
+	state, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionVote,
+		Payload: []byte(`{"decision":"D"}`),
+	})
+	if err != nil {
+		t.Fatalf("mole sabotage vote: %v", err)
+	}
+	if eventsContainType(events, models.EventMoleCaseBreakdownStarted) {
+		t.Fatalf("did not expect case breakdown event when disabled, got %+v", events)
+	}
+	if !eventsContainType(events, models.EventMoleExposedByCompliance) || !eventsContainType(events, models.EventGameFinished) {
+		t.Fatalf("expected immediate compliance finish, got %+v", events)
+	}
+	if !state.IsFinished || state.Winner != "players" || state.WinnerReason != WinnerReasonMoleCaughtByCompliance {
+		t.Fatalf("expected players win by compliance, got winner=%q reason=%q finished=%v", state.Winner, state.WinnerReason, state.IsFinished)
+	}
+}
+
+func TestBreakCaseCorrectGuessCanWinWithoutComplianceCatch(t *testing.T) {
+	store := complianceTestStore(caseBreakdownStartedEvents(true))
+
+	state, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionBreakCase,
+		Payload: []byte(`{"target_user_id":1}`),
+	})
+	if err != nil {
+		t.Fatalf("break case: %v", err)
+	}
+	if !eventsContainType(events, models.EventMoleCaseBreakdownSucceeded) || eventsContainType(events, models.EventMoleExposedByCompliance) {
+		t.Fatalf("expected successful breakdown without exposure, got %+v", events)
+	}
+	if !state.IsFinished || state.Winner != "mole" || state.WinnerReason != WinnerReasonMoleTargetsCollected {
+		t.Fatalf("expected mole victory after successful breakdown, got winner=%q reason=%q finished=%v", state.Winner, state.WinnerReason, state.IsFinished)
+	}
+	if state.CaseBreakdown != nil {
+		t.Fatalf("expected case breakdown to be cleared, got %+v", state.CaseBreakdown)
+	}
+	if state.FinalSummary == nil || state.FinalSummary.ComplianceCatch != nil {
+		t.Fatalf("successful breakdown must not publish a compliance catch, got %+v", state.FinalSummary)
+	}
+}
+
+func TestBreakCaseWrongGuessFinishesPlayersByComplianceCatch(t *testing.T) {
+	store := complianceTestStore(caseBreakdownStartedEvents(false))
+
+	state, events, err := NewEngine(store).HandleAction(context.Background(), 1, Action{
+		UserID:  3,
+		Type:    ActionBreakCase,
+		Payload: []byte(`{"target_user_id":2}`),
+	})
+	if err != nil {
+		t.Fatalf("break case wrong target: %v", err)
+	}
+	if !eventsContainType(events, models.EventMoleCaseBreakdownFailed) || !eventsContainType(events, models.EventMoleExposedByCompliance) {
+		t.Fatalf("expected failed breakdown and compliance exposure, got %+v", events)
+	}
+	if !state.IsFinished || state.Winner != "players" || state.WinnerReason != WinnerReasonMoleCaughtByCompliance {
+		t.Fatalf("expected players win by compliance, got winner=%q reason=%q finished=%v", state.Winner, state.WinnerReason, state.IsFinished)
+	}
+	if state.FinalSummary == nil || state.FinalSummary.ComplianceCatch == nil || state.FinalSummary.ComplianceCatch.ComplianceUserID != 1 {
+		t.Fatalf("expected final compliance catch after wrong guess, got %+v", state.FinalSummary)
+	}
+}
+
+func TestCaseBreakdownTimeoutReplacesMoleAndBotGuesses(t *testing.T) {
+	events := caseBreakdownStartedEvents(false)
+	events[len(events)-1].CreatedAt = time.Now().UTC().Add(-PhaseDuration - time.Second)
+	store := complianceTestStore(events)
+	engine := NewEngine(store)
+
+	advanced, err := engine.AdvanceGame(context.Background(), 1, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("AdvanceGame: %v", err)
+	}
+	if !advanced {
+		t.Fatalf("expected timeout automation to advance the game")
+	}
+	state := mustBuildStateFromStore(t, store)
+	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListEventsByGameID: %v", err)
+	}
+	if !eventsContainType(allEvents, models.EventPlayerReplacedByBot) || !eventsContainType(allEvents, models.EventMoleCaseBreakdownSucceeded) {
+		t.Fatalf("expected replacement and bot case breakdown, got %+v", allEvents)
+	}
+	if state.MoleUserID >= 0 || state.CaseBreakdownSuccesses != 1 || state.Phase != GamePhaseGovernanceProposal {
+		t.Fatalf("expected bot mole to resolve case breakdown and continue, got mole=%d successes=%d phase=%s", state.MoleUserID, state.CaseBreakdownSuccesses, state.Phase)
 	}
 }
 
@@ -1713,7 +1879,7 @@ func TestComplianceWatchValidationAndPrivacy(t *testing.T) {
 	}
 }
 
-func TestComplianceDoesNotReceiveStartingMemorandumButPreferenceStays(t *testing.T) {
+func TestComplianceReceivesStartingAdvancedMemorandum(t *testing.T) {
 	store := complianceTestStore([]models.Event{
 		{EventType: models.EventMemorandumPreferenceSelected, EventValue: `{"user_id":1,"type":"risk"}`},
 	})
@@ -1726,8 +1892,12 @@ func TestComplianceDoesNotReceiveStartingMemorandumButPreferenceStays(t *testing
 	if err != nil {
 		t.Fatalf("select objectives: %v", err)
 	}
-	if countMemorandumEventsFor(events, 1) != 0 || countMemorandumEventsFor(events, 2) != 1 {
-		t.Fatalf("expected only ordinary director to get starting memorandum, got %+v", events)
+	if countMemorandumEventsFor(events, 1) != 1 || countMemorandumEventsFor(events, 2) != 1 {
+		t.Fatalf("expected compliance and ordinary director to get starting memorandum, got %+v", events)
+	}
+	complianceMemo, ok := memorandumPayloadFor(events, 1)
+	if !ok || complianceMemo.Type != MemorandumTypeRisk || normalizeMemorandumVariant(complianceMemo.Variant) != MemorandumVariantAdvanced || len(complianceMemo.Decisions) != 2 {
+		t.Fatalf("expected compliance to get advanced risk starting memorandum, got %+v", complianceMemo)
 	}
 	directorMemo, ok := memorandumPayloadFor(events, 2)
 	if !ok || normalizeMemorandumVariant(directorMemo.Variant) != MemorandumVariantStandard || len(directorMemo.Decisions) != 3 {
@@ -1746,8 +1916,8 @@ func TestComplianceDoesNotReceiveStartingMemorandumButPreferenceStays(t *testing
 	if err != nil {
 		t.Fatalf("ProjectStateForViewer compliance: %v", err)
 	}
-	if complianceView.MemorandumPreference != MemorandumTypeRisk || complianceView.Memorandum != nil {
-		t.Fatalf("expected compliance preference without starting memorandum, got preference=%q memorandum=%+v", complianceView.MemorandumPreference, complianceView.Memorandum)
+	if complianceView.MemorandumPreference != MemorandumTypeRisk || complianceView.Memorandum == nil || complianceView.Memorandum.Variant != MemorandumVariantAdvanced || len(complianceView.Memorandum.Decisions) != 2 {
+		t.Fatalf("expected compliance preference with advanced starting memorandum, got preference=%q memorandum=%+v", complianceView.MemorandumPreference, complianceView.Memorandum)
 	}
 	directorView, err := ProjectStateForViewer(internalState, 2)
 	if err != nil {
@@ -1776,10 +1946,11 @@ func TestCompliancePreferenceIsNotMandatoryForTimeout(t *testing.T) {
 	}
 }
 
-func TestComplianceReceivesLateMemorandumAfterSabotage(t *testing.T) {
+func TestComplianceDoesNotReceiveLateMemorandumAfterSabotage(t *testing.T) {
 	store := complianceTestStore([]models.Event{
 		{EventType: models.EventMemorandumPreferenceSelected, EventValue: `{"user_id":1,"type":"risk"}`},
 		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+		{EventType: models.EventMemorandumAssigned, EventValue: `{"user_id":1,"type":"risk","variant":"advanced","decisions":["A","D"]}`},
 		{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
 		{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":1,"compliance_user_id":1,"target_user_id":2}`},
 		{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"D"}`},
@@ -1797,15 +1968,8 @@ func TestComplianceReceivesLateMemorandumAfterSabotage(t *testing.T) {
 	if eventsContainType(events, models.EventGameFinished) {
 		t.Fatalf("did not expect sabotage alone to finish game, got %+v", events)
 	}
-	memo, ok := memorandumPayloadFor(events, 1)
-	if !ok {
-		t.Fatalf("expected late compliance memorandum event, got %+v", events)
-	}
-	if memo.Type != MemorandumTypeRisk || normalizeMemorandumVariant(memo.Variant) != MemorandumVariantAdvanced || len(memo.Decisions) != 2 || stringSet(memo.Decisions)["D"] {
-		t.Fatalf("expected advanced risk pair from remaining decisions without sabotage, got %+v", memo)
-	}
-	if !stringSet(memo.Decisions)["A"] && !stringSet(memo.Decisions)["B"] && !stringSet(memo.Decisions)["C"] {
-		t.Fatalf("expected advanced risk pair to include a remaining Podkop, got %+v", memo)
+	if memo, ok := memorandumPayloadFor(events, 1); ok {
+		t.Fatalf("did not expect late compliance memorandum event, got %+v", memo)
 	}
 
 	allEvents, err := store.ListEventsByGameID(context.Background(), 1)
@@ -1821,7 +1985,7 @@ func TestComplianceReceivesLateMemorandumAfterSabotage(t *testing.T) {
 		t.Fatalf("ProjectStateForViewer compliance: %v", err)
 	}
 	if complianceView.Memorandum == nil || complianceView.Memorandum.Type != MemorandumTypeRisk || complianceView.Memorandum.Variant != MemorandumVariantAdvanced || len(complianceView.Memorandum.Decisions) != 2 {
-		t.Fatalf("expected compliance to see late memorandum, got %+v", complianceView.Memorandum)
+		t.Fatalf("expected compliance to keep starting memorandum, got %+v", complianceView.Memorandum)
 	}
 }
 
@@ -2513,6 +2677,48 @@ func complianceTestStore(extra []models.Event) *stubStore {
 			1: append(complianceBaseEvents(), extra...),
 		},
 	}
+}
+
+func caseBreakdownStartedEvents(withPriorTarget bool) []models.Event {
+	events := []models.Event{
+		{EventType: models.EventMoleObjectivesSelected, EventValue: `{"targets":["A","B","C"],"sabotage":"D"}`},
+	}
+	if withPriorTarget {
+		events = append(events,
+			models.Event{EventType: models.EventVotingRoundStarted, EventValue: `{"round":1,"showcase_decisions":["A","B","D","E"]}`},
+			models.Event{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":1,"decision":"A"}`},
+			models.Event{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":2,"decision":"A"}`},
+			models.Event{EventType: models.EventVoteSubmitted, EventValue: `{"round":1,"user_id":3,"decision":"A"}`},
+			models.Event{EventType: models.EventDecisionAccepted, EventValue: `{"round":1,"decision":"A"}`},
+		)
+	}
+	round := 1
+	if withPriorTarget {
+		round = 2
+	}
+	events = append(events,
+		models.Event{EventType: models.EventVotingRoundStarted, EventValue: `{"round":` + strconv.Itoa(round) + `,"showcase_decisions":["A","B","D","E"]}`},
+		models.Event{EventType: models.EventComplianceWatchPlaced, EventValue: `{"round_number":` + strconv.Itoa(round) + `,"compliance_user_id":1,"target_user_id":3}`},
+		models.Event{EventType: models.EventVoteSubmitted, EventValue: `{"round":` + strconv.Itoa(round) + `,"user_id":1,"decision":"D"}`},
+		models.Event{EventType: models.EventVoteSubmitted, EventValue: `{"round":` + strconv.Itoa(round) + `,"user_id":2,"decision":"D"}`},
+		models.Event{EventType: models.EventVoteSubmitted, EventValue: `{"round":` + strconv.Itoa(round) + `,"user_id":3,"decision":"D"}`},
+		models.Event{EventType: models.EventDecisionAccepted, EventValue: `{"round":` + strconv.Itoa(round) + `,"decision":"D"}`},
+		models.Event{EventType: models.EventMoleCaseBreakdownStarted, EventValue: `{"round_number":` + strconv.Itoa(round) + `,"compliance_user_id":1,"mole_user_id":3,"accepted_decision":"D","reason":"direct_sabotage"}`},
+	)
+	return events
+}
+
+func mustBuildStateFromStore(t *testing.T, store *stubStore) *GameState {
+	t.Helper()
+	events, err := store.ListEventsByGameID(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListEventsByGameID: %v", err)
+	}
+	state, err := BuildState(1, "Mafia", events)
+	if err != nil {
+		t.Fatalf("BuildState: %v", err)
+	}
+	return state
 }
 
 func chatDetailsContain(message PublicChatMessage, expected string) bool {

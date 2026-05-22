@@ -51,6 +51,49 @@ export function ComplianceWatchPanel(props: {
   );
 }
 
+export function CaseBreakdownPhase(props: {
+  players: PublicPlayerState[];
+  currentUserId: number;
+  viewerRole?: PublicPlayerState["role"];
+  caseBreakdown: PublicGameState["case_breakdown"] | null;
+  canBreakCase: boolean;
+  isSubmitting: boolean;
+  onBreakCase: (targetUserId: number) => void;
+}) {
+  const candidates = props.players.filter((player) => player.user_id !== props.currentUserId);
+  const decision = props.caseBreakdown?.accepted_decision ?? "";
+
+  return (
+      <section className="compliance-watch-panel">
+        <div>
+          <p className="eyebrow">Развал дела</p>
+          <h2>{decision ? `Диверсия ${decisionTitle(decision)} под ударом` : "Комплаенс пытается закрыть дело"}</h2>
+          <p className="quiet-text">
+            {props.viewerRole === "mole"
+                ? "Назовите игрока, которого считаете Комплаенсом. Правильный выбор отменит поимку, и Диверсия останется принятым решением."
+                : "Крот пытается развалить дело. Если он угадает Комплаенса, поимка будет отменена."}
+          </p>
+        </div>
+        {props.viewerRole === "mole" ? (
+            <div className="watch-player-grid">
+              {candidates.map((player) => (
+                  <button
+                      key={player.user_id}
+                      type="button"
+                      className="watch-player-option"
+                      onClick={() => props.onBreakCase(player.user_id)}
+                      disabled={!props.canBreakCase || props.isSubmitting}
+                  >
+                    <UserAvatar name={player.name} avatarUrl={player.avatar_url} size="small" />
+                    <span>{player.name}</span>
+                  </button>
+              ))}
+            </div>
+        ) : null}
+      </section>
+  );
+}
+
 export function MoleObjectiveSelectionPhase(props: {
   isMole: boolean;
   viewerRole?: PublicPlayerState["role"];
@@ -99,7 +142,7 @@ export function MoleObjectiveSelectionPhase(props: {
           <p className="eyebrow">подготовка</p>
           <p className="quiet-text">
             {isCompliance
-                ? "Выберите предпочтительный тип подсказки. Комплаенс не получает стартовый меморандум: этот выбор будет использован только для позднего меморандума после принятой Диверсии, если партия продолжится."
+                ? "Выберите тип стартовой усиленной подсказки. Комплаенс получит меморандум из двух решений после выбора целей Крота."
                 : "Выберите тип стартового меморандума. Конкретная тройка решений будет сгенерирована случайно после того, как Крот подтвердит цели."}
           </p>
           {props.memorandumPreference ? (

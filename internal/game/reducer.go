@@ -16,6 +16,7 @@ func BuildState(gameID int64, title string, events []models.Event) (*GameState, 
 		CompanyName:           title,
 		CompanySituation:      "Совет директоров собрался на внеочередное заседание.",
 		Status:                GameStatusLobby,
+		CaseBreakdownEnabled:  true,
 		Players:               map[int64]*PlayerState{},
 		CurrentVotes:          map[int64]VoteState{},
 		ComplianceWatches:     map[int]ComplianceWatchState{},
@@ -58,6 +59,12 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		if state.CompanySituation == "" {
 			state.CompanySituation = "Совет директоров собрался на внеочередное заседание."
 		}
+	case models.EventGameSettingsUpdated:
+		var payload GameSettingsUpdatedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.CaseBreakdownEnabled = payload.CaseBreakdownEnabled
 	case models.EventPlayerJoined:
 		var payload PlayerJoinedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -156,6 +163,12 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		}
 		if state.MoleUserID == payload.UserID || payload.Role == RoleMole {
 			state.MoleUserID = payload.BotUserID
+			if vote, ok := state.CurrentVotes[payload.UserID]; ok {
+				vote.UserID = payload.BotUserID
+				state.CurrentVotes[payload.BotUserID] = vote
+				delete(state.CurrentVotes, payload.UserID)
+			}
+			replaceDecisionReportVoter(state.RoundReports, payload.UserID, payload.BotUserID, payload.Name)
 		}
 		if state.ComplianceUserID == payload.UserID || payload.Role == RoleCompliance {
 			state.ComplianceUserID = payload.BotUserID
@@ -167,6 +180,14 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			}
 			if state.ComplianceCatch != nil && state.ComplianceCatch.ComplianceUserID == payload.UserID {
 				state.ComplianceCatch.ComplianceUserID = payload.BotUserID
+			}
+		}
+		if state.CaseBreakdown != nil {
+			if state.CaseBreakdown.MoleUserID == payload.UserID || payload.Role == RoleMole {
+				state.CaseBreakdown.MoleUserID = payload.BotUserID
+			}
+			if state.CaseBreakdown.ComplianceUserID == payload.UserID || payload.Role == RoleCompliance {
+				state.CaseBreakdown.ComplianceUserID = payload.BotUserID
 			}
 		}
 	case models.EventChatMessageSent:
@@ -349,6 +370,46 @@ func ApplyEvent(state *GameState, event models.Event) error {
 			AcceptedDecision: payload.AcceptedDecision,
 			Reason:           payload.Reason,
 		}
+	case models.EventMoleCaseBreakdownStarted:
+		var payload MoleCaseBreakdownStartedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.Phase = GamePhaseMoleCaseBreakdown
+		state.CaseBreakdown = &CaseBreakdownState{
+			RoundNumber:      payload.RoundNumber,
+			ComplianceUserID: payload.ComplianceUserID,
+			MoleUserID:       payload.MoleUserID,
+			AcceptedDecision: payload.AcceptedDecision,
+			Reason:           payload.Reason,
+		}
+		setPhaseTiming(state, event)
+	case models.EventMoleCaseBreakdownSucceeded:
+		var payload MoleCaseBreakdownSucceededPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.CaseBreakdown = nil
+		state.CaseBreakdownAttempts++
+		state.CaseBreakdownSuccesses++
+		state.CaseBreakdownReports = append(state.CaseBreakdownReports, CaseBreakdownReport{
+			Round:    payload.RoundNumber,
+			Outcome:  "succeeded",
+			Decision: payload.AcceptedDecision,
+		})
+	case models.EventMoleCaseBreakdownFailed:
+		var payload MoleCaseBreakdownFailedPayload
+		if err := decodeEventValue(event.EventValue, &payload); err != nil {
+			return err
+		}
+		state.CaseBreakdown = nil
+		state.CaseBreakdownAttempts++
+		state.CaseBreakdownFailures++
+		state.CaseBreakdownReports = append(state.CaseBreakdownReports, CaseBreakdownReport{
+			Round:    payload.RoundNumber,
+			Outcome:  "failed",
+			Decision: payload.AcceptedDecision,
+		})
 	case models.EventDecisionAccepted:
 		var payload DecisionAcceptedPayload
 		if err := decodeEventValue(event.EventValue, &payload); err != nil {
@@ -512,6 +573,7 @@ func ApplyEvent(state *GameState, event models.Event) error {
 		state.IsFinished = true
 		state.Winner = payload.Winner
 		state.WinnerReason = payload.Reason
+		state.CaseBreakdown = nil
 		state.PhaseDeadlineAt = nil
 	case models.EventChatReactionToggled:
 		var payload ChatReactionToggledPayload
@@ -560,6 +622,19 @@ func setPhaseTiming(state *GameState, event models.Event) {
 	deadlineAt := startedAt.Add(PhaseDuration)
 	state.PhaseStartedAt = &startedAt
 	state.PhaseDeadlineAt = &deadlineAt
+}
+
+func replaceDecisionReportVoter(reports []RoundReport, fromUserID int64, toUserID int64, toName string) {
+	for reportIndex := range reports {
+		for voteIndex := range reports[reportIndex].Votes {
+			for voterIndex := range reports[reportIndex].Votes[voteIndex].Voters {
+				if reports[reportIndex].Votes[voteIndex].Voters[voterIndex].UserID == fromUserID {
+					reports[reportIndex].Votes[voteIndex].Voters[voterIndex].UserID = toUserID
+					reports[reportIndex].Votes[voteIndex].Voters[voterIndex].Name = toName
+				}
+			}
+		}
+	}
 }
 
 func buildRoundReport(state *GameState, round int, outcome string, decision string, reason string) RoundReport {

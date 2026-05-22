@@ -66,6 +66,8 @@ export function phaseLabel(phase?: GamePhase): string {
       return "Тайный брифинг";
     case "major_voting":
       return "Major vote";
+    case "mole_case_breakdown":
+      return "Развал дела";
     case "governance_proposal":
       return "Предложения";
     case "governance_voting":

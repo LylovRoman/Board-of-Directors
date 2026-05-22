@@ -18,6 +18,7 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 		Winner:                state.Winner,
 		WinnerReason:          state.WinnerReason,
 		StartedPlayerCount:    state.StartedPlayerCount,
+		CaseBreakdownEnabled:  state.CaseBreakdownEnabled,
 		CurrentRound:          state.CurrentRound,
 		GovernanceRound:       state.GovernanceRound,
 		TreasuryShareBPS:      state.TreasuryShareBPS,
@@ -37,6 +38,12 @@ func ProjectStateForViewer(state *GameState, viewerUserID int64) (*PublicGameSta
 	}
 	if state.Status != GameStatusLobby {
 		publicState.AvailableDecisions = sortedAvailableDecisions(state.Available)
+	}
+	if state.Phase == GamePhaseMoleCaseBreakdown && state.CaseBreakdown != nil {
+		publicState.CaseBreakdown = &PublicCaseBreakdown{
+			RoundNumber:      state.CaseBreakdown.RoundNumber,
+			AcceptedDecision: state.CaseBreakdown.AcceptedDecision,
+		}
 	}
 
 	for _, userID := range state.PlayerOrder {
@@ -355,7 +362,7 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 			actions = append(actions, ActionLeaveGame)
 		}
 		if player != nil && player.IsHost && !player.IsKicked && !player.IsLeft {
-			actions = append(actions, ActionKickPlayer, ActionBanPlayer, ActionStartGame)
+			actions = append(actions, ActionKickPlayer, ActionBanPlayer, ActionUpdateGameSettings, ActionStartGame)
 			if len(activePlayers(state)) < MaxPlayers {
 				actions = append(actions, ActionAddBot)
 			}
@@ -376,6 +383,10 @@ func availableActionsForViewer(state *GameState, viewerUserID int64) []ActionTyp
 			actions = append(actions, ActionVote)
 			if player.Role == RoleCompliance && complianceWatchAvailable(state) {
 				actions = append(actions, ActionPlaceComplianceWatch)
+			}
+		case GamePhaseMoleCaseBreakdown:
+			if player.Role == RoleMole && state.CaseBreakdown != nil {
+				actions = append(actions, ActionBreakCase)
 			}
 		case GamePhaseGovernanceProposal:
 			if _, ok := state.GovernanceSubmissions[viewerUserID]; !ok {
@@ -511,8 +522,15 @@ func publicReplaySteps(state *GameState) []PublicReplayStep {
 	}}
 
 	governanceIndex := 0
+	caseBreakdownByRound := map[int]CaseBreakdownReport{}
+	for _, report := range state.CaseBreakdownReports {
+		caseBreakdownByRound[report.Round] = report
+	}
 	for _, report := range state.RoundReports {
 		steps = append(steps, replayStepForRoundReport(report))
+		if caseReport, ok := caseBreakdownByRound[report.Round]; ok && caseReport.Outcome == "succeeded" {
+			steps = append(steps, replayStepForCaseBreakdown(caseReport))
+		}
 		if state.ComplianceCatch != nil && state.ComplianceCatch.RoundNumber == report.Round {
 			steps = append(steps, replayStepForComplianceCatch(state, *state.ComplianceCatch))
 		}
@@ -540,6 +558,18 @@ func publicReplaySteps(state *GameState) []PublicReplayStep {
 		WinnerReason: state.WinnerReason,
 	})
 	return steps
+}
+
+func replayStepForCaseBreakdown(report CaseBreakdownReport) PublicReplayStep {
+	return PublicReplayStep{
+		ID:       fmt.Sprintf("case-breakdown-%d", report.Round),
+		Kind:     "case_breakdown",
+		Title:    "Дело развалилось",
+		Summary:  fmt.Sprintf("Поимка отменена, Диверсия %s осталась принятым решением.", decisionLabelForChat(report.Decision)),
+		Round:    report.Round,
+		Outcome:  report.Outcome,
+		Decision: report.Decision,
+	}
 }
 
 func replayStepForComplianceCatch(state *GameState, catch ComplianceCatchState) PublicReplayStep {

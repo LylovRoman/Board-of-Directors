@@ -469,6 +469,39 @@ code {
   justify-content: flex-end;
 }
 
+.lobby-setting-toggle {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 420px);
+  margin: 8px 0 0 auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 15, 14, 0.72);
+  cursor: pointer;
+}
+
+.lobby-setting-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #d9a441;
+}
+
+.lobby-setting-toggle span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lobby-setting-toggle strong {
+  color: var(--ink);
+}
+
+.lobby-setting-toggle small {
+  color: var(--muted);
+}
+
 .create-game-strip {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

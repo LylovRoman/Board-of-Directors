@@ -1,6 +1,7 @@
 package game
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -135,6 +136,12 @@ func (e *Engine) nextBotTurnEvents(state *GameState, now time.Time) ([]models.Ev
 				return e.botMajorVoteEvents(state, bot), nil
 			}
 		}
+	case GamePhaseMoleCaseBreakdown:
+		if state.CaseBreakdown != nil {
+			if mole := activePlayerByID(state, state.MoleUserID); mole != nil && mole.IsBot {
+				return e.botBreakCaseEvents(state, mole)
+			}
+		}
 	case GamePhaseGovernanceProposal:
 		for _, bot := range activeBots(state) {
 			if _, ok := state.GovernanceSubmissions[bot.UserID]; !ok {
@@ -220,6 +227,54 @@ func (e *Engine) botComplianceWatchEvents(state *GameState, bot *PlayerState) []
 			TargetUserID:     target.UserID,
 		}),
 	}}
+}
+
+func (e *Engine) botBreakCaseEvents(state *GameState, bot *PlayerState) ([]models.Event, error) {
+	target := e.chooseBotCaseBreakdownTarget(state, bot)
+	if target == nil {
+		return nil, nil
+	}
+	actor := botActor(bot)
+	payload := json.RawMessage(mustJSON(BreakCaseActionPayload{TargetUserID: target.UserID}))
+	return e.handleBreakCase(state, actor, payload)
+}
+
+func (e *Engine) chooseBotCaseBreakdownTarget(state *GameState, bot *PlayerState) *PlayerState {
+	if state == nil || bot == nil || state.CaseBreakdown == nil {
+		return nil
+	}
+	candidates := []*PlayerState{}
+	for _, player := range activePlayers(state) {
+		if player.UserID != bot.UserID {
+			candidates = append(candidates, player)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	best := candidates[0]
+	bestScore := -1 << 30
+	for _, candidate := range candidates {
+		score := 0
+		if candidate.UserID == state.ComplianceUserID || candidate.UserID == state.CaseBreakdown.ComplianceUserID || candidate.Role == RoleCompliance {
+			score += 1000
+		}
+		if vote, ok := state.CurrentVotes[candidate.UserID]; ok && vote.Decision != nil {
+			if *vote.Decision != state.CaseBreakdown.AcceptedDecision {
+				score += 20
+			} else {
+				score -= 8
+			}
+		}
+		score += effectiveAuthorityBPS(candidate) / 100
+		score += e.botRandInt(state, bot, fmt.Sprintf("case-breakdown:%d", candidate.UserID), 17)
+		if score > bestScore {
+			bestScore = score
+			best = candidate
+		}
+	}
+	return best
 }
 
 func (e *Engine) chooseBotComplianceWatchTarget(state *GameState, bot *PlayerState) *PlayerState {
@@ -425,11 +480,26 @@ func (e *Engine) chooseBotMajorDecisionFast(state *GameState, bot *PlayerState) 
 
 func (e *Engine) scoreBotMajorDecision(state *GameState, bot *PlayerState, decision string) int {
 	if bot.Role == "mole" {
+		safeSabotagePass := e.moleSabotageLikelyAcceptedWithoutOwnVote(state, bot)
 		if decision == state.MoleSabotage {
-			return 110
+			score := 110
+			if e.moleFacesComplianceCatchRisk(state, bot) {
+				score -= 45
+			}
+			if safeSabotagePass {
+				score -= 80
+			}
+			return score
 		}
 		if stringSet(state.MoleTargets)[decision] {
-			return 85
+			score := 85
+			if safeSabotagePass {
+				score += 35
+			}
+			return score
+		}
+		if safeSabotagePass {
+			return 55
 		}
 		return 20
 	}
@@ -464,6 +534,38 @@ func (e *Engine) scoreBotMajorDecision(state *GameState, bot *PlayerState, decis
 	}
 	score -= e.currentVoteSuspicionPressure(state, bot, decision) / 4
 	return score
+}
+
+func (e *Engine) moleFacesComplianceCatchRisk(state *GameState, bot *PlayerState) bool {
+	if state == nil || bot == nil || bot.Role != RoleMole || !complianceWatchAvailable(state) {
+		return false
+	}
+	watch := state.ComplianceWatches[state.CurrentRound]
+	return watch.TargetUserID == bot.UserID || watch.TargetUserID == state.MoleUserID
+}
+
+func (e *Engine) moleSabotageLikelyAcceptedWithoutOwnVote(state *GameState, bot *PlayerState) bool {
+	if state == nil || bot == nil || bot.Role != RoleMole || state.MoleSabotage == "" {
+		return false
+	}
+	sabotageBPS := 0
+	leaderBPS := 0
+	for userID, vote := range state.CurrentVotes {
+		if userID == bot.UserID || vote.Abstain || vote.Decision == nil {
+			continue
+		}
+		player := activePlayerByID(state, userID)
+		if player == nil {
+			continue
+		}
+		if *vote.Decision == state.MoleSabotage {
+			sabotageBPS += player.ShareBPS
+		}
+		if player.ShareBPS > leaderBPS {
+			leaderBPS = player.ShareBPS
+		}
+	}
+	return sabotageBPS > 0 && sabotageBPS >= leaderBPS
 }
 
 type botObjectiveInference struct {

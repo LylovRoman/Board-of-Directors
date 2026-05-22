@@ -32,6 +32,7 @@ type Event struct {
 
 const (
 	EventGameCreated         = "game_created"
+	EventGameSettingsUpdated = "game_settings_updated"
 	EventPlayerJoined        = "player_joined"
 	EventPlayerLeft          = "player_left"
 	EventPlayerKicked        = "player_kicked"
@@ -54,12 +55,15 @@ const (
 	EventVoteSubmitted  = "vote_submitted"
 	EventVotingResolved = "voting_resolved"
 
-	EventDecisionAccepted        = "decision_accepted"
-	EventDecisionRejected        = "decision_rejected"
-	EventComplianceWatchPlaced   = "compliance_watch_placed"
-	EventMoleExposedByCompliance = "mole_exposed_by_compliance"
-	EventGameFinished            = "game_finished"
-	EventChatReactionToggled     = "chat_reaction_toggled"
+	EventDecisionAccepted           = "decision_accepted"
+	EventDecisionRejected           = "decision_rejected"
+	EventComplianceWatchPlaced      = "compliance_watch_placed"
+	EventMoleExposedByCompliance    = "mole_exposed_by_compliance"
+	EventMoleCaseBreakdownStarted   = "mole_case_breakdown_started"
+	EventMoleCaseBreakdownSucceeded = "mole_case_breakdown_succeeded"
+	EventMoleCaseBreakdownFailed    = "mole_case_breakdown_failed"
+	EventGameFinished               = "game_finished"
+	EventChatReactionToggled        = "chat_reaction_toggled"
 
 	EventGovernanceProposalPhaseStarted = "governance_proposal_phase_started"
 	EventGovernanceProposalSubmitted    = "governance_proposal_submitted"

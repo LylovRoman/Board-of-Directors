@@ -24,7 +24,7 @@ func TestSimulateBotGamesAcceptsBotMemorandumCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SimulateBotGames: %v", err)
 	}
-	if response.Games != 1 || response.Players != 3 || response.Seed != seed || response.BotMemorandumCount != 7 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk || response.BotMemorandumVariant != BotSimulationMemorandumVariantAdvanced || response.Workers != 1 || response.MonteCarloRollouts != 5 {
+	if response.Games != 1 || response.Players != 3 || response.Seed != seed || response.BotMemorandumCount != 7 || response.BotMemorandumType != BotSimulationMemorandumTypeRisk || response.BotMemorandumVariant != BotSimulationMemorandumVariantAdvanced || !response.CaseBreakdownEnabled || response.Workers != 1 || response.MonteCarloRollouts != 5 {
 		t.Fatalf("unexpected response metadata: %+v", response)
 	}
 	if response.DurationMS < 0 || response.GamesPerSecond <= 0 {
@@ -75,6 +75,31 @@ func TestSimulateBotGamesAcceptsVariantAlias(t *testing.T) {
 	}
 	if response.BotMemorandumVariant != BotSimulationMemorandumVariantStandard {
 		t.Fatalf("expected variant alias to select standard memorandums, got %+v", response)
+	}
+}
+
+func TestSimulateBotGamesCanDisableCaseBreakdown(t *testing.T) {
+	seed := int64(12352)
+	enabled := false
+	response, err := SimulateBotGames(BotSimulationRequest{
+		Games:                2,
+		Players:              6,
+		Seed:                 &seed,
+		IncludeGames:         true,
+		CaseBreakdownEnabled: &enabled,
+		Workers:              1,
+		MonteCarloRollouts:   4,
+	})
+	if err != nil {
+		t.Fatalf("SimulateBotGames: %v", err)
+	}
+	if response.CaseBreakdownEnabled {
+		t.Fatalf("expected disabled case breakdown metadata, got %+v", response)
+	}
+	for _, result := range response.Results {
+		if result.CaseBreakdownAttempts != 0 || result.CaseBreakdownSuccesses != 0 || result.CaseBreakdownFailures != 0 {
+			t.Fatalf("did not expect case breakdown attempts when disabled, got %+v", result)
+		}
 	}
 }
 
@@ -149,6 +174,7 @@ func TestSimulateBotGamesDeterministicAcrossRepeatedRuns(t *testing.T) {
 				BotMemorandumCount:   1,
 				BotMemorandumType:    BotSimulationMemorandumTypeRisk,
 				BotMemorandumVariant: BotSimulationMemorandumVariantAdvanced,
+				CaseBreakdownEnabled: true,
 				Workers:              1,
 				MonteCarloRollouts:   32,
 			},
@@ -163,6 +189,7 @@ func TestSimulateBotGamesDeterministicAcrossRepeatedRuns(t *testing.T) {
 				BotMemorandumCount:   1,
 				BotMemorandumType:    BotSimulationMemorandumTypeMixed,
 				BotMemorandumVariant: BotSimulationMemorandumVariantMixed,
+				CaseBreakdownEnabled: true,
 				Workers:              1,
 				MonteCarloRollouts:   4,
 			},
