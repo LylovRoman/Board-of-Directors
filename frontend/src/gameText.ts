@@ -30,6 +30,8 @@ export function phaseLabel(phase?: GamePhase): string {
   switch (phase) {
     case "mole_objective_selection":
       return "Выбор целей Крота";
+    case "mole_case_breakdown":
+      return "Развал дела";
     case "governance_proposal":
     case "governance_voting":
       return "Корпоративные манёвры";

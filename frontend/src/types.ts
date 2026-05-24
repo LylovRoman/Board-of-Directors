@@ -6,15 +6,17 @@ export type ActionType =
   | "add_bot"
   | "send_chat_message"
   | "react_chat_message"
+  | "update_game_settings"
   | "start_game"
   | "choose_memorandum"
   | "select_mole_objectives"
   | "place_compliance_watch"
+  | "break_case"
   | "vote"
   | "submit_governance_proposal"
   | "skip_governance_proposal";
 export type GameStatus = "lobby" | "started" | "finished";
-export type GamePhase = "mole_objective_selection" | "major_voting" | "governance_proposal" | "governance_voting";
+export type GamePhase = "mole_objective_selection" | "major_voting" | "mole_case_breakdown" | "governance_proposal" | "governance_voting";
 export type GovernanceProposalType = "share_transfer" | "treasury_grant" | "treasury_buyback" | "appoint_ceo";
 export type DecisionType = "growth" | "empowerment";
 export type MemorandumType = "opportunity" | "risk";
@@ -57,6 +59,7 @@ export interface Game {
   player_user_ids?: number[];
   players?: GameListPlayer[] | null;
   is_member?: boolean;
+  case_breakdown_enabled?: boolean;
 }
 
 export interface GameListPlayer {
@@ -142,6 +145,11 @@ export interface PublicComplianceWatch {
   round_number: number;
   compliance_user_id: number;
   target_user_id: number;
+}
+
+export interface PublicCaseBreakdown {
+  round_number: number;
+  accepted_decision: string;
 }
 
 export interface PublicGovernanceProposal {
@@ -284,6 +292,7 @@ export interface PublicGameState {
   is_finished: boolean;
   winner?: string;
   winner_reason?: string;
+  case_breakdown_enabled: boolean;
   current_round: number;
   governance_round?: number;
   treasury_share_bps: number;
@@ -309,6 +318,7 @@ export interface PublicGameState {
   memorandum_preference?: MemorandumType;
   memorandum?: PublicMemorandum | null;
   compliance_watch?: PublicComplianceWatch | null;
+  case_breakdown?: PublicCaseBreakdown | null;
   mole_victory_points?: number;
   players_victory_points?: number;
   final_summary?: PublicFinalSummary | null;

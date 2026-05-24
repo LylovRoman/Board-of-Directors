@@ -115,6 +115,8 @@ func playerNeedsActionForPhase(state *GameState, userID int64) bool {
 	case GamePhaseMajorVoting:
 		_, ok := state.CurrentVotes[userID]
 		return !ok
+	case GamePhaseMoleCaseBreakdown:
+		return player.Role == RoleMole && state.CaseBreakdown != nil
 	case GamePhaseGovernanceProposal:
 		_, ok := state.GovernanceSubmissions[userID]
 		return !ok

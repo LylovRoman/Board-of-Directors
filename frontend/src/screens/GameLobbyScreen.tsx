@@ -11,6 +11,8 @@ export function GameLobbyScreen(props: {
   canKick: boolean;
   canBan: boolean;
   canAddBot: boolean;
+  canUpdateGameSettings: boolean;
+  caseBreakdownEnabled: boolean;
   hasMe: boolean;
   chatMessages: PublicChatMessage[];
   canSendChatMessage: boolean;
@@ -20,6 +22,7 @@ export function GameLobbyScreen(props: {
   onLeave: () => void;
   onStart: () => void;
   onAddBot: () => void;
+  onUpdateGameSettings: (caseBreakdownEnabled: boolean) => void;
   onKick: (userId: number) => void;
   onBan: (userId: number) => void;
   onSendChatMessage: (message: string) => Promise<void>;
@@ -59,6 +62,20 @@ export function GameLobbyScreen(props: {
                 </button>
             ) : null}
           </div>
+          {props.canUpdateGameSettings ? (
+              <label className="lobby-setting-toggle">
+                <input
+                    type="checkbox"
+                    checked={props.caseBreakdownEnabled}
+                    disabled={props.isSubmitting}
+                    onChange={(event) => props.onUpdateGameSettings(event.currentTarget.checked)}
+                />
+                <span>
+                  <strong>Развал дела</strong>
+                  <small>Крот получает одну попытку отменить поимку Комплаенса.</small>
+                </span>
+              </label>
+          ) : null}
         </div>
 
         <div className="players-grid">

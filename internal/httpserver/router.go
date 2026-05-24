@@ -357,6 +357,7 @@ func (s *Server) listGameItems(ctx context.Context, viewerID int64) ([]gameListI
 		item.Winner = state.Winner
 		item.CurrentRound = state.CurrentRound
 		item.StartedPlayerCount = state.StartedPlayerCount
+		item.CaseBreakdownEnabled = state.CaseBreakdownEnabled
 		for _, userID := range state.PlayerOrder {
 			if player := state.Players[userID]; player != nil && !player.IsLeft && !player.IsKicked {
 				item.PlayerUserIDs = append(item.PlayerUserIDs, userID)
@@ -398,20 +399,21 @@ func gameListPlayerPosition(status game.GameStatus, player *game.PlayerState, pr
 }
 
 type gameListItem struct {
-	ID                 int64            `json:"id"`
-	Title              string           `json:"title"`
-	CompanyName        string           `json:"company_name,omitempty"`
-	CompanySituation   string           `json:"company_situation,omitempty"`
-	CreatedAt          time.Time        `json:"created_at"`
-	Status             game.GameStatus  `json:"status"`
-	Phase              game.GamePhase   `json:"phase,omitempty"`
-	Winner             string           `json:"winner,omitempty"`
-	CurrentRound       int              `json:"current_round"`
-	PlayerCount        int              `json:"player_count"`
-	StartedPlayerCount int              `json:"started_player_count,omitempty"`
-	PlayerUserIDs      []int64          `json:"player_user_ids"`
-	Players            []gameListPlayer `json:"players"`
-	IsMember           bool             `json:"is_member"`
+	ID                   int64            `json:"id"`
+	Title                string           `json:"title"`
+	CompanyName          string           `json:"company_name,omitempty"`
+	CompanySituation     string           `json:"company_situation,omitempty"`
+	CreatedAt            time.Time        `json:"created_at"`
+	Status               game.GameStatus  `json:"status"`
+	Phase                game.GamePhase   `json:"phase,omitempty"`
+	Winner               string           `json:"winner,omitempty"`
+	CurrentRound         int              `json:"current_round"`
+	PlayerCount          int              `json:"player_count"`
+	StartedPlayerCount   int              `json:"started_player_count,omitempty"`
+	CaseBreakdownEnabled bool             `json:"case_breakdown_enabled"`
+	PlayerUserIDs        []int64          `json:"player_user_ids"`
+	Players              []gameListPlayer `json:"players"`
+	IsMember             bool             `json:"is_member"`
 }
 
 type gameListPlayer struct {
@@ -576,6 +578,8 @@ func isPrivateActionEvent(eventType string) bool {
 		models.EventMoleObjectivesSelected,
 		models.EventComplianceSelected,
 		models.EventComplianceWatchPlaced,
+		models.EventMoleCaseBreakdownStarted,
+		models.EventMoleCaseBreakdownFailed,
 		models.EventMemorandumPreferenceSelected,
 		models.EventMemorandumAssigned,
 		models.EventVoteSubmitted,

@@ -15,10 +15,12 @@ const (
 	ActionAddBot                   ActionType = "add_bot"
 	ActionSendChatMessage          ActionType = "send_chat_message"
 	ActionReactChatMessage         ActionType = "react_chat_message"
+	ActionUpdateGameSettings       ActionType = "update_game_settings"
 	ActionStartGame                ActionType = "start_game"
 	ActionChooseMemorandum         ActionType = "choose_memorandum"
 	ActionSelectMoleObjectives     ActionType = "select_mole_objectives"
 	ActionPlaceComplianceWatch     ActionType = "place_compliance_watch"
+	ActionBreakCase                ActionType = "break_case"
 	ActionVote                     ActionType = "vote"
 	ActionSubmitGovernanceProposal ActionType = "submit_governance_proposal"
 	ActionSkipGovernanceProposal   ActionType = "skip_governance_proposal"
@@ -50,6 +52,7 @@ type GamePhase string
 const (
 	GamePhaseMoleObjectiveSelection GamePhase = "mole_objective_selection"
 	GamePhaseMajorVoting            GamePhase = "major_voting"
+	GamePhaseMoleCaseBreakdown      GamePhase = "mole_case_breakdown"
 	GamePhaseGovernanceProposal     GamePhase = "governance_proposal"
 	GamePhaseGovernanceVoting       GamePhase = "governance_voting"
 )
@@ -166,6 +169,7 @@ type GameState struct {
 	StartedPlayerCount int        `json:"started_player_count,omitempty"`
 
 	HostUserID              int64
+	CaseBreakdownEnabled    bool
 	CEOUserID               int64
 	MoleUserID              int64
 	ComplianceUserID        int64
@@ -173,6 +177,10 @@ type GameState struct {
 	MoleSabotage            string
 	ComplianceWatches       map[int]ComplianceWatchState
 	ComplianceCatch         *ComplianceCatchState
+	CaseBreakdown           *CaseBreakdownState
+	CaseBreakdownAttempts   int
+	CaseBreakdownSuccesses  int
+	CaseBreakdownFailures   int
 	MemorandumPreferences   map[int64]MemorandumType
 	Memorandums             map[int64]MemorandumState
 	CurrentRound            int
@@ -188,6 +196,7 @@ type GameState struct {
 	AcceptedOrder           []string
 	RejectedOrder           []string
 	RoundReports            []RoundReport
+	CaseBreakdownReports    []CaseBreakdownReport
 	GovernanceReports       []GovernanceReport
 	Available               map[string]bool
 	MajorVoteOptions        []string
@@ -225,6 +234,14 @@ type ComplianceWatchState struct {
 }
 
 type ComplianceCatchState struct {
+	RoundNumber      int    `json:"round_number"`
+	ComplianceUserID int64  `json:"compliance_user_id"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+	Reason           string `json:"reason"`
+}
+
+type CaseBreakdownState struct {
 	RoundNumber      int    `json:"round_number"`
 	ComplianceUserID int64  `json:"compliance_user_id"`
 	MoleUserID       int64  `json:"mole_user_id"`
@@ -296,6 +313,7 @@ type PublicGameState struct {
 	Winner                string                       `json:"winner,omitempty"`
 	WinnerReason          string                       `json:"winner_reason,omitempty"`
 	StartedPlayerCount    int                          `json:"started_player_count,omitempty"`
+	CaseBreakdownEnabled  bool                         `json:"case_breakdown_enabled"`
 	CurrentRound          int                          `json:"current_round"`
 	GovernanceRound       int                          `json:"governance_round"`
 	TreasuryShareBPS      int                          `json:"treasury_share_bps"`
@@ -321,6 +339,7 @@ type PublicGameState struct {
 	MemorandumPreference  MemorandumType               `json:"memorandum_preference,omitempty"`
 	Memorandum            *PublicMemorandum            `json:"memorandum,omitempty"`
 	ComplianceWatch       *PublicComplianceWatch       `json:"compliance_watch,omitempty"`
+	CaseBreakdown         *PublicCaseBreakdown         `json:"case_breakdown,omitempty"`
 	MoleVictoryPoints     *int                         `json:"mole_victory_points,omitempty"`
 	PlayersVictoryPoints  *int                         `json:"players_victory_points,omitempty"`
 	FinalSummary          *PublicFinalSummary          `json:"final_summary,omitempty"`
@@ -385,6 +404,11 @@ type PublicComplianceWatch struct {
 	RoundNumber      int   `json:"round_number"`
 	ComplianceUserID int64 `json:"compliance_user_id"`
 	TargetUserID     int64 `json:"target_user_id"`
+}
+
+type PublicCaseBreakdown struct {
+	RoundNumber      int    `json:"round_number"`
+	AcceptedDecision string `json:"accepted_decision"`
 }
 
 type PublicGovernanceProposal struct {
@@ -467,6 +491,12 @@ type RoundReport struct {
 	Decision string
 	Reason   string
 	Votes    []DecisionVoteReport
+}
+
+type CaseBreakdownReport struct {
+	Round    int
+	Outcome  string
+	Decision string
 }
 
 type DecisionVoteReport struct {
@@ -573,6 +603,10 @@ type GameCreatedPayload struct {
 	Title            string `json:"title"`
 	CompanyName      string `json:"company_name,omitempty"`
 	CompanySituation string `json:"company_situation,omitempty"`
+}
+
+type GameSettingsUpdatedPayload struct {
+	CaseBreakdownEnabled bool `json:"case_breakdown_enabled"`
 }
 
 type PlayerJoinedPayload struct {
@@ -692,6 +726,27 @@ type MoleExposedByCompliancePayload struct {
 	Reason           string `json:"reason"`
 }
 
+type MoleCaseBreakdownStartedPayload struct {
+	RoundNumber      int    `json:"round_number"`
+	ComplianceUserID int64  `json:"compliance_user_id"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+	Reason           string `json:"reason"`
+}
+
+type MoleCaseBreakdownSucceededPayload struct {
+	RoundNumber      int    `json:"round_number"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+}
+
+type MoleCaseBreakdownFailedPayload struct {
+	RoundNumber      int    `json:"round_number"`
+	MoleUserID       int64  `json:"mole_user_id"`
+	TargetUserID     int64  `json:"target_user_id"`
+	AcceptedDecision string `json:"accepted_decision"`
+}
+
 type GovernanceProposalPhaseStartedPayload struct {
 	Round int `json:"round"`
 }
@@ -797,6 +852,10 @@ type ReactChatMessageActionPayload struct {
 	Emoji     string `json:"emoji"`
 }
 
+type UpdateGameSettingsActionPayload struct {
+	CaseBreakdownEnabled *bool `json:"case_breakdown_enabled,omitempty"`
+}
+
 type ChatReactionToggledPayload struct {
 	MessageID int64  `json:"message_id"`
 	UserID    int64  `json:"user_id"`
@@ -813,6 +872,10 @@ type ChooseMemorandumActionPayload struct {
 }
 
 type PlaceComplianceWatchActionPayload struct {
+	TargetUserID int64 `json:"target_user_id"`
+}
+
+type BreakCaseActionPayload struct {
 	TargetUserID int64 `json:"target_user_id"`
 }
 

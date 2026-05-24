@@ -150,7 +150,7 @@ export function GameScreen(props: GameScreenProps) {
             </p>
           ) : (
             <p>
-              Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если он окажется Кротом и лично проголосует за принятую Диверсию, Совет немедленно победит.
+              Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если он окажется Кротом и лично проголосует за принятую Диверсию, включенный Развал дела даст Кроту одну догадку; без него Совет победит сразу.
             </p>
           )}
           {state.memorandum ? (
@@ -245,6 +245,7 @@ function LobbyPhase(props: {
   const canKick = actions.includes("kick_player");
   const canBan = actions.includes("ban_player");
   const canAddBot = actions.includes("add_bot");
+  const canUpdateGameSettings = actions.includes("update_game_settings");
 
   return (
     <section className="phase-card">
@@ -257,6 +258,20 @@ function LobbyPhase(props: {
       </div>
 
       <div className="lobby-actions-grid">
+        {canUpdateGameSettings ? (
+          <label className="mobile-setting-toggle">
+            <input
+              type="checkbox"
+              checked={props.state.case_breakdown_enabled ?? true}
+              disabled={props.isSubmitting}
+              onChange={(event) => props.onAction("update_game_settings", { case_breakdown_enabled: event.currentTarget.checked })}
+            />
+            <span>
+              <strong>Развал дела</strong>
+              <small>Крот сможет отменить поимку Комплаенса одной догадкой.</small>
+            </span>
+          </label>
+        ) : null}
         {canJoin ? (
           <button className="primary-action wide-action" type="button" disabled={props.isSubmitting} onClick={() => props.onAction("join_game")}>
             Войти в комнату
@@ -357,6 +372,18 @@ function StartedPhase(props: {
     );
   }
 
+  if (phase === "mole_case_breakdown") {
+    return (
+      <CaseBreakdownPhase
+        state={props.state}
+        currentUserId={props.currentUserId}
+        canBreakCase={actions.includes("break_case")}
+        isSubmitting={props.isSubmitting}
+        onAction={props.onAction}
+      />
+    );
+  }
+
   if (phase === "governance_voting") {
     return (
       <GovernanceVotingPhase
@@ -417,7 +444,7 @@ function MoleObjectivePhase(props: {
         <h2>Крот выбирает цели</h2>
         <p className="muted">
           {isCompliance
-            ? "Выберите предпочтительный тип подсказки. Комплаенс не получает стартовый меморандум: этот выбор понадобится только для позднего меморандума после принятой Диверсии, если партия продолжится."
+            ? "Выберите тип стартовой усиленной подсказки. Комплаенс получит меморандум из двух решений после выбора целей Крота."
             : "Выберите тип стартового меморандума. Конкретная тройка решений будет сгенерирована случайно после того, как Крот подтвердит цели."}
         </p>
         {preference ? (
@@ -485,6 +512,51 @@ function MoleObjectivePhase(props: {
       >
         Подтвердить цели
       </button>
+    </section>
+  );
+}
+
+function CaseBreakdownPhase(props: {
+  state: PublicGameState;
+  currentUserId: number;
+  canBreakCase: boolean;
+  isSubmitting: boolean;
+  onAction: (type: ActionType, payload?: Record<string, unknown>) => void;
+}) {
+  const isMole = props.state.me?.role === "mole";
+  const decision = props.state.case_breakdown?.accepted_decision ?? "";
+  const candidates = (props.state.players ?? []).filter((player) => player.user_id !== props.currentUserId);
+
+  return (
+    <section className="phase-card">
+      <div className="section-heading-row">
+        <div>
+          <p className="eyebrow">Развал дела</p>
+          <h2>{decision ? `Диверсия ${decision}` : "Комплаенс пытается закрыть дело"}</h2>
+        </div>
+        <span className="ready-pill">1 ход</span>
+      </div>
+      <p className="muted">
+        {isMole
+          ? "Назовите игрока, которого считаете Комплаенсом. Правильный выбор отменит поимку."
+          : "Крот пытается развалить дело. Если он угадает Комплаенса, Диверсия останется принятой."}
+      </p>
+      {isMole ? (
+        <div className="watch-target-list">
+          {candidates.map((player) => (
+            <button
+              key={player.user_id}
+              className="watch-target"
+              type="button"
+              disabled={!props.canBreakCase || props.isSubmitting}
+              onClick={() => props.onAction("break_case", { target_user_id: player.user_id })}
+            >
+              <Avatar name={player.name} avatarUrl={player.avatar_url} size="sm" />
+              <span>{player.name}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -526,7 +526,7 @@ components:
           type: integer
           default: 1
           minimum: 1
-          maximum: 1000
+          maximum: 10000
         players:
           type: integer
           default: 6
@@ -558,6 +558,10 @@ components:
           type: string
           enum: [mixed, standard, advanced]
           description: Short alias for `bot_memorandum_variant`.
+        case_breakdown_enabled:
+          type: boolean
+          default: true
+          description: Enables the Mole's `mole_case_breakdown` reaction after a Compliance catch. When false, a valid Compliance catch ends the game immediately for the Council.
         workers:
           type: integer
           minimum: 0
@@ -605,6 +609,16 @@ components:
           type: integer
         accepted_sabotage_count:
           type: integer
+        accepted_sabotage_with_mole_vote_count:
+          type: integer
+        accepted_sabotage_without_mole_vote_count:
+          type: integer
+        case_breakdown_attempts:
+          type: integer
+        case_breakdown_successes:
+          type: integer
+        case_breakdown_failures:
+          type: integer
         accepted_decisions:
           type: array
           items:
@@ -640,6 +654,8 @@ components:
         bot_memorandum_variant:
           type: string
           enum: [mixed, standard, advanced]
+        case_breakdown_enabled:
+          type: boolean
         workers:
           type: integer
         monte_carlo_rollouts:
@@ -669,9 +685,19 @@ components:
           type: integer
         accepted_sabotage_count:
           type: integer
+        accepted_sabotage_with_mole_vote_count:
+          type: integer
+        accepted_sabotage_without_mole_vote_count:
+          type: integer
         compliance_catches_count:
           type: integer
         players_wins_by_compliance_count:
+          type: integer
+        case_breakdown_attempts_count:
+          type: integer
+        case_breakdown_successes_count:
+          type: integer
+        case_breakdown_failures_count:
           type: integer
         average_accepted_clean_count:
           type: number
@@ -829,7 +855,7 @@ components:
           enum: [lobby, started, finished]
         phase:
           type: string
-          enum: [mole_objective_selection, major_voting, governance_proposal, governance_voting]
+          enum: [mole_objective_selection, major_voting, mole_case_breakdown, governance_proposal, governance_voting]
         winner:
           type: string
         current_round:
@@ -839,6 +865,9 @@ components:
         started_player_count:
           type: integer
           description: Number of active players when the game started; clients can use it as the denominator for started/finished rooms.
+        case_breakdown_enabled:
+          type: boolean
+          description: Current lobby/game setting for the Mole's case-breakdown reaction.
         player_user_ids:
           type: array
           items:
@@ -918,19 +947,23 @@ components:
             - add_bot
             - send_chat_message
             - react_chat_message
+            - update_game_settings
             - start_game
             - choose_memorandum
             - select_mole_objectives
             - place_compliance_watch
+            - break_case
             - vote
             - submit_governance_proposal
             - skip_governance_proposal
         payload:
           oneOf:
             - $ref: "#/components/schemas/SendChatMessagePayload"
+            - $ref: "#/components/schemas/UpdateGameSettingsPayload"
             - $ref: "#/components/schemas/ChooseMemorandumPayload"
             - $ref: "#/components/schemas/SelectMoleObjectivesPayload"
             - $ref: "#/components/schemas/PlaceComplianceWatchPayload"
+            - $ref: "#/components/schemas/BreakCasePayload"
             - $ref: "#/components/schemas/VotePayload"
             - $ref: "#/components/schemas/SubmitGovernanceProposalPayload"
             - $ref: "#/components/schemas/ReactChatMessagePayload"
@@ -948,9 +981,18 @@ components:
           maxLength: 500
       required: [message]
 
+    UpdateGameSettingsPayload:
+      type: object
+      description: Host-only lobby action. Toggles optional game mechanics before the game starts.
+      properties:
+        case_breakdown_enabled:
+          type: boolean
+          description: Enables `mole_case_breakdown`. When disabled, a Compliance catch immediately wins for the Council.
+      required: [case_breakdown_enabled]
+
     ChooseMemorandumPayload:
       type: object
-      description: Private non-Mole choice during mole_objective_selection. Ordinary Directors receive a standard 3-decision starting memorandum of the chosen base type after Mole objectives are selected. Compliance may choose the same value as a preference, but does not receive a starting memorandum; the preference is used only for an advanced 2-decision late memorandum after an accepted Sabotage if the game continues. If no type is chosen, opportunity is used by default. Compliance preference is not mandatory for phase timeout/autoreplacement.
+      description: Private non-Mole choice during mole_objective_selection. Ordinary Directors receive a standard 3-decision starting memorandum of the chosen base type after Mole objectives are selected. Compliance receives an advanced 2-decision starting memorandum of the chosen/default type. If no type is chosen, opportunity is used by default. Compliance preference is not mandatory for phase timeout/autoreplacement.
       properties:
         type:
           type: string
@@ -976,7 +1018,16 @@ components:
 
     PlaceComplianceWatchPayload:
       type: object
-      description: Private Compliance action during major_voting before Sabotage has been accepted. The target must be an active player and cannot be the Compliance player themselves. Repeating the action in the same major round replaces the current target, like a revote. The watch is hidden from public state and other viewers. After an accepted Sabotage, if the game continues, this action is no longer available.
+      description: Private Compliance action during major_voting before Sabotage has been accepted. The target must be an active player and cannot be the Compliance player themselves. Repeating the action in the same major round replaces the current target, like a revote. The watch is hidden from public state and other viewers. After an accepted Sabotage this action is no longer available.
+      properties:
+        target_user_id:
+          type: integer
+          format: int64
+      required: [target_user_id]
+
+    BreakCasePayload:
+      type: object
+      description: Mole-only action during mole_case_breakdown. The Mole names the player they believe is Compliance. A correct guess cancels the catch and keeps the accepted Sabotage in force; a wrong guess ends the game for the Council.
       properties:
         target_user_id:
           type: integer
@@ -1462,7 +1513,7 @@ components:
 
     PublicMemorandum:
       type: object
-      description: Private memorandum hint. Present for ordinary Directors after the Mole has selected objectives, and for Compliance only after an accepted Sabotage if the game continues. Players choose the base memorandum type only; the decision set is generated randomly by the backend. `standard` memorandums contain 3 decisions, while `advanced` memorandums contain 2 decisions. Starting Director memorandums are standard and test against the Mole's 3 Podkops plus 1 Sabotage. Late Compliance memorandums are advanced and test against the remaining hidden Podkops with the selected/default base type.
+      description: Private memorandum hint. Present for ordinary Directors and Compliance after the Mole has selected objectives. Players choose the base memorandum type only; the decision set is generated randomly by the backend. `standard` memorandums contain 3 decisions, while `advanced` memorandums contain 2 decisions. Starting Director memorandums are standard; starting Compliance memorandums are advanced.
       properties:
         type:
           type: string
@@ -1495,6 +1546,16 @@ components:
           format: int64
       required: [round_number, compliance_user_id, target_user_id]
 
+    PublicCaseBreakdown:
+      type: object
+      description: Public safe state for the Mole's case-breakdown reaction. It intentionally does not expose the Compliance player id.
+      properties:
+        round_number:
+          type: integer
+        accepted_decision:
+          type: string
+      required: [round_number, accepted_decision]
+
     PublicGameState:
       type: object
       properties:
@@ -1513,7 +1574,7 @@ components:
           type: string
         phase:
           type: string
-          enum: [mole_objective_selection, major_voting, governance_proposal, governance_voting]
+          enum: [mole_objective_selection, major_voting, mole_case_breakdown, governance_proposal, governance_voting]
         is_finished:
           type: boolean
         winner:
@@ -1524,6 +1585,9 @@ components:
         started_player_count:
           type: integer
           description: Number of active players when the game started.
+        case_breakdown_enabled:
+          type: boolean
+          description: Public setting. When false, Compliance catches skip `mole_case_breakdown` and finish the game immediately.
         current_round:
           type: integer
         governance_round:
@@ -1610,11 +1674,13 @@ components:
         memorandum_preference:
           type: string
           enum: [opportunity, risk]
-          description: Private. Present only for the viewing Director or Compliance player during setup if they chose a memorandum type. For Compliance this is a preference for a possible late memorandum and does not imply a starting memorandum was assigned.
+          description: Private. Present only for the viewing Director or Compliance player during setup if they chose a memorandum type.
         memorandum:
           $ref: "#/components/schemas/PublicMemorandum"
         compliance_watch:
           $ref: "#/components/schemas/PublicComplianceWatch"
+        case_breakdown:
+          $ref: "#/components/schemas/PublicCaseBreakdown"
         mole_victory_points:
           type: integer
           description: Present for the Mole from setup; revealed to all players after the sabotage decision is accepted.
@@ -1629,7 +1695,7 @@ components:
             $ref: "#/components/schemas/PublicReplayStep"
         available_actions:
           type: array
-          description: Personalized action list for the viewer. `choose_memorandum` is available to non-Mole players during setup; Compliance uses it as a non-mandatory preference. `place_compliance_watch` is available only to Compliance during major_voting before accepted Sabotage and may be repeated to change the target.
+          description: Personalized action list for the viewer. `update_game_settings` is available only to the Host in lobby. `choose_memorandum` is available to non-Mole players during setup. `place_compliance_watch` is available only to Compliance during major_voting before accepted Sabotage. `break_case` is available only to the Mole during mole_case_breakdown.
           items:
             type: string
             enum:
@@ -1640,10 +1706,12 @@ components:
               - add_bot
               - send_chat_message
               - react_chat_message
+              - update_game_settings
               - start_game
               - choose_memorandum
               - select_mole_objectives
               - place_compliance_watch
+              - break_case
               - vote
               - submit_governance_proposal
               - skip_governance_proposal

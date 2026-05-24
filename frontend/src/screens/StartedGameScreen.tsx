@@ -4,7 +4,7 @@ import { BOT_ACTION_DELAY_MS } from "../gameData";
 import { decisionLabel, decisionTitle, decisionType, formatCountdown, formatShare, memorandumRule, memorandumTitle } from "../gameText";
 import { ChatPanel } from "../components/ChatPanel";
 import { DecisionList, DecisionTypeTag } from "../components/DecisionWidgets";
-import { ComplianceWatchPanel, GovernanceProposalPhase, GovernanceVotingPhase, MoleObjectiveSelectionPhase } from "../components/PhaseWidgets";
+import { CaseBreakdownPhase, ComplianceWatchPanel, GovernanceProposalPhase, GovernanceVotingPhase, MoleObjectiveSelectionPhase } from "../components/PhaseWidgets";
 import { UserAvatar } from "../components/UserAvatar";
 
 export function StartedGameScreen(props: {
@@ -34,6 +34,7 @@ export function StartedGameScreen(props: {
   canSelectMoleObjectives: boolean;
   canChooseMemorandum: boolean;
   canPlaceComplianceWatch: boolean;
+  canBreakCase: boolean;
   canSubmitGovernanceProposal: boolean;
   canSkipGovernanceProposal: boolean;
   canSendChatMessage: boolean;
@@ -41,6 +42,7 @@ export function StartedGameScreen(props: {
   onSelectMoleObjectives: (payload: Record<string, unknown>) => void;
   onChooseMemorandum: (type: MemorandumType) => void;
   onPlaceComplianceWatch: (targetUserId: number) => void;
+  onBreakCase: (targetUserId: number) => void;
   onVote: (decision: string) => void;
   onVoteProposal: (proposalId: number) => void;
   onAbstain: () => void;
@@ -195,15 +197,15 @@ export function StartedGameScreen(props: {
                       <>
                         <p className="eyebrow">Комплаенс</p>
                         <p className="quiet-text">
-                          {props.memorandum
-                              ? "Диверсия уже прошла, поэтому наблюдение больше недоступно. Теперь ваша приватная информация - меморандум выбранного типа."
-                              : "Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если выбранный игрок окажется Кротом и лично проголосует за принятую Диверсию, Совет директоров немедленно победит независимо от текущего счёта."}
+                          {props.phase === "mole_case_breakdown"
+                              ? "Комплаенс запустил поимку. Если Крот угадает, кто его поймал, дело развалится и Диверсия останется принятой."
+                              : "Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если выбранный игрок окажется Кротом и лично проголосует за принятую Диверсию, он получит шанс на Развал дела."}
                         </p>
                       </>
                   ) : null}
                   {props.me?.role === "player" || props.me?.role === "compliance" ? (
                     <>
-                    <p className="eyebrow">{props.me?.role === "compliance" && props.memorandum ? "Меморандум после Диверсии" : "Меморандум"}</p>
+                    <p className="eyebrow">{props.me?.role === "compliance" && props.memorandum ? "Усиленный меморандум" : "Меморандум"}</p>
                     {props.memorandum ? (
                         <>
                           <h3>{memorandumTitle(props.memorandum.type)}</h3>
@@ -214,10 +216,10 @@ export function StartedGameScreen(props: {
                         <p className="quiet-text">
                           {props.memorandumPreference
                               ? props.me?.role === "compliance"
-                                  ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}. Комплаенс получит меморандум только если Диверсия пройдет и партия продолжится.`
+                                  ? `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}. Комплаенс получит усиленный меморандум после выбора целей Крота.`
                                   : `Выбран профиль: ${memorandumTitle(props.memorandumPreference)}.`
                               : props.me?.role === "compliance"
-                                  ? "Выберите тип подсказки заранее: он будет использован только если Диверсия пройдет и партия продолжится."
+                                  ? "Выберите тип стартовой усиленной подсказки."
                                   : "Выбери тип меморандума, пока крот формирует цели."}
                         </p>
                     )}
@@ -255,6 +257,16 @@ export function StartedGameScreen(props: {
                     isSubmitting={props.isSubmitting}
                     onSubmit={props.onSelectMoleObjectives}
                     onChooseMemorandum={props.onChooseMemorandum}
+                />
+            ) : props.phase === "mole_case_breakdown" ? (
+                <CaseBreakdownPhase
+                    players={props.players}
+                    currentUserId={props.currentUserId}
+                    viewerRole={props.me?.role}
+                    caseBreakdown={props.state.case_breakdown ?? null}
+                    canBreakCase={props.canBreakCase}
+                    isSubmitting={props.isSubmitting}
+                    onBreakCase={props.onBreakCase}
                 />
             ) : props.phase === "governance_proposal" ? (
                 <GovernanceProposalPhase
