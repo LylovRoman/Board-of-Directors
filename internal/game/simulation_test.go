@@ -33,6 +33,12 @@ func TestSimulateBotGamesAcceptsBotMemorandumCount(t *testing.T) {
 	if len(response.Results) != 1 {
 		t.Fatalf("expected included game result, got %+v", response.Results)
 	}
+	if response.Results[0].Scenario == "" {
+		t.Fatalf("expected included game to carry scenario, got %+v", response.Results[0])
+	}
+	if response.MostCommonScenario == "" {
+		t.Fatalf("expected aggregate scenario summary, got %+v", response)
+	}
 	if response.Results[0].ComplianceUserID == 0 {
 		t.Fatalf("expected included game to reveal compliance user, got %+v", response.Results[0])
 	}
@@ -223,6 +229,35 @@ func TestSimulateBotGamesValidatesBotMemorandumVariant(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected unsupported bot_memorandum_variant to fail")
+	}
+}
+
+func TestClassifySimulationScenario(t *testing.T) {
+	state := &GameState{
+		Winner:       "mole",
+		MoleSabotage: "D",
+		MoleTargets:  []string{"A", "B", "C"},
+	}
+
+	state.AcceptedOrder = []string{"E", "A"}
+	if got := classifySimulationScenario(state); got != "first_podkop_no_sabotage" {
+		t.Fatalf("expected first_podkop_no_sabotage, got %q", got)
+	}
+
+	state.AcceptedOrder = []string{"B", "D", "E"}
+	if got := classifySimulationScenario(state); got != "first_podkop_then_sabotage" {
+		t.Fatalf("expected first_podkop_then_sabotage, got %q", got)
+	}
+
+	state.AcceptedOrder = []string{"D", "A"}
+	if got := classifySimulationScenario(state); got != "first_decision_sabotage" {
+		t.Fatalf("expected first_decision_sabotage, got %q", got)
+	}
+
+	state.Winner = "players"
+	state.AcceptedOrder = []string{"A", "D"}
+	if got := classifySimulationScenario(state); got != "players_win" {
+		t.Fatalf("expected players_win, got %q", got)
 	}
 }
 
