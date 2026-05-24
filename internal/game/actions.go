@@ -908,8 +908,7 @@ func complianceCatchForAcceptedDecision(state *GameState, decision string) (Comp
 	if watch.TargetUserID == 0 || watch.TargetUserID != state.MoleUserID {
 		return ComplianceCatchState{}, false
 	}
-	vote, ok := state.CurrentVotes[state.MoleUserID]
-	if !ok || vote.Abstain || vote.Decision == nil || *vote.Decision != decision {
+	if !moleVotedForDecisionInCurrentRound(state, decision) {
 		return ComplianceCatchState{}, false
 	}
 	return ComplianceCatchState{
@@ -919,6 +918,39 @@ func complianceCatchForAcceptedDecision(state *GameState, decision string) (Comp
 		AcceptedDecision: decision,
 		Reason:           ComplianceCatchReasonDirectSabotage,
 	}, true
+}
+
+func moleVotedForDecisionInCurrentRound(state *GameState, decision string) bool {
+	if state == nil || decision == "" {
+		return false
+	}
+	vote, ok := state.CurrentVotes[state.MoleUserID]
+	if !ok || vote.Abstain || vote.Decision == nil {
+		return false
+	}
+	return *vote.Decision == decision
+}
+
+func moleSupportedAcceptedSabotage(state *GameState, decision string) bool {
+	if state == nil || decision == "" || decision != state.MoleSabotage {
+		return false
+	}
+	for _, report := range state.RoundReports {
+		if report.Outcome != "accepted" || report.Decision != decision {
+			continue
+		}
+		for _, vote := range report.Votes {
+			if vote.Decision != decision || vote.Abstain {
+				continue
+			}
+			for _, voter := range vote.Voters {
+				if voter.UserID == state.MoleUserID {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 type majorReward struct {

@@ -439,13 +439,35 @@ func TestSelectMoleObjectivesValidatesActorAndPayload(t *testing.T) {
 
 func TestDetectWinnerUsesSabotageVictoryPoints(t *testing.T) {
 	state := &GameState{
+		MoleUserID:    2,
 		MoleTargets:   []string{"A", "C", "F"},
 		MoleSabotage:  "H",
 		AcceptedOrder: []string{"H", "A"},
+		RoundReports:  []RoundReport{{Round: 1, Outcome: "accepted", Decision: "H", Votes: []DecisionVoteReport{{Decision: "H", Voters: []DecisionVoterReport{{UserID: 2}}}}}},
 	}
 	winner, reason := detectWinner(state)
 	if winner != "mole" || reason != "mole_targets_collected" {
 		t.Fatalf("expected mole victory from sabotage plus target, got %q / %q", winner, reason)
+	}
+}
+
+func TestVictoryPointsAcceptedSabotageDependsOnMoleVote(t *testing.T) {
+	state := &GameState{
+		MoleUserID:    2,
+		MoleTargets:   []string{"A", "C", "F"},
+		MoleSabotage:  "H",
+		AcceptedOrder: []string{"H"},
+		RoundReports:  []RoundReport{{Round: 1, Outcome: "accepted", Decision: "H", Votes: []DecisionVoteReport{{Decision: "H", Voters: []DecisionVoterReport{{UserID: 1}}}}}},
+	}
+	molePoints, playersPoints := victoryPoints(state)
+	if molePoints != 1 || playersPoints != 0 {
+		t.Fatalf("expected sabotage to grant 1 point without mole vote, got mole=%d players=%d", molePoints, playersPoints)
+	}
+
+	state.RoundReports = []RoundReport{{Round: 1, Outcome: "accepted", Decision: "H", Votes: []DecisionVoteReport{{Decision: "H", Voters: []DecisionVoterReport{{UserID: 2}}}}}}
+	molePoints, playersPoints = victoryPoints(state)
+	if molePoints != 2 || playersPoints != 0 {
+		t.Fatalf("expected sabotage to grant 2 points with mole vote, got mole=%d players=%d", molePoints, playersPoints)
 	}
 }
 
@@ -1782,13 +1804,6 @@ func TestComplianceCatchNegativeConditions(t *testing.T) {
 		check  string
 	}{
 		{
-			name: "mole voted clean",
-			mutate: func(state *GameState) {
-				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionB}
-			},
-			check: "D",
-		},
-		{
 			name: "watched director",
 			mutate: func(state *GameState) {
 				state.ComplianceWatches[2] = ComplianceWatchState{RoundNumber: 2, ComplianceUserID: 1, TargetUserID: 2}
@@ -1808,6 +1823,13 @@ func TestComplianceCatchNegativeConditions(t *testing.T) {
 			mutate: func(state *GameState) {
 				state.ComplianceWatches = map[int]ComplianceWatchState{}
 				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionD}
+			},
+			check: "D",
+		},
+		{
+			name: "mole did not vote sabotage",
+			mutate: func(state *GameState) {
+				state.CurrentVotes[3] = VoteState{UserID: 3, Decision: &decisionB}
 			},
 			check: "D",
 		},

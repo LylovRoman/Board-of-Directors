@@ -261,11 +261,12 @@ func TestSimulateBotGamesValidatesBotMemorandumVariant(t *testing.T) {
 
 func TestClassifySimulationScenario(t *testing.T) {
 	state := &GameState{
+		Winner:       "mole",
 		MoleSabotage: "D",
 		MoleTargets:  []string{"A", "B", "C"},
 	}
 
-	state.AcceptedOrder = []string{"A", "E"}
+	state.AcceptedOrder = []string{"E", "A"}
 	if got := classifySimulationScenario(state); got != "first_podkop_no_sabotage" {
 		t.Fatalf("expected first_podkop_no_sabotage, got %q", got)
 	}
@@ -278,6 +279,12 @@ func TestClassifySimulationScenario(t *testing.T) {
 	state.AcceptedOrder = []string{"D", "A"}
 	if got := classifySimulationScenario(state); got != "first_decision_sabotage" {
 		t.Fatalf("expected first_decision_sabotage, got %q", got)
+	}
+
+	state.Winner = "players"
+	state.AcceptedOrder = []string{"A", "D"}
+	if got := classifySimulationScenario(state); got != "players_win" {
+		t.Fatalf("expected players_win, got %q", got)
 	}
 }
 

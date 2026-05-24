@@ -103,9 +103,13 @@ type BotSimulationScenarioStats struct {
 	FirstPodkopNoSabotageCount  int     `json:"first_podkop_no_sabotage_count"`
 	FirstPodkopThenSabotage     int     `json:"first_podkop_then_sabotage_count"`
 	FirstDecisionSabotage       int     `json:"first_decision_sabotage_count"`
+	PlayersWinCount             int     `json:"players_win_count"`
+	MoleWinUnclassifiedCount    int     `json:"mole_win_unclassified_count"`
 	FirstPodkopNoSabotageRate   float64 `json:"first_podkop_no_sabotage_rate"`
 	FirstPodkopThenSabotageRate float64 `json:"first_podkop_then_sabotage_rate"`
 	FirstDecisionSabotageRate   float64 `json:"first_decision_sabotage_rate"`
+	PlayersWinRate              float64 `json:"players_win_rate"`
+	MoleWinUnclassifiedRate     float64 `json:"mole_win_unclassified_rate"`
 }
 
 type BotSimulationComplianceWatch struct {
@@ -212,6 +216,10 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 			response.ScenarioStats.FirstPodkopThenSabotage++
 		case "first_decision_sabotage":
 			response.ScenarioStats.FirstDecisionSabotage++
+		case "players_win":
+			response.ScenarioStats.PlayersWinCount++
+		case "mole_win_unclassified":
+			response.ScenarioStats.MoleWinUnclassifiedCount++
 		}
 	}
 
@@ -226,6 +234,8 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		response.ScenarioStats.FirstPodkopNoSabotageRate = float64(response.ScenarioStats.FirstPodkopNoSabotageCount) / float64(config.Games)
 		response.ScenarioStats.FirstPodkopThenSabotageRate = float64(response.ScenarioStats.FirstPodkopThenSabotage) / float64(config.Games)
 		response.ScenarioStats.FirstDecisionSabotageRate = float64(response.ScenarioStats.FirstDecisionSabotage) / float64(config.Games)
+		response.ScenarioStats.PlayersWinRate = float64(response.ScenarioStats.PlayersWinCount) / float64(config.Games)
+		response.ScenarioStats.MoleWinUnclassifiedRate = float64(response.ScenarioStats.MoleWinUnclassifiedCount) / float64(config.Games)
 		response.MostCommonScenario = mostCommonSimulationScenario(response.ScenarioStats)
 	}
 	response.DurationMS = time.Since(start).Milliseconds()
@@ -395,18 +405,27 @@ func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResul
 }
 
 func classifySimulationScenario(state *GameState) string {
-	if state == nil || len(state.AcceptedOrder) == 0 {
-		return ""
+	if state == nil {
+		return "mole_win_unclassified"
 	}
-	first := state.AcceptedOrder[0]
-	if first == state.MoleSabotage {
-		return "first_decision_sabotage"
+	if state.Winner == "players" {
+		return "players_win"
 	}
 	targets := stringSet(state.MoleTargets)
-	if !targets[first] {
-		return ""
+	firstObjective := ""
+	for _, decision := range state.AcceptedOrder {
+		if decision == state.MoleSabotage || targets[decision] {
+			firstObjective = decision
+			break
+		}
 	}
-	for _, decision := range state.AcceptedOrder[1:] {
+	if firstObjective == "" {
+		return "mole_win_unclassified"
+	}
+	if firstObjective == state.MoleSabotage {
+		return "first_decision_sabotage"
+	}
+	for _, decision := range state.AcceptedOrder {
 		if decision == state.MoleSabotage {
 			return "first_podkop_then_sabotage"
 		}
@@ -423,6 +442,14 @@ func mostCommonSimulationScenario(stats BotSimulationScenarioStats) string {
 	}
 	if stats.FirstDecisionSabotage > bestCount {
 		best = "first_decision_sabotage"
+		bestCount = stats.FirstDecisionSabotage
+	}
+	if stats.PlayersWinCount > bestCount {
+		best = "players_win"
+		bestCount = stats.PlayersWinCount
+	}
+	if stats.MoleWinUnclassifiedCount > bestCount {
+		best = "mole_win_unclassified"
 	}
 	return best
 }
