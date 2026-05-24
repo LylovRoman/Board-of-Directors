@@ -76,6 +76,8 @@ type BotSimulationResponse struct {
 	AverageAcceptedTargetCount      float64                        `json:"average_accepted_target_count"`
 	AverageAcceptedSabotageCount    float64                        `json:"average_accepted_sabotage_count"`
 	AverageComplianceCatchesPerGame float64                        `json:"average_compliance_catches_per_game"`
+	MostCommonScenario              string                         `json:"most_common_scenario,omitempty"`
+	ScenarioStats                   BotSimulationScenarioStats     `json:"scenario_stats"`
 	Results                         []BotSimulationGameResult      `json:"results,omitempty"`
 }
 
@@ -94,6 +96,16 @@ type BotSimulationGameResult struct {
 	AcceptedTargetCount   int                            `json:"accepted_target_count"`
 	AcceptedSabotageCount int                            `json:"accepted_sabotage_count"`
 	AcceptedDecisions     []string                       `json:"accepted_decisions,omitempty"`
+	Scenario              string                         `json:"scenario"`
+}
+
+type BotSimulationScenarioStats struct {
+	FirstPodkopNoSabotageCount  int     `json:"first_podkop_no_sabotage_count"`
+	FirstPodkopThenSabotage     int     `json:"first_podkop_then_sabotage_count"`
+	FirstDecisionSabotage       int     `json:"first_decision_sabotage_count"`
+	FirstPodkopNoSabotageRate   float64 `json:"first_podkop_no_sabotage_rate"`
+	FirstPodkopThenSabotageRate float64 `json:"first_podkop_then_sabotage_rate"`
+	FirstDecisionSabotageRate   float64 `json:"first_decision_sabotage_rate"`
 }
 
 type BotSimulationComplianceWatch struct {
@@ -193,6 +205,14 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		if config.IncludeGames {
 			response.Results = append(response.Results, result)
 		}
+		switch result.Scenario {
+		case "first_podkop_no_sabotage":
+			response.ScenarioStats.FirstPodkopNoSabotageCount++
+		case "first_podkop_then_sabotage":
+			response.ScenarioStats.FirstPodkopThenSabotage++
+		case "first_decision_sabotage":
+			response.ScenarioStats.FirstDecisionSabotage++
+		}
 	}
 
 	if config.Games > 0 {
@@ -203,6 +223,10 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		response.AverageAcceptedTargetCount = float64(response.AcceptedTargetCount) / float64(config.Games)
 		response.AverageAcceptedSabotageCount = float64(response.AcceptedSabotageCount) / float64(config.Games)
 		response.AverageComplianceCatchesPerGame = float64(response.ComplianceCatchesCount) / float64(config.Games)
+		response.ScenarioStats.FirstPodkopNoSabotageRate = float64(response.ScenarioStats.FirstPodkopNoSabotageCount) / float64(config.Games)
+		response.ScenarioStats.FirstPodkopThenSabotageRate = float64(response.ScenarioStats.FirstPodkopThenSabotage) / float64(config.Games)
+		response.ScenarioStats.FirstDecisionSabotageRate = float64(response.ScenarioStats.FirstDecisionSabotage) / float64(config.Games)
+		response.MostCommonScenario = mostCommonSimulationScenario(response.ScenarioStats)
 	}
 	response.DurationMS = time.Since(start).Milliseconds()
 	if elapsed := time.Since(start).Seconds(); elapsed > 0 {
@@ -366,7 +390,41 @@ func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResul
 		AcceptedTargetCount:   target,
 		AcceptedSabotageCount: sabotage,
 		AcceptedDecisions:     append([]string(nil), state.AcceptedOrder...),
+		Scenario:              classifySimulationScenario(state),
 	}, nil
+}
+
+func classifySimulationScenario(state *GameState) string {
+	if state == nil || len(state.AcceptedOrder) == 0 {
+		return ""
+	}
+	first := state.AcceptedOrder[0]
+	if first == state.MoleSabotage {
+		return "first_decision_sabotage"
+	}
+	targets := stringSet(state.MoleTargets)
+	if !targets[first] {
+		return ""
+	}
+	for _, decision := range state.AcceptedOrder[1:] {
+		if decision == state.MoleSabotage {
+			return "first_podkop_then_sabotage"
+		}
+	}
+	return "first_podkop_no_sabotage"
+}
+
+func mostCommonSimulationScenario(stats BotSimulationScenarioStats) string {
+	best := "first_podkop_no_sabotage"
+	bestCount := stats.FirstPodkopNoSabotageCount
+	if stats.FirstPodkopThenSabotage > bestCount {
+		best = "first_podkop_then_sabotage"
+		bestCount = stats.FirstPodkopThenSabotage
+	}
+	if stats.FirstDecisionSabotage > bestCount {
+		best = "first_decision_sabotage"
+	}
+	return best
 }
 
 func botSimulationComplianceWatches(state *GameState) []BotSimulationComplianceWatch {
