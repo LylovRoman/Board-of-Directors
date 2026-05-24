@@ -257,9 +257,8 @@ func (e *Engine) chooseBotCaseBreakdownTarget(state *GameState, bot *PlayerState
 	bestScore := -1 << 30
 	for _, candidate := range candidates {
 		score := 0
-		if candidate.UserID == state.ComplianceUserID || candidate.UserID == state.CaseBreakdown.ComplianceUserID || candidate.Role == RoleCompliance {
-			score += 1000
-		}
+		// Case breakdown is a bluff/inference phase for the Mole.
+		// Do not grant omniscient bonus for the real Compliance identity.
 		if vote, ok := state.CurrentVotes[candidate.UserID]; ok && vote.Decision != nil {
 			if *vote.Decision != state.CaseBreakdown.AcceptedDecision {
 				score += 20
