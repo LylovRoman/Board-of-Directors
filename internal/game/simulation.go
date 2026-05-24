@@ -49,6 +49,7 @@ type BotSimulationRequest struct {
 	Variant              BotSimulationMemorandumVariant `json:"variant,omitempty"`
 	Workers              int                            `json:"workers,omitempty"`
 	MonteCarloRollouts   int                            `json:"monte_carlo_rollouts,omitempty"`
+	CaseBreakdownEnabled *bool                          `json:"case_breakdown_enabled,omitempty"`
 }
 
 type BotSimulationResponse struct {
@@ -70,6 +71,10 @@ type BotSimulationResponse struct {
 	AcceptedCleanCount              int                            `json:"accepted_clean_count"`
 	AcceptedTargetCount             int                            `json:"accepted_target_count"`
 	AcceptedSabotageCount           int                            `json:"accepted_sabotage_count"`
+	AcceptedSabotageWithWatchOnMoleCount int                     `json:"accepted_sabotage_with_watch_on_mole_count"`
+	AcceptedSabotageWithMoleVoteCount int                        `json:"accepted_sabotage_with_mole_vote_count"`
+	AcceptedSabotageWatchOnMoleButNoMoleVoteCount int            `json:"accepted_sabotage_watch_on_mole_but_no_mole_vote_count"`
+	CaseBreakdownEnabled            bool                           `json:"case_breakdown_enabled"`
 	ComplianceCatchesCount          int                            `json:"compliance_catches_count"`
 	PlayersWinsByComplianceCount    int                            `json:"players_wins_by_compliance_count"`
 	AverageAcceptedCleanCount       float64                        `json:"average_accepted_clean_count"`
@@ -95,6 +100,13 @@ type BotSimulationGameResult struct {
 	AcceptedCleanCount    int                            `json:"accepted_clean_count"`
 	AcceptedTargetCount   int                            `json:"accepted_target_count"`
 	AcceptedSabotageCount int                            `json:"accepted_sabotage_count"`
+	AcceptedMoleSabotageCount int                        `json:"accepted_mole_sabotage_count,omitempty"`
+	AcceptedMoleSabotageWithWatchOnMoleCount int         `json:"accepted_mole_sabotage_with_watch_on_mole_count,omitempty"`
+	AcceptedMoleSabotageWithMoleVoteCount int            `json:"accepted_mole_sabotage_with_mole_vote_count,omitempty"`
+	AcceptedMoleSabotageWatchOnMoleButNoMoleVoteCount int `json:"accepted_mole_sabotage_watch_on_mole_but_no_mole_vote_count,omitempty"`
+	CaseBreakdownAttempts int                            `json:"case_breakdown_attempts,omitempty"`
+	CaseBreakdownSuccesses int                           `json:"case_breakdown_successes,omitempty"`
+	CaseBreakdownFailures int                            `json:"case_breakdown_failures,omitempty"`
 	AcceptedDecisions     []string                       `json:"accepted_decisions,omitempty"`
 	Scenario              string                         `json:"scenario"`
 }
@@ -128,6 +140,7 @@ type botSimulationConfig struct {
 	BotMemorandumVariant BotSimulationMemorandumVariant
 	Workers              int
 	MonteCarloRollouts   int
+	CaseBreakdownEnabled bool
 }
 
 func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, error) {
@@ -185,6 +198,7 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		BotMemorandumVariant: config.BotMemorandumVariant,
 		Workers:              config.Workers,
 		MonteCarloRollouts:   config.MonteCarloRollouts,
+		CaseBreakdownEnabled: config.CaseBreakdownEnabled,
 	}
 	if config.IncludeGames {
 		response.Results = make([]BotSimulationGameResult, 0, config.Games)
@@ -200,6 +214,9 @@ func SimulateBotGames(request BotSimulationRequest) (BotSimulationResponse, erro
 		response.AcceptedCleanCount += result.AcceptedCleanCount
 		response.AcceptedTargetCount += result.AcceptedTargetCount
 		response.AcceptedSabotageCount += result.AcceptedSabotageCount
+		response.AcceptedSabotageWithWatchOnMoleCount += result.AcceptedMoleSabotageWithWatchOnMoleCount
+		response.AcceptedSabotageWithMoleVoteCount += result.AcceptedMoleSabotageWithMoleVoteCount
+		response.AcceptedSabotageWatchOnMoleButNoMoleVoteCount += result.AcceptedMoleSabotageWatchOnMoleButNoMoleVoteCount
 		if result.ComplianceCaught {
 			response.ComplianceCatchesCount++
 		}
@@ -314,6 +331,10 @@ func normalizeBotSimulationRequest(request BotSimulationRequest) (botSimulationC
 	if request.Seed != nil {
 		seed = *request.Seed
 	}
+	caseBreakdownEnabled := true
+	if request.CaseBreakdownEnabled != nil {
+		caseBreakdownEnabled = *request.CaseBreakdownEnabled
+	}
 	return botSimulationConfig{
 		Games:                games,
 		Players:              players,
@@ -324,6 +345,7 @@ func normalizeBotSimulationRequest(request BotSimulationRequest) (botSimulationC
 		BotMemorandumVariant: botMemorandumVariant,
 		Workers:              workers,
 		MonteCarloRollouts:   monteCarloRollouts,
+		CaseBreakdownEnabled: caseBreakdownEnabled,
 	}, nil
 }
 
@@ -335,6 +357,7 @@ func newBotSimulationEngine(config botSimulationConfig, index int) *Engine {
 		botSimulationMemorandumVariant: config.BotMemorandumVariant,
 		botSimulationMemorandums:       map[int64][]MemorandumState{},
 		botSimulationRollouts:          config.MonteCarloRollouts,
+		botSimulationCaseBreakdownEnabled: config.CaseBreakdownEnabled,
 	}
 }
 
@@ -384,6 +407,7 @@ func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResul
 	}
 
 	clean, target, sabotage := acceptedDecisionCounts(state)
+	acceptedMoleSabotageCount, acceptedMoleSabotageWithWatchOnMoleCount, acceptedMoleSabotageWithMoleVoteCount, acceptedMoleSabotageWatchOnMoleButNoMoleVoteCount := botSimulationMoleSabotageDiagnostics(state)
 	molePoints, playersPoints := victoryPoints(state)
 	return BotSimulationGameResult{
 		Index:                 index,
@@ -399,9 +423,62 @@ func (e *Engine) simulateBotGame(index int, players int) (BotSimulationGameResul
 		AcceptedCleanCount:    clean,
 		AcceptedTargetCount:   target,
 		AcceptedSabotageCount: sabotage,
+		AcceptedMoleSabotageCount: acceptedMoleSabotageCount,
+		AcceptedMoleSabotageWithWatchOnMoleCount: acceptedMoleSabotageWithWatchOnMoleCount,
+		AcceptedMoleSabotageWithMoleVoteCount: acceptedMoleSabotageWithMoleVoteCount,
+		AcceptedMoleSabotageWatchOnMoleButNoMoleVoteCount: acceptedMoleSabotageWatchOnMoleButNoMoleVoteCount,
+		CaseBreakdownAttempts: state.CaseBreakdownAttempts,
+		CaseBreakdownSuccesses: state.CaseBreakdownSuccesses,
+		CaseBreakdownFailures: state.CaseBreakdownFailures,
 		AcceptedDecisions:     append([]string(nil), state.AcceptedOrder...),
 		Scenario:              classifySimulationScenario(state),
 	}, nil
+}
+
+func botSimulationMoleSabotageDiagnostics(state *GameState) (int, int, int, int) {
+	if state == nil || state.MoleSabotage == "" {
+		return 0, 0, 0, 0
+	}
+
+	acceptedMoleSabotageCount := 0
+	acceptedMoleSabotageWithWatchOnMoleCount := 0
+	acceptedMoleSabotageWithMoleVoteCount := 0
+	acceptedMoleSabotageWatchOnMoleButNoMoleVoteCount := 0
+	for _, report := range state.RoundReports {
+		if report.Outcome != "accepted" || report.Decision != state.MoleSabotage {
+			continue
+		}
+
+		acceptedMoleSabotageCount++
+		watchOnMole := false
+		if watch, ok := state.ComplianceWatches[report.Round]; ok && watch.TargetUserID == state.MoleUserID {
+			watchOnMole = true
+			acceptedMoleSabotageWithWatchOnMoleCount++
+		}
+
+		moleVotedForAcceptedSabotage := false
+		for _, vote := range report.Votes {
+			if vote.Decision != state.MoleSabotage {
+				continue
+			}
+			for _, voter := range vote.Voters {
+				if voter.UserID == state.MoleUserID {
+					moleVotedForAcceptedSabotage = true
+					acceptedMoleSabotageWithMoleVoteCount++
+					break
+				}
+			}
+			break
+		}
+		if watchOnMole && !moleVotedForAcceptedSabotage {
+			acceptedMoleSabotageWatchOnMoleButNoMoleVoteCount++
+		}
+	}
+
+	return acceptedMoleSabotageCount,
+		acceptedMoleSabotageWithWatchOnMoleCount,
+		acceptedMoleSabotageWithMoleVoteCount,
+		acceptedMoleSabotageWatchOnMoleButNoMoleVoteCount
 }
 
 func classifySimulationScenario(state *GameState) string {
@@ -504,7 +581,12 @@ func (e *Engine) newBotSimulationState(index int, players int, now time.Time) (*
 			}),
 		})
 	}
-	return BuildState(int64(index), fmt.Sprintf("Bot Simulation %d", index), events)
+	state, err := BuildState(int64(index), fmt.Sprintf("Bot Simulation %d", index), events)
+	if err != nil {
+		return nil, err
+	}
+	state.CaseBreakdownEnabled = e.botSimulationCaseBreakdownEnabled
+	return state, nil
 }
 
 func (e *Engine) applySimulationEvents(state *GameState, events []models.Event, now time.Time) error {
