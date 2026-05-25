@@ -175,43 +175,46 @@ export function StartedGameScreen(props: {
 
             {props.me?.role === "mole" ? (
                 <section className="secret-card">
-                  <p className="eyebrow">Подкопы</p>
-                  <DecisionList values={props.moleTargets} emptyText="Цели еще не выбраны." />
+                  <div>
+                    <p className="eyebrow">Подкопы</p>
+                    <DecisionList values={props.moleTargets} emptyText="Цели еще не выбраны." />
+                  </div>
                   {props.moleSabotage ? (
-                      <>
+                      <div>
                         <p className="eyebrow">Диверсия</p>
                         <div className="sabotage-secret">
                           <strong>{decisionLabel(props.moleSabotage)}</strong>
                         </div>
-                      </>
+                      </div>
                   ) : null}
+                  <div>
                   <p className="eyebrow">Счёт</p>
                   <div className="score-row">
                     <span>Крот: {props.moleVictoryPoints ?? 0}/3</span>
                     <span>Совет: {props.playersVictoryPoints ?? 0}/3</span>
                   </div>
+                  </div>
                 </section>
             ) : (
                 <section className="secret-card">
                   {props.me?.role === "compliance" ? (
-                      <>
+                      <div>
                         <p className="eyebrow">Комплаенс</p>
                         <p className="quiet-text">
                           {props.phase === "mole_case_breakdown"
                               ? "Комплаенс запустил поимку. Если Крот угадает, кто его поймал, дело развалится и Диверсия останется принятой."
                               : "Каждый мажорный раунд вы можете тайно выбрать одного игрока под наблюдение и менять выбор до закрытия голосования. Если выбранный игрок окажется Кротом и лично проголосует за принятую Диверсию, он получит шанс на Развал дела."}
                         </p>
-                      </>
+                      </div>
                   ) : null}
                   {props.me?.role === "player" || props.me?.role === "compliance" ? (
-                    <>
+                    <div>
                     <p className="eyebrow">{props.me?.role === "compliance" && props.memorandum ? "Усиленный меморандум" : "Меморандум"}</p>
                     {props.memorandum ? (
-                        <>
-                          <h3>{memorandumTitle(props.memorandum.type)}</h3>
+                        <div>
                           <p className="quiet-text">{memorandumRule(props.memorandum.type, props.memorandum.variant)}</p>
                           <DecisionList values={props.memorandum.decisions} emptyText="Меморандум еще не получен." />
-                        </>
+                        </div>
                     ) : (
                         <p className="quiet-text">
                           {props.memorandumPreference
@@ -223,16 +226,7 @@ export function StartedGameScreen(props: {
                                   : "Выбери тип меморандума, пока крот формирует цели."}
                         </p>
                     )}
-                    </>
-                  ) : null}
-                  {scoreRevealed ? (
-                      <>
-                        <p className="eyebrow">Счёт</p>
-                        <div className="score-row">
-                          <span>Крот: {props.moleVictoryPoints}/3</span>
-                          <span>Совет: {props.playersVictoryPoints}/3</span>
-                        </div>
-                      </>
+                    </div>
                   ) : null}
                 </section>
             )}
@@ -240,12 +234,10 @@ export function StartedGameScreen(props: {
           </aside>
 
           <div className="main-stack">
-            {phaseDeadlineMs && phaseSecondsLeft <= 90 ? (
-                <div className={phaseSecondsLeft <= 30 ? "phase-timer urgent" : "phase-timer"}>
-                  <span>Ожидаем вашего решения</span>
-                  <strong>{formatCountdown(phaseSecondsLeft)}</strong>
-                </div>
-            ) : null}
+              <div className={phaseSecondsLeft <= 30 ? "phase-timer urgent" : "phase-timer"}>
+                <span>Ожидаем вашего решения</span>
+                <strong>{formatCountdown(phaseSecondsLeft)}</strong>
+              </div>
 
             {props.phase === "mole_objective_selection" ? (
                 <MoleObjectiveSelectionPhase

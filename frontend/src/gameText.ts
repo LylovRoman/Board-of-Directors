@@ -229,18 +229,15 @@ export function systemChatTitle(message: PublicChatMessage): string {
 export function describeGovernanceProposal(proposal: PublicGovernanceProposal, players: PublicPlayerState[]): string {
   switch (proposal.proposal_type) {
     case "share_transfer":
-      return `${playerName(players, proposal.from_user_id)} передает долю игроку ${playerName(
-          players,
-          proposal.to_user_id,
-      )}`;
+      return `${playerName(players, proposal.from_user_id)} → ${playerName(players, proposal.to_user_id)}`;
     case "treasury_grant":
-      return `Выдать долю из резерва игроку ${playerName(players, proposal.target_user_id)}`;
+      return `Резерв → ${playerName(players, proposal.target_user_id)}`;
     case "treasury_buyback":
-      return `Оштрафовать ${playerName(players, proposal.target_user_id)} на долю в пользу резерва`;
+      return `${playerName(players, proposal.target_user_id)} → резерв`;
     case "appoint_ceo":
-      return `Назначить CEO: ${playerName(players, proposal.target_user_id)}`;
+      return `CEO: ${playerName(players, proposal.target_user_id)}`;
     default:
-      return "Корпоративный манёвр";
+      return "Корпоративный маневр";
   }
 }
 

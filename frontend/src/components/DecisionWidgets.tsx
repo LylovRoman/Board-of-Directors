@@ -8,9 +8,9 @@ export function DecisionList({ values, emptyText }: { values: string[]; emptyTex
 
   return (
       <div className="decision-list">
-        {values.map((value, index) => (
-            <span key={`${value}-${index}`}>{decisionLabel(value)}</span>
-        ))}
+          {values.map((value, index) => (
+              <span key={`${value}-${index}`}>{decisionLabel(value)}</span>
+          ))}
       </div>
   );
 }

@@ -182,7 +182,6 @@ export function MoleObjectiveSelectionPhase(props: {
         <div className="section-heading compact-heading">
           <div>
             <p className="eyebrow">секретный выбор</p>
-            <h2>Выбери Подкопы и Диверсию</h2>
           </div>
           <span className="wait-pill">{targets.length}/3 Подкопа</span>
         </div>
